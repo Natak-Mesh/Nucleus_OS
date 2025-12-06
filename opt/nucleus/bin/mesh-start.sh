@@ -62,8 +62,8 @@ echo "Started rnsd with PID: $RNSD_PID"
 sleep 2
 
 # Start mediamtx (required for TAKserver video)
-#nohup runuser -l natak -c '/opt/nucleus/bin/mediamtx' > /var/log/mediamtx.log 2>&1 &
-#MEDIAMTX_PID=$!
-#echo "Started mediamtx with PID: $MEDIAMTX_PID"
+# nohup runuser -l natak -c 'cd /opt/nucleus/bin/mediamtx && ./mediamtx' > /var/log/mediamtx.log 2>&1 &
+# MEDIAMTX_PID=$!
+# echo "Started mediamtx with PID: $MEDIAMTX_PID"
 
-#sleep 2
+# sleep 2
