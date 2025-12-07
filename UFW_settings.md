@@ -60,6 +60,7 @@ sudo ufw allow 8554/tcp
 sudo ufw allow 6969/tcp
 sudo ufw allow 8444/tcp
 sudo ufw allow 9000/tcp
+sudo ufw allow in on br-lan to any port 4242 #for reticulum UDP interface
 sudo ufw allow 9001/tcp    # Optional
 sudo ufw allow 1935/tcp    # Optional
 

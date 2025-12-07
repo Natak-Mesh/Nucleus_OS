@@ -96,3 +96,13 @@
   [[Default Interface]]
     type = AutoInterface
     enabled = Yes
+
+  # UDP Interface for AP clients on br-lan
+  # Enables Sideband devices to connect via wlan0 WiFi AP
+  [[AP Clients Interface]]
+    type = UDPInterface
+    enabled = Yes
+    listen_ip = 10.20.12.1
+    listen_port = 4242
+    forward_ip = 10.20.12.255
+    forward_port = 4242

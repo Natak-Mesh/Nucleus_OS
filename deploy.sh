@@ -14,14 +14,21 @@ echo "Deploying from $SOURCE_DIR..."
 # Copy etc files (only static configs - generated ones are created by config_generation.sh)
 sudo mkdir -p /etc/nucleus
 sudo cp "$SOURCE_DIR/etc/nucleus/mesh.conf" /etc/nucleus/
+sudo chown natak:natak /etc/nucleus/mesh.conf
+
 sudo mkdir -p /etc/systemd/network
 sudo cp "$SOURCE_DIR/etc/systemd/network/20-brlan.netdev" /etc/systemd/network/
 sudo cp "$SOURCE_DIR/etc/systemd/network/30-wlan0.network" /etc/systemd/network/
 sudo cp "$SOURCE_DIR/etc/systemd/network/40-eth0-lan.network" /etc/systemd/network/
+sudo chown natak:natak /etc/systemd/network/20-brlan.netdev
+sudo chown natak:natak /etc/systemd/network/30-wlan0.network
+sudo chown natak:natak /etc/systemd/network/40-eth0-lan.network
+
 sudo mkdir -p /etc/NetworkManager/conf.d
 sudo cp "$SOURCE_DIR/etc/NetworkManager/conf.d/unmanaged-devices.conf" /etc/NetworkManager/conf.d/
 sudo cp "$SOURCE_DIR/etc/smcroute.conf" /etc/
 sudo cp "$SOURCE_DIR/etc/babeld.conf" /etc/
+sudo chown natak:natak /etc/babeld.conf
 
 # Copy networkd-dispatcher scripts
 sudo mkdir -p /etc/networkd-dispatcher/degraded.d
@@ -55,6 +62,9 @@ sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
 if [ -d "$SOURCE_DIR/opt/nucleus/web" ]; then
     sudo cp -r "$SOURCE_DIR/opt/nucleus/web" /opt/nucleus/
 fi
+
+# Fix ownership for web interface to write config files
+sudo chown -R natak:natak /opt/nucleus/
 
 # Enable and start routing services (after network setup)
 sudo systemctl enable babeld.service
