@@ -93,16 +93,25 @@
   # should be enabled by default in almost any OS. See
   # the Reticulum Manual for more configuration options.
   
+  #[[Default Interface]]
+   # type = AutoInterface
+   # enabled = No
+    
+
+  #[[Default Interface]]
+  #type = UDPInterface
+  #enabled = Yes
+  #device = br-lan
+  #port = 4242
+
   [[Default Interface]]
     type = AutoInterface
-    enabled = Yes
+    enabled = Yes 
+    devices = wlan1
+    
 
-  # UDP Interface for AP clients on br-lan
-  # Enables Sideband devices to connect via wlan0 WiFi AP
-  [[AP Clients Interface]]
-    type = UDPInterface
-    enabled = Yes
-    listen_ip = 10.20.12.1
-    listen_port = 4242
-    forward_ip = 10.20.12.255
-    forward_port = 4242
+[[LAN TCP Server]]
+type = TCPServerInterface
+enabled = yes
+device = br-lan         
+listen_port = 4242
