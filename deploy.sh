@@ -42,12 +42,14 @@ sudo chmod +x /etc/networkd-dispatcher/routable.d/50-eth0-wan-mode
 sudo cp "$SOURCE_DIR/etc/systemd/system/brlan-setup.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-start.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-web.service" /etc/systemd/system/
+sudo cp "$SOURCE_DIR/etc/systemd/system/rnsd.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
 sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/systemd/system/babeld.service.d/
 sudo systemctl daemon-reload
 sudo systemctl enable brlan-setup.service
 sudo systemctl enable mesh-start.service
 sudo systemctl enable mesh-web.service
+sudo systemctl enable rnsd.service
 
 # Copy opt files
 sudo mkdir -p /opt/nucleus/bin

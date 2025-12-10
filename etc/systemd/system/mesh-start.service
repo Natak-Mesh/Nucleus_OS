@@ -1,12 +1,17 @@
 [Unit]
 Description=Mesh Network Initialization
-After=network.target systemd-networkd.service
+After=network-online.target systemd-networkd.service
+Wants=network-online.target
 Before=hostapd.service
 
 [Service]
 Type=oneshot
-ExecStart=/opt/nucleus/bin/mesh-start.sh
 RemainAfterExit=yes
+Environment=HOME=/home/natak
+Environment=USER=natak
+WorkingDirectory=/home/natak
+ExecStartPre=/bin/sleep 5
+ExecStart=/opt/nucleus/bin/mesh-start.sh
 
 [Install]
 WantedBy=multi-user.target
