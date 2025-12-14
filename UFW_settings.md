@@ -38,6 +38,7 @@ When UFW is configured with default policies, multicast traffic cannot be forwar
 - **Multicast groups:**
   - 239.2.3.1 - ATAK CoT data
   - 224.10.10.1 - ATAK Discovery
+  - 239.255.255.1 - ATAK Voice (recommended plugin setting, uses UDP port 1024)
 - **Interface forwarding** - Must allow routed traffic between wlan1 and br-lan
 
 ## Complete UFW Configuration
@@ -72,6 +73,11 @@ sudo ufw allow 239.2.3.1 on wlan1
 sudo ufw allow 224.10.10.1 on wlan1
 sudo ufw allow 239.2.3.1 on br-lan
 sudo ufw allow 224.10.10.1 on br-lan
+
+# ATAK Voice Plugin (recommended setting: udp://239.255.255.1:1024)
+sudo ufw allow in on wlan1 to 239.255.255.1
+sudo ufw allow in on br-lan to 239.255.255.1
+sudo ufw allow 1024/udp
 
 # 6. Allow all traffic on trusted mesh interfaces
 sudo ufw allow in on wlan1
@@ -108,6 +114,9 @@ To                         Action      From
 224.10.10.1 on wlan1       ALLOW IN    Anywhere
 239.2.3.1 on br-lan        ALLOW IN    Anywhere
 224.10.10.1 on br-lan      ALLOW IN    Anywhere
+239.255.255.1 on wlan1     ALLOW IN    Anywhere
+239.255.255.1 on br-lan    ALLOW IN    Anywhere
+1024/udp                   ALLOW IN    Anywhere
 Anywhere on wlan1          ALLOW IN    Anywhere
 Anywhere on br-lan         ALLOW IN    Anywhere
 [... IPv6 entries ...]
@@ -279,6 +288,12 @@ This configuration works with:
 - [smcroute documentation](https://github.com/troglobit/smcroute)
 
 ## Change Log
+
+- **2025-12-14**: Added ATAK Voice Plugin support
+  - Added multicast group 239.255.255.1 for ATAK Voice
+  - Added UDP port 1024 for voice traffic
+  - Updated smcroute.conf with voice multicast routing rules
+  - Recommended voice plugin setting: udp://239.255.255.1:1024
 
 - **2025-12-04**: Initial documentation
   - Identified critical issue with `deny (routed)` blocking multicast forwarding
