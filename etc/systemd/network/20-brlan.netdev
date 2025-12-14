@@ -1,3 +1,6 @@
 [NetDev]
 Name=br-lan
 Kind=bridge
+
+[Bridge]
+STP=yes
