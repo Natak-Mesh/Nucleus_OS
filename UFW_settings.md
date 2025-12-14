@@ -74,9 +74,14 @@ sudo ufw allow 224.10.10.1 on wlan1
 sudo ufw allow 239.2.3.1 on br-lan
 sudo ufw allow 224.10.10.1 on br-lan
 
-# ATAK Voice Plugin (recommended setting: udp://239.255.255.1:1024)
+# ATAK Voice Plugin (uses multiple multicast groups: 239.255.255.1, .2, .12 on UDP port 1024)
+# Common setting: udp://239.255.255.12:1024 for channel 1
 sudo ufw allow in on wlan1 to 239.255.255.1
 sudo ufw allow in on br-lan to 239.255.255.1
+sudo ufw allow in on wlan1 to 239.255.255.2
+sudo ufw allow in on br-lan to 239.255.255.2
+sudo ufw allow in on wlan1 to 239.255.255.12
+sudo ufw allow in on br-lan to 239.255.255.12
 sudo ufw allow 1024/udp
 
 # 6. Allow all traffic on trusted mesh interfaces
