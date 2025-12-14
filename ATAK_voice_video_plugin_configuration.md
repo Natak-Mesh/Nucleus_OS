@@ -11,10 +11,28 @@ To change the voice address/port, you must update:
 ## Video Plugin (OpenTAK ICU)
 
 ### OpenTAK ICU Plugin Settings
-- **RTSP URL:** `rtsp://<MediaMTX-IP>:8554/mystream`
-- **Video Codec:** H.264, Baseline profile, yuv420p
-- **Audio Codec:** AAC, 44100 Hz, Stereo, 128 kbps
-- **Secure:** Off
+
+**Stream Settings:**
+- **Stream Protocol:** RTSP
+- **Stream Address:** 10.20.xx.1 (br-lan IP of node running MediaMTX)
+- **Stream Port:** 8554
+- **Stream Path:** mystream (configurable, docs assume this path)
+- **TCP:** ON
+
+**Video Preferences:**
+- **Video Source:** This device's camera
+- **Resolution:** 800x600 (configurable)
+- **Bitrate:** 1000
+- **Adaptive Bitrate:** ON
+- **FPS:** 24 (configurable)
+- **Codec:** H264
+
+**Audio Settings:**
+- **Enable Audio:** ON
+- **Bitrate:** 128
+- **Sample Rate:** 44100
+- **Codec:** AAC
+- **Stereo, Echo Canceller, Noise Suppressor:** ON
 
 ### TAKServer Feed Settings (Video Tab)
 - **Protocol:** RTSP
