@@ -86,4 +86,9 @@ rpi-connect status
 
 You should see:
 - Service running
-- Sig
+- Signed in with your account
+- Device visible at https://connect.raspberrypi.com
+
+## 7. Remote Development with VS Code
+
+Once connected via RPI Connect's remote shell, you can set up VS Code remote development using the **VS Code CLI** (package: `code-cli` or downloadable from Microsoft). The CLI tool creates a secure tunnel that allows VS Code on any device to connect to your Pi without requiring direct SSH access or port forwarding. This works seamlessly through the RPI Connect shell interface, giving you full IDE functionality remotely.

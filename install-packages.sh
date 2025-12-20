@@ -55,11 +55,16 @@ if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc; then
 fi
 
 # Install Tailscale
-echo "[5/6] Installing Tailscale..."
+echo "[5/7] Installing Tailscale..."
 curl -fsSL https://tailscale.com/install.sh | sh
 
+# Install Raspberry Pi Connect
+echo "[6/7] Installing Raspberry Pi Connect..."
+sudo apt install -y rpi-connect
+loginctl enable-linger $USER
+
 # Enable NetworkManager
-echo "[6/6] Enabling NetworkManager..."
+echo "[7/7] Enabling NetworkManager..."
 sudo systemctl enable NetworkManager
 
 echo ""
