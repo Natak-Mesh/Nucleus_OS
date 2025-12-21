@@ -795,6 +795,96 @@ def scan():
     return render_template('scan.html')
 
 
+@app.route('/remote')
+def remote():
+    """Remote access management page"""
+    return render_template('remote.html')
+
+
+@app.route('/api/rpi-connect/status', methods=['GET'])
+def get_rpi_connect_status():
+    """Get Raspberry Pi Connect status"""
+    try:
+        result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'status'],
+                              capture_output=True, text=True)
+        
+        # Check both stdout and stderr for "not running"
+        combined_output = (result.stdout + result.stderr).lower()
+        
+        if 'not running' in combined_output:
+            return jsonify({
+                'running': False,
+                'message': 'Raspberry Pi Connect is not running'
+            })
+        
+        # Parse status fields from stdout (original case)
+        status = {'running': True}
+        for line in result.stdout.split('\n'):
+            line = line.strip()
+            if ':' in line:
+                key, value = line.split(':', 1)
+                key = key.strip().lower().replace(' ', '_')
+                value = value.strip()
+                status[key] = value
+        
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/rpi-connect/on', methods=['POST'])
+def turn_rpi_connect_on():
+    """Turn on Raspberry Pi Connect"""
+    try:
+        result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'on'],
+                              capture_output=True, text=True)
+        
+        # Check actual status regardless of exit code
+        status_result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'status'],
+                                     capture_output=True, text=True)
+        
+        if 'not running' in status_result.stdout.lower():
+            return jsonify({
+                'success': False,
+                'error': 'Failed to start Raspberry Pi Connect',
+                'output': result.stderr or result.stdout
+            }), 500
+        
+        return jsonify({
+            'success': True,
+            'message': 'Raspberry Pi Connect started'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/rpi-connect/off', methods=['POST'])
+def turn_rpi_connect_off():
+    """Turn off Raspberry Pi Connect"""
+    try:
+        result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'off'],
+                              capture_output=True, text=True)
+        
+        # Check actual status
+        status_result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'status'],
+                                     capture_output=True, text=True)
+        
+        combined_output = (status_result.stdout + status_result.stderr).lower()
+        if 'not running' not in combined_output:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to stop Raspberry Pi Connect',
+                'output': result.stderr or result.stdout
+            }), 500
+        
+        return jsonify({
+            'success': True,
+            'message': 'Raspberry Pi Connect stopped'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/channel-scan/start', methods=['POST'])
 def start_channel_scan():
     """Start channel scan"""
