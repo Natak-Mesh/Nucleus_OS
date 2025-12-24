@@ -43,15 +43,35 @@ mroute from br-lan group 239.255.255.12 to wlan1
 
 **Problem:** ATAK sends voice multicast traffic with TTL=1, which gets dropped when forwarded through mesh routing (TTL decrements to 0).
 
-**Solution:** Set TTL=64 for locally-originated voice traffic before routing:
+**Solution:** Set TTL to allow multi-hop propagation for locally-originated voice traffic before routing.
 
+**CRITICAL - DO NOT USE TTL=64:**
 ```bash
+# WRONG - DO NOT USE - Causes multicast storms on 2+ node mesh
 sudo iptables -t mangle -A PREROUTING -i br-lan -d 239.255.255.0/24 -j TTL --ttl-set 64
 ```
 
-**Important:** The `-i br-lan` ensures this only applies to locally-originated traffic, not traffic already from the mesh (wlan1), preventing routing loops.
+**CORRECT - Use TTL=4 to TTL=8:**
+```bash
+# CORRECT - Limits propagation to prevent storms
+sudo iptables -t mangle -A PREROUTING -i br-lan -d 239.255.255.0/24 -j TTL --ttl-set 4
+```
+
+**Why TTL Matters:**
+- TTL=64 allows packets to loop 32+ times between nodes before dying
+- Combined with smcroute echo routing (`to wlan1 br-lan`), this creates catastrophic channel saturation
+- TTL=4 allows 2-3 mesh hops while limiting echo loops to 2 round trips
+- TTL=8 can support larger meshes (4-5 hops) with slightly higher loop risk
+
+**Important:** The `-i br-lan` ensures this only applies to locally-originated traffic, not traffic already from the mesh (wlan1), preventing immediate routing loops.
 
 To make this permanent, add to a startup script or save iptables rules.
+
+**Testing Recommendations:**
+- Start with TTL=4 for 2-3 node meshes
+- Increase to TTL=6-8 only if voice doesn't reach distant nodes
+- Monitor with `ip -s link show wlan1` for TX dropped packets
+- If drops exceed 1K/minute, reduce TTL
 
 #### 3. UFW Firewall Rules
 
