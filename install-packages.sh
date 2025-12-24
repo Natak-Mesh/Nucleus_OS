@@ -27,7 +27,8 @@ sudo apt install -y \
   babeld \
   smcroute \
   nftables \
-  tcpdump
+  tcpdump \
+  mumble-server
 
 # Install Python packages
 echo "[3/6] Installing Python packages..."
