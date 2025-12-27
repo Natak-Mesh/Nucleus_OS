@@ -37,6 +37,9 @@ sudo cp "$SOURCE_DIR/etc/networkd-dispatcher/degraded.d/50-eth0-lan-mode" /etc/n
 sudo cp "$SOURCE_DIR/etc/networkd-dispatcher/routable.d/50-eth0-wan-mode" /etc/networkd-dispatcher/routable.d/
 sudo chmod +x /etc/networkd-dispatcher/degraded.d/50-eth0-lan-mode
 sudo chmod +x /etc/networkd-dispatcher/routable.d/50-eth0-wan-mode
+# Fix ownership and permissions for networkd-dispatcher (required for security)
+sudo chown -R root:root /etc/networkd-dispatcher/
+sudo chmod 755 /etc/networkd-dispatcher/*/
 
 # Copy systemd service files
 sudo cp "$SOURCE_DIR/etc/systemd/system/brlan-setup.service" /etc/systemd/system/

@@ -28,7 +28,8 @@ sudo apt install -y \
   smcroute \
   nftables \
   tcpdump \
-  mumble-server
+  mumble-server \
+  networkd-dispatcher
 
 # Install Python packages
 echo "[3/6] Installing Python packages..."
