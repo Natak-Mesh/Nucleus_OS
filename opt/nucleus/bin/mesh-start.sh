@@ -61,3 +61,8 @@ echo "nameserver 8.8.4.4" >> /etc/resolv.conf
 # echo "Started mediamtx with PID: $MEDIAMTX_PID"
 
 # sleep 2
+
+# Enable NAT for internet gateway sharing (WAN mode default)
+# Check if rule exists before adding to avoid duplicates
+iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
+    iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE

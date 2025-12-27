@@ -51,18 +51,30 @@ switch_to_wan() {
 Name=eth0
 
 [Network]
-DHCP=yes
+DHCP=ipv4
+IPv4Forwarding=yes
 EOF
     
     # Apply immediately
     ip link set eth0 nomaster 2>/dev/null
     systemctl restart systemd-networkd
     
-    echo "✓ eth0 is now in WAN mode"
+    # Wait for DHCP to acquire an address
+    echo "Waiting for DHCP address..."
+    sleep 5
+    
+    # Add MASQUERADE for internet gateway sharing
+    iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
+        iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+    
+    echo "✓ eth0 is now in WAN mode with NAT enabled"
 }
 
 switch_to_lan() {
     echo "Switching eth0 to LAN mode (bridge to br-lan)..."
+    
+    # Remove MASQUERADE rule if present
+    iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || true
     
     # Update network config file - add Bridge line
     cat > "$NETWORK_FILE" <<EOF
@@ -71,14 +83,13 @@ Name=eth0
 
 [Network]
 Bridge=br-lan
-
 EOF
     
     # Apply immediately
     ip link set eth0 master br-lan 2>/dev/null
     systemctl restart systemd-networkd
     
-    echo "✓ eth0 is now in LAN mode"
+    echo "✓ eth0 is now in LAN mode (bridged to br-lan)"
 }
 
 set_default() {
