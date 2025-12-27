@@ -67,6 +67,9 @@ EOF
     iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
         iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
     
+    # Restart babeld to pick up the interface change
+    systemctl restart babeld
+    
     echo "✓ eth0 is now in WAN mode with NAT enabled"
 }
 
@@ -88,6 +91,9 @@ EOF
     # Apply immediately
     ip link set eth0 master br-lan 2>/dev/null
     systemctl restart systemd-networkd
+    
+    # Restart babeld to pick up the interface change
+    systemctl restart babeld
     
     echo "✓ eth0 is now in LAN mode (bridged to br-lan)"
 }

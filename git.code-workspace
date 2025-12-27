@@ -23,9 +23,6 @@
 		},
 		{
 			"path": "../takserver_certs"
-		},
-		{
-			"path": "../../../etc/networkd-dispatcher"
 		}
 	],
 	"settings": {
