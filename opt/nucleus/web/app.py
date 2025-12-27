@@ -801,6 +801,67 @@ def remote():
     return render_template('remote.html')
 
 
+@app.route('/ethernet')
+def ethernet():
+    """Ethernet mode control page"""
+    return render_template('ethernet.html')
+
+
+@app.route('/api/eth0-mode/status', methods=['GET'])
+def get_eth0_status():
+    """Get current eth0 mode"""
+    try:
+        result = subprocess.run(['/opt/nucleus/bin/eth0-mode.sh', 'status'],
+                              capture_output=True, text=True)
+        
+        # Parse the status output
+        current_mode = 'wan'  # default
+        for line in result.stdout.split('\n'):
+            if 'Current mode:' in line:
+                if 'lan' in line.lower():
+                    current_mode = 'lan'
+                elif 'wan' in line.lower():
+                    current_mode = 'wan'
+        
+        return jsonify({
+            'current': current_mode,
+            'success': True
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/eth0-mode/switch', methods=['POST'])
+def switch_eth0_mode():
+    """Switch eth0 mode"""
+    try:
+        data = request.get_json()
+        mode = data.get('mode')
+        
+        if mode not in ['wan', 'lan']:
+            return jsonify({'error': 'Invalid mode. Must be "wan" or "lan"'}), 400
+        
+        # Run the eth0-mode.sh script with sudo
+        result = subprocess.run(['sudo', '/opt/nucleus/bin/eth0-mode.sh', mode],
+                              capture_output=True, text=True, timeout=30)
+        
+        if result.returncode != 0:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to switch mode: {result.stderr}'
+            }), 500
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully switched to {mode.upper()} mode',
+            'output': result.stdout
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Command timed out'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/rpi-connect/status', methods=['GET'])
 def get_rpi_connect_status():
     """Get Raspberry Pi Connect status"""
