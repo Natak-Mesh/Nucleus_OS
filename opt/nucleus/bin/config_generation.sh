@@ -116,7 +116,8 @@ DHCPServer=yes
 PoolOffset=10
 PoolSize=50
 EmitDNS=yes
-DNS=${MESH_IP}
+DNS=8.8.8.8
+EmitRouter=yes
 EOF
 
 # Generate hostapd config
@@ -195,6 +196,9 @@ redistribute ip ${MESH_SUBNET} allow
 
 # Redistribute br-lan network
 redistribute ip ${BR_LAN_SUBNET} allow
+
+# Redistribute default route for internet gateway sharing
+redistribute ip 0.0.0.0/0 allow
 
 # Block default local address /32 export (must come after allow rules)
 redistribute local deny

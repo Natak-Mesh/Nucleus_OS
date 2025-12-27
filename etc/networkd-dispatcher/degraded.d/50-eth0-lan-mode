@@ -33,4 +33,8 @@ EOF
 # Reconfigure eth0 to apply the change
 networkctl reconfigure eth0
 
+# Disable NAT (not needed in LAN mode)
+iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || true
+logger -t eth0-lan-mode "Disabled NAT masquerade"
+
 logger -t eth0-lan-mode "LAN mode configuration complete - DHCP server active on ${ETH0_STATIC_IP}/24"

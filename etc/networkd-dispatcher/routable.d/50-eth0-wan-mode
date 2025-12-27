@@ -27,4 +27,8 @@ fi
 # Reconfigure eth0 to apply the change
 networkctl reconfigure eth0
 
+# Enable NAT for internet gateway sharing
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+logger -t eth0-wan-mode "Enabled NAT masquerade for internet gateway sharing"
+
 logger -t eth0-wan-mode "WAN mode configuration complete - eth0 forwarding to mesh enabled"
