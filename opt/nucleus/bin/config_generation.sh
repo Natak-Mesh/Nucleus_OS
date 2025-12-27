@@ -162,6 +162,9 @@ interface wlan1 type wireless link-quality true split-horizon false rxcost 256 h
 # Wired bridge interface (br-lan)
 interface br-lan type wired rxcost 96 hello-interval 4
 
+# Block router LAN networks from being redistributed (prevents asymmetric routing)
+redistribute ip 192.168.0.0/16 deny
+
 # Redistribute local mesh network
 redistribute ip ${MESH_SUBNET} allow
 
