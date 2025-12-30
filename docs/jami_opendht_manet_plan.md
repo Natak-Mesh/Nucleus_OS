@@ -216,9 +216,141 @@ Where XX = node number (11 or 12). Each phone uses its connected node's br-lan g
 
 ### Future Enhancements
 1. Test roaming between nodes (phone moving from node 11 to node 12)
-2. Deploy to additional mesh nodes with proper bootstrap topology
-3. Monitor DHT health and performance under load
-4. Consider implementing DHT monitoring dashboard
+2. Monitor DHT health and performance under load
+3. Consider implementing DHT monitoring dashboard
+
+---
+
+## Deployment Automation Plan
+
+### Overview
+To deploy OpenDHT to multiple mesh nodes efficiently, we'll integrate it into the existing deployment workflow using mesh.conf and the web configuration interface.
+
+### Configuration in mesh.conf
+Add the following fields to `/etc/nucleus/mesh.conf`:
+
+```bash
+# OpenDHT Configuration
+OPENDHT_ENABLED=true
+OPENDHT_NETWORK_ID=12345
+OPENDHT_BOOTSTRAP_IPS="10.20.1.11,10.20.1.12,10.20.1.13"
+```
+
+**Field descriptions:**
+- `OPENDHT_ENABLED`: Toggle OpenDHT service on/off
+- `OPENDHT_NETWORK_ID`: Isolates DHT from public network (default: 12345)
+- `OPENDHT_BOOTSTRAP_IPS`: Comma-separated list of mesh node IPs to bootstrap from
+
+### OpenDHT Startup Script
+Create `/opt/nucleus/bin/opendht-start.sh`:
+
+```bash
+#!/bin/bash
+# Start OpenDHT container with configuration from mesh.conf
+
+source /etc/nucleus/mesh.conf
+
+# Check if OpenDHT is enabled
+if [ "$OPENDHT_ENABLED" != "true" ]; then
+    echo "OpenDHT is disabled in mesh.conf"
+    exit 0
+fi
+
+# Stop existing container if running
+if docker ps -a | grep -q dhtnode; then
+    echo "Stopping existing OpenDHT container..."
+    docker stop dhtnode 2>/dev/null
+    docker rm dhtnode 2>/dev/null
+fi
+
+# Build bootstrap argument, excluding own IP
+BOOTSTRAP_ARG=""
+if [ -n "$OPENDHT_BOOTSTRAP_IPS" ]; then
+    # Filter out own MESH_IP from bootstrap list
+    FILTERED_IPS=$(echo "$OPENDHT_BOOTSTRAP_IPS" | tr ',' '\n' | grep -v "^$MESH_IP$" | tr '\n' ',' | sed 's/,$//')
+    
+    if [ -n "$FILTERED_IPS" ]; then
+        # Add port to each IP
+        BOOTSTRAP_ARG="-b $(echo $FILTERED_IPS | sed 's/,/:4222,/g'):4222"
+    fi
+fi
+
+# Start OpenDHT container
+echo "Starting OpenDHT container..."
+docker run -d --network host --restart=unless-stopped --name dhtnode \
+  ghcr.io/savoirfairelinux/opendht/opendht-alpine \
+  dhtnode -p 4222 -D -s --proxyserver 8000 -n $OPENDHT_NETWORK_ID $BOOTSTRAP_ARG
+
+echo "OpenDHT container started"
+```
+
+### Integration with mesh-start.sh
+Add to `/opt/nucleus/bin/mesh-start.sh` (after mesh network is configured):
+
+```bash
+# Start OpenDHT if enabled
+if [ -f /opt/nucleus/bin/opendht-start.sh ]; then
+    /opt/nucleus/bin/opendht-start.sh
+fi
+```
+
+### Web Configuration Interface
+Add OpenDHT fields to the configuration page:
+
+**In config.html template:**
+```html
+<div class="form-group">
+    <label for="OPENDHT_ENABLED">Enable OpenDHT (Jami Support):</label>
+    <select id="OPENDHT_ENABLED" name="OPENDHT_ENABLED">
+        <option value="true">Enabled</option>
+        <option value="false">Disabled</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="OPENDHT_BOOTSTRAP_IPS">OpenDHT Bootstrap IPs (comma-separated):</label>
+    <input type="text" id="OPENDHT_BOOTSTRAP_IPS" name="OPENDHT_BOOTSTRAP_IPS" 
+           placeholder="10.20.1.11,10.20.1.12,10.20.1.13">
+    <small>List mesh IPs of other nodes. Your own IP will be automatically excluded.</small>
+</div>
+```
+
+### Deployment Workflow
+
+**For new node deployment:**
+
+1. **Configure mesh.conf** via web interface or manually:
+   - Set OPENDHT_ENABLED=true
+   - Add comma-separated list of known mesh node IPs to OPENDHT_BOOTSTRAP_IPS
+
+2. **Run deploy.sh** to copy files and enable services
+
+3. **Reboot** - OpenDHT will auto-start with mesh network
+
+4. **Verify** DHT connection:
+   ```bash
+   curl http://127.0.0.1:8000/
+   ```
+   Should show `"good": 1` or higher (number of connected DHT nodes)
+
+### Bootstrap Strategy
+
+**How it works:**
+- Each node lists multiple known mesh node IPs
+- Startup script filters out its own IP from the list
+- Node attempts to connect to ALL remaining bootstrap IPs
+- If ANY bootstrap node is reachable, node joins the DHT successfully
+- Once connected, node learns about all other DHT nodes automatically
+
+**Fault Tolerance:**
+- DHT daemon continues retrying bootstrap addresses if initially unreachable
+- Multicast discovery (`-D` flag) provides additional discovery mechanism
+- Network partitions heal automatically when connectivity restores
+
+**Best Practices:**
+- Include at least 3 bootstrap IPs for redundancy
+- Update bootstrap list when adding new permanent nodes
+- For large deployments, designate a few stable "seed" nodes that are always included in bootstrap lists
 
 ---
 
