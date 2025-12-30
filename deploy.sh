@@ -48,9 +48,11 @@ sudo mkdir -p /opt/nucleus/bin
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/config_generation.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/mesh-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/eth0-mode.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/opendht-start.sh" /opt/nucleus/bin/
 sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
+sudo chmod +x /opt/nucleus/bin/opendht-start.sh
 
 # Copy web directory if exists
 if [ -d "$SOURCE_DIR/opt/nucleus/web" ]; then

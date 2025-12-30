@@ -66,3 +66,8 @@ echo "nameserver 8.8.4.4" >> /etc/resolv.conf
 # Check if rule exists before adding to avoid duplicates
 iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
     iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+
+# Start OpenDHT if enabled
+if [ -f /opt/nucleus/bin/opendht-start.sh ]; then
+    /opt/nucleus/bin/opendht-start.sh
+fi

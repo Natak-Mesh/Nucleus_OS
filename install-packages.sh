@@ -55,17 +55,36 @@ if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc; then
     echo "Added ~/.local/bin to PATH in ~/.bashrc"
 fi
 
+# Install Docker
+echo "[5/8] Installing Docker..."
+if ! command -v docker &> /dev/null; then
+    curl -fsSL https://get.docker.com | sh
+    sudo usermod -aG docker $USER
+    echo "Docker installed. You may need to log out and back in for group changes to take effect."
+else
+    echo "Docker already installed."
+fi
+
+# Pull OpenDHT image (while online)
+echo "[6/8] Pulling OpenDHT Docker image..."
+if docker images | grep -q opendht-alpine; then
+    echo "OpenDHT image already exists."
+else
+    docker pull ghcr.io/savoirfairelinux/opendht/opendht-alpine
+    echo "OpenDHT image pulled successfully."
+fi
+
 # Install Tailscale
-echo "[5/7] Installing Tailscale..."
+echo "[7/8] Installing Tailscale..."
 curl -fsSL https://tailscale.com/install.sh | sh
 
 # Install Raspberry Pi Connect
-echo "[6/7] Installing Raspberry Pi Connect..."
+echo "[8/8] Installing Raspberry Pi Connect..."
 sudo apt install -y rpi-connect
 loginctl enable-linger $USER
 
 # Enable NetworkManager
-echo "[7/7] Enabling NetworkManager..."
+echo "[9/9] Enabling NetworkManager..."
 sudo systemctl enable NetworkManager
 
 echo ""
