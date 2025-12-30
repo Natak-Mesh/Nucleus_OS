@@ -94,19 +94,27 @@ Run local OpenDHT nodes on mesh network nodes using Docker with **multicast peer
 
 ---
 
-## What I Don't Know (Gaps in Documentation)
+## What We Learned (Updated)
 
-1. **Multicast Group/Port:** The `-D` flag documentation doesn't specify which multicast group address or port OpenDHT uses
-   - May need to inspect OpenDHT source code or packet capture to determine
-   - Important for firewall rules and multicast routing config
+1. **OpenDHT multicast discovery (`-D` flag):**
+   - Uses IPv6 link-local addresses (fe80::)
+   - Works automatically across mesh without smcroute configuration
+   - Nodes discover each other on wlan1 mesh interface
 
-2. **Jami Client Configuration:** 
-   - Exact method to configure Jami to use local DHT nodes instead of default bootstrap servers
-   - Whether Jami has its own multicast discovery or requires manual bootstrap node list
+2. **Jami Android requires DHT PROXY, not direct DHT:**
+   - Mobile apps use HTTP-based DHT proxy (TCP port 8000) to save battery
+   - Direct DHT mode (UDP 4222) does NOT work with Jami Android
+   - Must run: `dhtnode -p 4222 -D -s --proxyserver 8000`
 
-3. **Performance/Scaling:**
-   - How many DHT nodes are optimal for a small MANET?
-   - DHT overhead on limited bandwidth mesh links
+3. **Network topology:**
+   - Phones connect to br-lan (e.g., 10.20.12.x on node 12)
+   - Phones must use br-lan gateway IP for DHT proxy (10.20.12.1:8000)
+   - Mesh IPs (10.20.1.x) may not be directly routable from phones
+
+4. **Jami configuration:**
+   - Setting: "DHT Proxy" (NOT "Bootstrap")
+   - Format: `10.20.12.1:8000` (hostname:port, not HTTP URL)
+   - Disable "Use DHT proxy list" (default internet proxies)
 
 ---
 
@@ -135,6 +143,82 @@ Run local OpenDHT nodes on mesh network nodes using Docker with **multicast peer
 1. Deploy to all mesh nodes
 2. Document Jami client setup procedure for end users
 3. Monitor DHT health and connectivity
+
+---
+
+## Current Status (2025-12-29)
+
+### What Works
+- ✅ Docker containers running on both nodes with DHT proxy enabled
+- ✅ Phones successfully connecting to local DHT proxy (port 8000)
+- ✅ Bootstrap between nodes works - DHT traffic flowing
+- ✅ Network isolation with `-n 12345` prevents connection to public DHT
+- ✅ Containers auto-start on boot with `--restart=unless-stopped`
+- ✅ **Offline mode verified working** - Jami calls work without internet connection
+
+### Resolved Issues
+1. **Multicast discovery (`-D` flag) not working automatically**
+   - Solution: Added `-b` bootstrap flag to docker command
+   - Each node bootstraps to the other node's mesh IP at startup
+   - Nodes now connect automatically without manual intervention
+
+2. **DHT nodes not connecting**
+   - Verified: Proxies are operational and nodes communicate
+   - Both proxies show `"good":1` - nodes are connected
+   - Verified with `curl http://10.20.1.11:8000/` and `curl http://10.20.1.12:8000/`
+
+### All Systems Operational ✅
+
+**Testing Complete (2025-12-29):**
+- Offline functionality verified working
+- Voice/video calls work without internet connection
+- Local DHT is functioning correctly
+- Auto-start verified after reboot
+
+### Working Configuration ✅
+
+**Docker command for Node 12:**
+```bash
+sudo docker run -d --network host --restart=unless-stopped --name dhttest \
+  ghcr.io/savoirfairelinux/opendht/opendht-alpine \
+  dhtnode -p 4222 -D -s --proxyserver 8000 -n 12345 -b 10.20.1.11:4222
+```
+
+**Docker command for Node 11:**
+```bash
+sudo docker run -d --network host --restart=unless-stopped --name dhttest \
+  ghcr.io/savoirfairelinux/opendht/opendht-alpine \
+  dhtnode -p 4222 -D -s --proxyserver 8000 -n 12345 -b 10.20.1.12:4222
+```
+
+**Key Points:**
+- `--restart=unless-stopped` ensures container auto-starts on boot
+- Each node bootstraps to the other node's mesh IP (10.20.1.x)
+- Network ID `-n 12345` isolates from public DHT
+- Port 4222 (DHT) and 8000 (proxy) are exposed via `--network host`
+
+**Jami Android settings:**
+- **Bootstrap:** `10.20.XX.1:4222` (local node's br-lan IP)
+- **Use DHT proxy:** Enabled
+- **DHT Proxy Address:** `10.20.XX.1:8000` (local node's br-lan IP, NO http:// prefix)
+- **Enable local peer discovery:** Enabled
+- **Use DHT proxy list:** Disabled
+- **UPnP:** Disabled
+- **TURN server:** Empty/Clear
+- **Name server:** Empty/Clear
+
+Where XX = node number (11 or 12). Each phone uses its connected node's br-lan gateway IP.
+
+### Completed Implementation ✅
+1. ✅ Document working configuration with bootstrap addresses
+2. ✅ Test offline mode - verified Jami calls work without internet
+3. ✅ Verified containers auto-start on boot
+
+### Future Enhancements
+1. Test roaming between nodes (phone moving from node 11 to node 12)
+2. Deploy to additional mesh nodes with proper bootstrap topology
+3. Monitor DHT health and performance under load
+4. Consider implementing DHT monitoring dashboard
 
 ---
 
