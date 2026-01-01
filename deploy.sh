@@ -19,10 +19,8 @@ sudo chown natak:natak /etc/nucleus/mesh.conf
 sudo mkdir -p /etc/systemd/network
 sudo cp "$SOURCE_DIR/etc/systemd/network/20-brlan.netdev" /etc/systemd/network/
 sudo cp "$SOURCE_DIR/etc/systemd/network/30-wlan0.network" /etc/systemd/network/
-sudo cp "$SOURCE_DIR/etc/systemd/network/40-eth0-lan.network" /etc/systemd/network/
 sudo chown natak:natak /etc/systemd/network/20-brlan.netdev
 sudo chown natak:natak /etc/systemd/network/30-wlan0.network
-sudo chown natak:natak /etc/systemd/network/40-eth0-lan.network
 
 sudo mkdir -p /etc/NetworkManager/conf.d
 sudo cp "$SOURCE_DIR/etc/NetworkManager/conf.d/unmanaged-devices.conf" /etc/NetworkManager/conf.d/
