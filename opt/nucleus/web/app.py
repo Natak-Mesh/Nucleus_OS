@@ -339,7 +339,8 @@ def get_mesh_nodes():
             routes_by_nexthop[nexthop] = []
         routes_by_nexthop[nexthop].append({
             'prefix': route['prefix'],
-            'metric': route['metric']
+            'metric': route['metric'],
+            'installed': route.get('installed', False)
         })
     
     # Correlate data using MAC address as the key

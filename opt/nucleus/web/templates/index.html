@@ -100,7 +100,11 @@
                             <span class="label">Gateway to:</span>
                             <ul class="routes-list">
                                 ${node.routes.map(route => `
-                                    <li>${route.prefix} <span class="route-cost">(cost: ${route.metric})</span></li>
+                                    <li class="${route.installed ? 'route-active' : 'route-available'}">
+                                        ${route.prefix} 
+                                        <span class="route-cost">(cost: ${route.metric})</span>
+                                        <span class="route-status">${route.installed ? '✓ active' : '○ available'}</span>
+                                    </li>
                                 `).join('')}
                             </ul>
                         </div>
