@@ -290,8 +290,8 @@ def parse_babeld_routes(dump_data):
                     route['via'] = parts[i + 1]
                 elif part == 'installed' and i + 1 < len(parts):
                     route['installed'] = parts[i + 1] == 'yes'
-            # Only include installed routes with a next-hop
-            if 'prefix' in route and 'via' in route and route.get('installed'):
+            # Include all routes with a next-hop (show what neighbor can reach)
+            if 'prefix' in route and 'via' in route:
                 routes.append(route)
     return routes
 

@@ -45,7 +45,7 @@ sudo pip3 install --break-system-packages flask
 
 # Meshtastic CLI - Tools for Meshtastic devices
 pip3 install --upgrade --break-system-packages pytap2
-pip3 install --upgrade --break-system-packages "meshtastic[cli]"
+pip3 install --upgrade --break-system-packages --ignore-installed "meshtastic[cli]"
 
 # Configure environment
 echo "[4/6] Configuring environment..."
