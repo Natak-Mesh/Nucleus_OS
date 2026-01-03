@@ -2,6 +2,13 @@
 """
 Natak Mesh - Web Interface
 Simple Flask app for monitoring mesh network connections
+
+ROUTE FILTERING:
+The "Gateway to" section in the web interface filters routes to reduce clutter:
+- Removes Docker networks (172.16.0.0/12) - internal container networks
+- Removes the mesh backbone network (10.20.1.0/24) - redundant since already connected
+- Keeps client-facing LAN networks (10.20.x.0/24 where x != 1)
+- Keeps internet gateway routes (0.0.0.0/0) if present
 """
 
 from flask import Flask, render_template, jsonify, request
@@ -296,6 +303,42 @@ def parse_babeld_routes(dump_data):
     return routes
 
 
+def filter_routes(routes):
+    """
+    Filter routes to show only interesting destinations in the web interface.
+    
+    Filters out:
+    - Docker networks (172.16.0.0/12)
+    - Mesh backbone network (10.20.1.0/24)
+    
+    Keeps:
+    - Client-facing LAN networks (e.g., 10.20.x.0/24 where x != 1)
+    - Internet gateway routes (0.0.0.0/0)
+    - Any other non-internal routes
+    """
+    filtered = []
+    for route in routes:
+        prefix = route['prefix']
+        
+        # Filter out Docker networks (172.16.0.0/12 covers 172.16-31.x.x)
+        if prefix.startswith('172.'):
+            try:
+                second_octet = int(prefix.split('.')[1].split('/')[0])
+                if 16 <= second_octet <= 31:
+                    continue  # Skip Docker networks
+            except (ValueError, IndexError):
+                pass
+        
+        # Filter out mesh backbone network (10.20.1.0/24)
+        if prefix == '10.20.1.0/24':
+            continue
+        
+        # Keep everything else (br-lan networks, internet gateways, etc.)
+        filtered.append(route)
+    
+    return filtered
+
+
 def get_mesh_nodes():
     """Get current mesh node status"""
     # Query babeld
@@ -392,8 +435,9 @@ def get_mesh_nodes():
         else:
             cost_quality = 'poor'
         
-        # Get routes via this neighbor
+        # Get routes via this neighbor and apply filtering
         neighbor_routes = routes_by_nexthop.get(babel_ipv6, [])
+        neighbor_routes = filter_routes(neighbor_routes)
         
         # Get WiFi stats for this MAC
         wifi = wifi_stats.get(mac, {})
