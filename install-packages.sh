@@ -2,6 +2,9 @@
 
 # Nucleus OS - Package Installation Script
 # Install all required software packages for a fresh node
+#
+# NOTE: Tailscale is installed but NOT enabled by default
+#       To activate: sudo systemctl enable --now tailscaled && sudo tailscale up
 
 set -e
 
@@ -77,6 +80,9 @@ fi
 # Install Tailscale
 echo "[7/8] Installing Tailscale..."
 curl -fsSL https://tailscale.com/install.sh | sh
+# Disable Tailscale - user can enable manually when ready
+sudo systemctl stop tailscaled
+sudo systemctl disable tailscaled
 
 # Install Raspberry Pi Connect
 echo "[8/8] Installing Raspberry Pi Connect..."
