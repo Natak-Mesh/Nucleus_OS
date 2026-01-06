@@ -34,28 +34,24 @@ g_ether
 ```
 
 ### 3. Configure the USB interface
-Create `/etc/network/interfaces.d/usb0`:
+Create `/etc/systemd/network/usb0.network`:
 
 ```bash
-sudo nano /etc/network/interfaces.d/usb0
+sudo nano /etc/systemd/network/usb0.network
 ```
 
 Add:
-```
-allow-hotplug usb0
-iface usb0 inet static
-    address 192.168.7.1
-    netmask 255.255.255.0
-```
-
-Or use systemd-networkd by creating `/etc/systemd/network/usb0.network`:
-
 ```
 [Match]
 Name=usb0
 
 [Network]
 Address=192.168.7.1/24
+```
+
+Enable systemd-networkd if not already active:
+```bash
+sudo systemctl enable systemd-networkd
 ```
 
 ### 4. Reboot
