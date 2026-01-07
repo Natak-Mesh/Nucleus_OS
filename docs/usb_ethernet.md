@@ -9,7 +9,7 @@ Configure the Pi 4's USB-C port to function as an ethernet interface for direct 
 ## Configuration
 
 ### 1. Enable USB OTG
-Edit `/boot/firmware/config.txt` (or `/boot/config.txt` on older systems):
+Edit `/boot/firmware/config.txt`:
 
 ```bash
 sudo nano /boot/firmware/config.txt
@@ -21,10 +21,10 @@ dtoverlay=dwc2
 ```
 
 ### 2. Load kernel modules
-Edit `/etc/modules`:
+Create `/etc/modules-load.d/usb-gadget.conf`:
 
 ```bash
-sudo nano /etc/modules
+sudo nano /etc/modules-load.d/usb-gadget.conf
 ```
 
 Add:
@@ -47,6 +47,13 @@ Name=usb0
 
 [Network]
 Address=192.168.7.1/24
+DHCPServer=yes
+
+[DHCPServer]
+PoolOffset=10
+PoolSize=50
+EmitDNS=yes
+DNS=192.168.7.1
 ```
 
 Enable systemd-networkd if not already active:
@@ -54,9 +61,15 @@ Enable systemd-networkd if not already active:
 sudo systemctl enable systemd-networkd
 ```
 
-### 4. Reboot
+### 4. Apply changes
+Reboot to load the modules and apply network configuration:
 ```bash
 sudo reboot
+```
+
+Or apply without rebooting (if modules are already loaded):
+```bash
+sudo networkctl reload
 ```
 
 ## Phone Configuration
