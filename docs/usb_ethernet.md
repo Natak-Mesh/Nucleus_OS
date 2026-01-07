@@ -52,9 +52,9 @@ DHCPServer=yes
 [DHCPServer]
 PoolOffset=10
 PoolSize=50
-EmitDNS=yes
-DNS=192.168.7.1
 ```
+
+**Note:** DNS is omitted for offline/local-only operation. Phone will connect to Pi by IP (192.168.7.1).
 
 Enable systemd-networkd if not already active:
 ```bash
