@@ -60,6 +60,14 @@ fi
 # Fix ownership for web interface to write config files
 sudo chown -R natak:natak /opt/nucleus/
 
+# Disable wpa_supplicant (conflicts with hostapd)
+sudo systemctl disable wpa_supplicant.service
+sudo systemctl stop wpa_supplicant.service
+
+# Enable hostapd for wireless AP
+sudo systemctl unmask hostapd.service
+sudo systemctl enable hostapd.service
+
 # Enable and start routing services (after network setup)
 sudo systemctl enable babeld.service
 sudo systemctl restart babeld.service
