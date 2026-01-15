@@ -42,16 +42,12 @@ Move high-write operations to RAM (tmpfs) and disable unnecessary write operatio
 **RAM Impact:** ~50MB (configurable)
 **Risk:** None (temp files are meant to be temporary)
 
-### 5. Increase Filesystem Commit Interval
-**What:** Write cached data to SD every 10 minutes instead of every 5 seconds
-**Why:** Batches writes together, reducing total write operations
-**RAM Impact:** None
-**Risk:** Very small - if power is lost, you might lose up to 10 min of writes
-
 ---
 
 ## Total RAM Usage
 Approximately **100MB** total (adjustable based on Pi model and available RAM)
+
+**Important:** Configuration changes, database updates, and any real file modifications will still write to the SD card immediately and persist across reboots as normal. We're only eliminating unnecessary writes (logs, temp files, timestamps).
 
 For a 4GB or 8GB Pi running TAKServer, this is negligible.
 
@@ -75,7 +71,6 @@ For a 4GB or 8GB Pi running TAKServer, this is negligible.
 - [ ] Add noatime mount option to /etc/fstab
 - [ ] Configure systemd journal for volatile storage only
 - [ ] Configure tmpfs for /tmp
-- [ ] Adjust filesystem commit interval
 - [ ] Test and verify all services start correctly
 - [ ] Document any RAM usage changes
 
