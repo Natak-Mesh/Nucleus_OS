@@ -60,6 +60,11 @@ fi
 # Fix ownership for web interface to write config files
 sudo chown -R natak:natak /opt/nucleus/
 
+# Deploy Reticulum config
+sudo mkdir -p /home/natak/.reticulum
+sudo cp "$SOURCE_DIR/home/natak/.reticulum/config" /home/natak/.reticulum/
+sudo chown -R natak:natak /home/natak/.reticulum
+
 # Disable wpa_supplicant (conflicts with hostapd)
 sudo systemctl disable wpa_supplicant.service
 sudo systemctl stop wpa_supplicant.service
