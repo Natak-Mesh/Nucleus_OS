@@ -37,18 +37,18 @@ This document outlines the plan to integrate BTech UV-Pro handheld radios with P
 - **Python Libraries:** None installed yet (needed for Flask integration)
 
 ### Development Directory Structure
-Test and development scripts located at `/opt/nucleus/uvpro/` (Pi filesystem only, not in git repo):
+Development scripts located at `/opt/nucleus/uvpro/` (git-tracked at `opt/nucleus/uvpro/`):
 
 ```
 /opt/nucleus/uvpro/
-├── bt_scan.py       # Bluetooth discovery and pairing
+├── bt_scan.py       # Bluetooth discovery and pairing ✅ IMPLEMENTED
 ├── bt_connect.py    # rfcomm serial connection manager
 ├── serial_test.py   # Raw TNC serial communication test
 └── rns_uvpro.py     # Reticulum SerialInterface integration test
 ```
 
 **File Descriptions:**
-- **bt_scan.py**: Scan for UV-Pro radios, initiate pairing via bluetoothctl wrapper
+- **bt_scan.py**: ✅ Scan for UV-Pro radios, initiate pairing via bluetoothctl wrapper - COMPLETED & TESTED
 - **bt_connect.py**: Establish Bluetooth serial port (/dev/rfcomm0), manage connections
 - **serial_test.py**: Validate TNC data transmission before Reticulum integration
 - **rns_uvpro.py**: Full Reticulum stack test with UV-Pro as SerialInterface
@@ -57,9 +57,16 @@ Test and development scripts located at `/opt/nucleus/uvpro/` (Pi filesystem onl
 
 #### Step 1: Activate Bluetooth Adapter
 ```bash
+# Unblock Bluetooth if soft-blocked (important!)
+rfkill list
+sudo rfkill unblock bluetooth
+
+# Bring adapter up
 sudo hciconfig hci0 up
 bluetoothctl show  # Verify adapter is powered on
 ```
+
+**Note:** Bluetooth may be soft-blocked by default. Use `rfkill unblock bluetooth` to enable before use.
 
 #### Step 2: Manual Pairing Test (Proof of Concept) ✅ COMPLETED
 
@@ -164,6 +171,34 @@ Choose one approach for programmatic Bluetooth control:
 - No additional dependencies
 
 **Recommendation:** Start with Option C for rapid prototyping, migrate to Option B for production
+
+#### Step 3.5: bt_scan.py Implementation ✅ COMPLETED (2026-01-15)
+
+**Status:** Implemented using subprocess wrapper (Option C) - fully functional and tested.
+
+**Features:**
+- `scan` - Scan for UV-Pro devices (filters by name "UV-PRO" or MAC prefix `38:D2:00`)
+- `scan-all` - Scan for all Bluetooth devices
+- `list` - List paired devices with connection status
+- `pair <MAC>` - Pair and trust device in one command
+- `trust <MAC>` - Trust device for auto-reconnect
+- `remove <MAC>` - Unpair/remove device
+- `json scan/list` - JSON output for API integration
+
+**Usage:**
+```bash
+python3 /opt/nucleus/uvpro/bt_scan.py list
+python3 /opt/nucleus/uvpro/bt_scan.py scan
+python3 /opt/nucleus/uvpro/bt_scan.py pair 38:D2:00:01:55:C0
+python3 /opt/nucleus/uvpro/bt_scan.py remove 38:D2:00:01:55:C0
+python3 /opt/nucleus/uvpro/bt_scan.py json list  # For Flask API
+```
+
+**Test Results:**
+- Successfully detects paired UV-Pro at `38:D2:00:01:55:C0`
+- Identifies device as "UV-PRO" with proper filtering
+- Shows paired/connected status correctly
+- Ready for Flask API integration
 
 #### Step 4: Development Testing Workflow
 Manual testing sequence before GUI integration:
@@ -271,6 +306,10 @@ Manual testing sequence before GUI integration:
 
 ---
 
-**Document Status:** Initial Planning  
-**Last Updated:** 2026-01-14  
-**Next Steps:** Begin Phase 1 - Bluetooth pairing infrastructure development
+**Document Status:** Phase 1 In Progress  
+**Last Updated:** 2026-01-15  
+**Next Steps:** 
+- Complete bt_connect.py (rfcomm serial binding)
+- Test serial communication with serial_test.py
+- Integrate with Reticulum via rns_uvpro.py
+- Build Flask API endpoints for web GUI
