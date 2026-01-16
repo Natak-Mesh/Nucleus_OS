@@ -11,6 +11,9 @@ SOURCE_DIR="$(pwd)"
 
 echo "Deploying from $SOURCE_DIR..."
 
+# Unblock Bluetooth
+sudo rfkill unblock bluetooth
+
 # Copy etc files (only static configs - generated ones are created by config_generation.sh)
 sudo mkdir -p /etc/nucleus
 sudo cp "$SOURCE_DIR/etc/nucleus/mesh.conf" /etc/nucleus/
