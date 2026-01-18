@@ -564,6 +564,327 @@ stopbits = 1
 
 ---
 
+## INTERFACE CONFIGURATION (DETAILED)
+
+### Backbone Interface
+Fast, efficient interface for interconnecting instances (POSIX only). Handles thousands of connections with low overhead. Fully compatible with TCP interfaces.
+
+**Listener:**
+```ini
+[[Backbone Listener]]
+type = BackboneInterface
+enabled = yes
+listen_on = 0.0.0.0        # or specific IP
+port = 4242
+mode = gateway             # for public gateways
+```
+
+**With IPv6:**
+```ini
+[[Backbone IPv6]]
+type = BackboneInterface
+enabled = yes
+prefer_ipv6 = yes
+device = eth0
+port = 4242
+```
+
+**Connecting Remote:**
+```ini
+[[Backbone Remote]]
+type = BackboneInterface
+enabled = yes
+remote = amsterdam.connect.reticulum.network
+target_port = 4251
+```
+
+**Over Yggdrasil:**
+```ini
+[[Yggdrasil Backbone]]
+type = BackboneInterface
+enabled = yes
+device = tun0
+port = 4343
+```
+
+### UDP Interface
+For IP broadcast/multicast communication. Has performance implications on WiFi.
+
+```ini
+[[UDP Interface]]
+type = UDPInterface
+enabled = yes
+listen_ip = 0.0.0.0
+listen_port = 4242
+forward_ip = 255.255.255.255
+forward_port = 4242
+
+# Or bind to specific device
+# device = eth0
+# port = 4242
+```
+
+### Pipe Interface
+Use any program as interface via stdin/stdout.
+
+```ini
+[[Pipe Interface]]
+type = PipeInterface
+enabled = yes
+command = netcat -l 5757
+respawn_delay = 5           # seconds
+```
+
+Writes packets to stdin of command, reads from stdout. Respawns on EOF.
+
+### AX.25 KISS Interface
+For amateur radio with callsign identification.
+
+```ini
+[[AX.25 KISS]]
+type = AX25KISSInterface
+enabled = yes
+callsign = NO1CLL
+ssid = 0
+port = /dev/ttyUSB0
+speed = 115200
+databits = 8
+parity = none
+stopbits = 1
+preamble = 150
+txtail = 10
+persistence = 200
+slottime = 20
+flow_control = false
+```
+
+### KISS Interface
+For packet radio TNCs and modems.
+
+```ini
+[[KISS TNC]]
+type = KISSInterface
+enabled = yes
+port = /dev/ttyUSB1
+speed = 115200
+databits = 8
+parity = none
+stopbits = 1
+preamble = 150
+txtail = 10
+persistence = 200
+slottime = 20
+flow_control = false
+
+# Optional identification
+# id_callsign = MYCALL-0
+# id_interval = 600        # seconds
+```
+
+### RNode Multi Interface
+For RNodes with multiple transceivers.
+
+```ini
+[[RNode Multi]]
+type = RNodeMultiInterface
+enabled = yes
+port = /dev/ttyACM0
+
+# Optional ID beacon
+# id_callsign = MYCALL-0
+# id_interval = 600
+
+# Subinterface 1 (high datarate)
+[[[High Datarate]]]
+enabled = yes
+frequency = 2400000000      # 2.4 GHz
+bandwidth = 1625000         # Hz
+txpower = 0                 # dBm
+vport = 1                   # virtual port
+spreadingfactor = 5
+codingrate = 5
+# airtime_limit_long = 100
+# airtime_limit_short = 100
+
+# Subinterface 2 (low datarate)
+[[[Low Datarate]]]
+enabled = yes
+frequency = 865600000       # 865.6 MHz
+bandwidth = 125000          # Hz
+txpower = 0                 # dBm
+vport = 0
+spreadingfactor = 7
+codingrate = 5
+```
+
+### Discoverable Interfaces
+Interfaces can announce themselves for auto-discovery. Requires LXMF module.
+
+**Enable Discovery:**
+```ini
+[[My Public Gateway]]
+type = BackboneInterface
+mode = gateway
+listen_on = 0.0.0.0
+port = 4242
+discoverable = yes
+
+# Basic metadata
+discovery_name = Region A Public Entrypoint
+announce_interval = 720     # minutes (12 hours)
+
+# Connectivity
+reachable_on = /usr/local/bin/get_external_ip.sh  # or IP/hostname
+
+# Security
+discovery_stamp_value = 24  # proof-of-work difficulty
+publish_ifac = yes          # include auth credentials
+
+# Optional location
+latitude = 51.99714
+longitude = -0.74195
+height = 15
+
+# For radio interfaces
+# discovery_frequency = 867200000
+# discovery_bandwidth = 125000
+# discovery_modulation = LoRa
+```
+
+**Private Discovery (encrypted):**
+```ini
+[[Private Gateway]]
+type = BackboneInterface
+discoverable = yes
+discovery_encrypt = yes     # requires network_identity
+publish_ifac = yes
+
+# In [reticulum] section:
+# network_identity = ~/.reticulum/storage/identities/my_network
+```
+
+**Bootstrap-Only Interface:**
+```ini
+[[Temporary Bootstrap]]
+type = TCPClientInterface
+enabled = yes
+target_host = bootstrap.example.com
+target_port = 4242
+bootstrap_only = yes        # auto-disconnect when better interfaces found
+```
+
+### Common Interface Options (Extended)
+
+**Core Settings:**
+- `enabled = yes|no` - Enable/disable interface
+- `mode = full|gateway|access_point|roaming|boundary` - Interface behavior
+- `outgoing = yes|no` - Allow transmission (default: yes)
+
+**Network Segmentation:**
+- `network_name = string` - Virtual network name
+- `passphrase = string` - Authentication passphrase
+- `ifac_size = 8-512` - Interface Access Code size in bits (auto-configured by default)
+
+**Traffic Control:**
+- `announce_cap = 1-100` - Max % bandwidth for announces (default: 2)
+- `bitrate = N` - Interface speed in bits/sec (auto-detected if possible)
+
+**Interface Modes Detailed:**
+
+**full** (default)
+- All discovery, meshing, transport functionality active
+- Use for most transport nodes
+
+**gateway**
+- Like full, but also resolves unknown paths for clients
+- Put client-facing interfaces in this mode
+- Allows immediate path discovery along gateway chains
+
+**access_point**
+- Quiet until used, short path expiry
+- Announces not auto-broadcast
+- Handles path requests like gateway
+- Use for serving wide areas with mobile users
+
+**roaming**
+- For physically mobile interfaces (vehicles, etc.)
+- Faster path expiry
+- Internal interfaces in vehicle should use default mode
+
+**boundary**
+- For interfaces connecting significantly different network segments
+- Example: LoRa network with high-speed Internet connection
+
+### Announce Rate Control
+
+Control per-destination announce rate on an interface:
+
+```ini
+[[Rate Controlled Interface]]
+type = AutoInterface
+enabled = yes
+
+announce_rate_target = 3600  # min seconds between announces per destination
+announce_rate_grace = 3      # violations before enforcement
+announce_rate_penalty = 7200 # added time when enforced (seconds)
+```
+
+**How it works:**
+1. Destination can violate target `grace` times
+2. After that, penalty is added to target
+3. With example above: 3600s → 3600s+7200s = 10800s (3 hours)
+4. Enforced until destination's actual rate drops below target
+
+**Check current stats:**
+```bash
+rnpath -r  # show announce rate info
+```
+
+### New Destination Rate Limiting
+
+Control rate of announces for newly seen destinations. Auto-enabled on public interfaces.
+
+```ini
+[[Public Interface]]
+type = TCPServerInterface
+enabled = yes
+
+# Ingress control (enabled by default on public interfaces)
+ingress_control = yes
+ic_new_time = 7200           # seconds interface considered "new" (default: 2h)
+ic_burst_freq_new = 3.5      # max announces/sec for new interfaces
+ic_burst_freq = 12           # max announces/sec for established
+ic_max_held_announces = 256  # max unique announces to queue
+ic_burst_hold = 60           # seconds after burst clears
+ic_burst_penalty = 300       # seconds before releasing held announces
+ic_held_release_interval = 30 # seconds between releasing held announces
+```
+
+**Behavior:**
+- If burst frequency exceeded, new destination announces held in queue
+- After burst clears + hold time + penalty time, held announces released slowly
+- Prevents spam from affecting known destinations
+- Works per sub-interface (each client isolated)
+
+### Announce Propagation Rules
+
+How announces propagate between interface types:
+
+```
+FROM ↓ TO →     Full  Gateway  AP  Roaming  Boundary
+────────────────────────────────────────────────────
+Full            ✓     ✓        ✓   ✓        ✓
+Gateway         ✓     ✓        ✓   ✓        ✓
+Access Point    ✓     ✓        ✗   ✗        ✗
+Roaming         ✓     ✓        ✗   ✗        ✗
+Boundary        ✓     ✓        ✗   ✗        ✗
+```
+
+- Access Point, Roaming, and Boundary interfaces don't auto-propagate announces
+- They only respond to specific path requests
+
+---
+
 ## PROTOCOL DETAILS
 
 ### Wire Format
