@@ -23,6 +23,9 @@
 		},
 		{
 			"path": "../takserver_certs"
+		},
+		{
+			"path": "../tak_certs"
 		}
 	],
 	"settings": {
