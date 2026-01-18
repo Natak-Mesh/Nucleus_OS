@@ -102,7 +102,7 @@ cat > /etc/hostapd/hostapd.conf <<EOF
 
 interface=wlan0
 ssid=$AP_NAME
-hw_mode=g
+hw_mode=a
 channel=$AP_CHANNEL
 auth_algs=1
 wmm_enabled=1
