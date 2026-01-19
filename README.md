@@ -12,5 +12,5 @@
 ### eth0 
 - Can either provide internet access to the node to be passed to mesh, or can provide local hard line access for devices to connect to mesh
 ## Onboard Access Point
-### Pi onboard Wi-Fi in AP mode
-- 5.8GHz band to connect external devices to the mesh node
+### Pi onboard Wi-Fi (wlan0) in AP mode
+- 5.8GHz AP to connect external devices to the mesh node
