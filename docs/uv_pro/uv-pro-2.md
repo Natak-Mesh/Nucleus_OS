@@ -37,17 +37,19 @@ connect 38:D2:00:01:55:C0
 exit
 ```
 
-**3. Bind to RFCOMM channel 4:**
+**3. Bind to RFCOMM channel 1:**
 ```bash
 sudo rfcomm release 0
-sudo rfcomm bind 0 38:D2:00:01:55:C0 4
+sudo rfcomm bind /dev/rfcomm0 38:D2:00:01:55:C0 1
 sudo chmod 666 /dev/rfcomm0
 rfcomm -a
 ```
 
+**CRITICAL:** The `1` at the end is required - without it or with a different number, it doesn't work.
+
 **Expected output:**
 ```
-rfcomm0: 38:D2:00:01:55:C0 channel 4 connected [tty-attached]
+rfcomm0: 38:D2:00:01:55:C0 channel 1 connected [tty-attached]
 ```
 
 ---
@@ -73,17 +75,19 @@ connect 38:D2:00:01:4D:E3
 exit
 ```
 
-**3. Bind to RFCOMM channel 4:**
+**3. Bind to RFCOMM channel 1:**
 ```bash
 sudo rfcomm release 0
-sudo rfcomm bind 0 38:D2:00:01:4D:E3 4
+sudo rfcomm bind /dev/rfcomm0 38:D2:00:01:4D:E3 1
 sudo chmod 666 /dev/rfcomm0
 rfcomm -a
 ```
 
+**CRITICAL:** The `1` at the end is required - without it or with a different number, it doesn't work.
+
 **Expected output:**
 ```
-rfcomm0: 38:D2:00:01:4D:E3 channel 4 connected [tty-attached]
+rfcomm0: 38:D2:00:01:4D:E3 channel 1 connected [tty-attached]
 ```
 
 ---
@@ -124,7 +128,8 @@ rfcomm0: 38:D2:00:01:4D:E3 channel 4 connected [tty-attached]
 **Key changes from previous attempts:**
 - `type = KISSInterface` (was SerialInterface)
 - `speed = 115200` (was 9600)
-- Binding to **channel 4** (was defaulting to channel 1)
+- Binding to **channel 1** explicitly (critical - without it or with a different number, it doesn't work)
+- Disabled Bluetooth Headset profile in `/etc/bluetooth/input.conf`
 
 **Restart Reticulum:**
 ```bash
@@ -210,5 +215,111 @@ KISSInterface[UV-RF]
 
 ---
 
+## Next Steps - Bluetooth Headset Profile Interference
+
+### Reference: VR-N76 RFCOMM Solution
+
+A similar radio (VR-N76) had an identical issue on Linux:
+- Bluetooth pairing: ✅ Works
+- RFCOMM binding: ✅ Works  
+- Data flow through serial: ❌ **Fails**
+
+**Root cause:** Linux was detecting the radio as a Bluetooth headset (A2DP/HFP audio profile), which prevented RFCOMM serial communication from working properly.
+
+**Solution:** Globally disable the Bluetooth Headset profile.
+
+### Theory
+
+When the UV-Pro is detected as a headset:
+- Linux routes data through audio profiles (A2DP/HFP) instead of serial (RFCOMM)
+- The /dev/rfcomm0 device exists and appears connected
+- But no actual data flows through the serial channel
+- The radio never receives KISS frames, so it never transmits
+
+This matches our symptoms exactly.
+
+### Test Procedure
+
+**1. Disable Bluetooth Headset profile:**
+```bash
+sudo nano /etc/bluetooth/input.conf
+```
+
+Add or modify:
+```ini
+[General]
+Disable=Headset
+```
+
+Save and exit (Ctrl+X, Y, Enter)
+
+**2. Restart Bluetooth service:**
+```bash
+sudo systemctl restart bluetooth
+```
+
+**3. Re-pair UV-Pro:**
+```bash
+# Remove old pairing
+bluetoothctl
+remove 38:D2:00:01:55:C0  # or 38:D2:00:01:4D:E3
+exit
+
+# Put radio in pairing mode, then:
+bluetoothctl
+power on
+agent on
+default-agent
+scan on
+# Wait for UV-PRO to appear
+pair <MAC>   # First attempt may fail
+pair <MAC>   # Retry succeeds
+trust <MAC>
+connect <MAC>
+exit
+```
+
+**4. Re-bind RFCOMM:**
+```bash
+sudo rfcomm release 0
+sudo rfcomm bind /dev/rfcomm0 <MAC> 1
+sudo chmod 666 /dev/rfcomm0
+rfcomm -a
+```
+
+**CRITICAL:** The `1` at the end is required - without it or with a different number, it doesn't work.
+
+**5. Restart Reticulum and test:**
+```bash
+sudo systemctl restart rnsd
+rnstatus
+```
+
+**6. Observe for TX activity:**
+- Watch radio TX LED
+- Listen for PTT key and data tone
+- Check `rnstatus` for TX/RX byte counts increasing
+
+### Important Notes
+
+- This must be done on **both Pi 0002 and Pi 0003**
+- If you need Bluetooth headset functionality on these machines, UDEV rules may be a better solution
+- After disabling headset profile, radios should be detected as serial devices only
+
+---
+
+## Next Test: VR-N76 Solution (2026-01-18 16:38)
+
+Found community post about VR-N76 radio with identical symptoms. Their solution:
+- Disable Bluetooth Headset profile: `sudo nano /etc/bluetooth/input.conf` → `Disable=Headset`
+- Bind to channel 1 explicitly: `sudo rfcomm bind /dev/rfcomm0 <MAC> 1`
+
+Radio was already paired and trusted after reboot. Need to:
+1. Set up rfcomm binding to channel 1
+2. Restart rnsd
+3. Test if it works
+
+---
+
 **Document Created:** 2026-01-17 19:53 EST  
-**Last Updated:** 2026-01-17 19:53 EST
+**Last Updated:** 2026-01-18 16:38 EST

@@ -115,3 +115,18 @@ type = TCPServerInterface
 enabled = yes
 device = br-lan         
 listen_port = 4242
+
+
+[[UV-RF]]
+type = KISSInterface
+enabled = yes
+port = /dev/rfcomm0
+speed = 115200
+databits = 8
+parity = none
+stopbits = 1
+preamble = 150
+txtail = 10
+persistence = 200
+slottime = 20
+flow_control = false
