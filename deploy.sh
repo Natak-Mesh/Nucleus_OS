@@ -4,6 +4,7 @@
 # NOTE: Run ./install-packages.sh first to install required software packages
 # NOTE: Run ./SSH_fix.sh on the node to optimize SSH settings
 # NOTE: Check IP addresses in babeld.conf, ensure they match your system
+# NOTE: Run 'sudo /opt/nucleus/bin/sd-wear-setup.sh' after deploy to minimize SD card wear
 
 set -e
 
@@ -50,10 +51,12 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/config_generation.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/mesh-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/eth0-mode.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/opendht-start.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
 sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
 sudo chmod +x /opt/nucleus/bin/opendht-start.sh
+sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
 
 # Copy web directory if exists
 if [ -d "$SOURCE_DIR/opt/nucleus/web" ]; then
