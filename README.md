@@ -1,4 +1,4 @@
-# Communication Interfaces
+# Interfaces
 ## Wi-Fi
 ### 2.4 GHz 802.11s mesh network on wlan1. 
 - WPA3 encryption
@@ -9,3 +9,8 @@
 - Powered by USB connection to radio SBC
 - USB connection provides data path, can be configured to run Rnode firmware or interact with Meshtastic CLI on radio
 ## Ethernet
+### eth0 
+- Can either provide internet access to the node to be passed to mesh, or can provide local hard line access for devices to connect to mesh
+## Onboard Access Point
+### Pi onboard Wi-Fi in AP mode
+- 5.8GHz band to connect external devices to the mesh node
