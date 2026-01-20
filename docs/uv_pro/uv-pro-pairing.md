@@ -92,7 +92,7 @@ Edit `~/.reticulum/config`:
 type = KISSInterface
 enabled = true
 port = /dev/rfcomm0
-speed = 1200
+speed = 1200           # Tested speeds: 1200 ✓, 9600 ✓, 115200 (next to test)
 databits = 8
 parity = none
 stopbits = 1
@@ -183,3 +183,9 @@ KISSInterface[UV-RF]
 **Connection lost after reboot:**
 - Run reconnect script
 - RFCOMM binding doesn't persist across reboots
+
+**Connection issues after congestion/jamming:**
+- Clear Reticulum storage: `rm -rf ~/.reticulum/storage/*`
+- Reboot the nodes
+- Run through the radio connection again (rfcomm bind, restart radio, unbind then rebind)
+- Restart rnsd: `sudo systemctl restart rnsd`
