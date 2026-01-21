@@ -80,17 +80,12 @@ fi
 # Install Tailscale
 echo "[7/8] Installing Tailscale..."
 curl -fsSL https://tailscale.com/install.sh | sh
-# Disable Tailscale - user can enable manually when ready
-sudo systemctl stop tailscaled
-sudo systemctl disable tailscaled
-
-# Install Raspberry Pi Connect
-echo "[8/8] Installing Raspberry Pi Connect..."
-sudo apt install -y rpi-connect
-loginctl enable-linger $USER
+# Enable Tailscale daemon (user can configure profiles manually when ready)
+sudo systemctl enable tailscaled
+sudo systemctl start tailscaled
 
 # Enable NetworkManager
-echo "[9/9] Enabling NetworkManager..."
+echo "[8/8] Enabling NetworkManager..."
 sudo systemctl enable NetworkManager
 
 echo ""

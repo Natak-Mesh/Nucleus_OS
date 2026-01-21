@@ -32,6 +32,12 @@ sudo cp "$SOURCE_DIR/etc/smcroute.conf" /etc/
 sudo cp "$SOURCE_DIR/etc/babeld.conf" /etc/
 sudo chown natak:natak /etc/babeld.conf
 
+# Copy sudoers file for Tailscale web GUI
+sudo mkdir -p /etc/sudoers.d
+sudo cp "$SOURCE_DIR/etc/sudoers.d/tailscale-web" /etc/sudoers.d/
+sudo chmod 0440 /etc/sudoers.d/tailscale-web
+sudo chown root:root /etc/sudoers.d/tailscale-web
+
 # Copy systemd service files
 sudo cp "$SOURCE_DIR/etc/systemd/system/brlan-setup.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-start.service" /etc/systemd/system/
