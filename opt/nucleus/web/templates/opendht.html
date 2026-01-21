@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Natak Mesh - OpenDHT Status</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
+        <nav>
+            <button class="nav-btn" onclick="window.location.href='/'">Dashboard</button>
+            <button class="nav-btn" onclick="window.location.href='/config'">Configuration</button>
+            <button class="nav-btn" onclick="window.location.href='/scan'">Wi-Fi Scan</button>
+            <button class="nav-btn" onclick="window.location.href='/remote'">Remote Access</button>
+            <button class="nav-btn" onclick="window.location.href='/ethernet'">Ethernet</button>
+        </nav>
+    </header>
+
+    <main>
+        <div class="dashboard">
+            <h1>OpenDHT / Jami Support</h1>
+            
+            <div id="status-container" class="node-grid">
+                <div class="loading">Loading OpenDHT status...</div>
+            </div>
+
+            <div id="config-section" style="display: none; margin-top: 24px;">
+                <div class="node-card">
+                    <div class="node-header">
+                        <span class="node-ip">Configuration</span>
+                    </div>
+                    <div class="node-body">
+                        <div class="node-metric">
+                            <span class="label">Network ID:</span>
+                            <span class="value" id="network-id">-</span>
+                        </div>
+                        <div class="node-metric">
+                            <span class="label">Mesh IP:</span>
+                            <span class="value" id="mesh-ip">-</span>
+                        </div>
+                        <div class="node-metric">
+                            <span class="label">br-lan Gateway:</span>
+                            <span class="value" id="br-lan-ip">-</span>
+                        </div>
+                        <div class="node-metric">
+                            <span class="label">Bootstrap IPs:</span>
+                            <span class="value" id="bootstrap-ips">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="node-card">
+                    <div class="node-header">
+                        <span class="node-ip">Jami Client Configuration</span>
+                    </div>
+                    <div class="node-body">
+                        <div class="node-metric">
+                            <span class="label">DHT Proxy Address:</span>
+                            <span class="value" id="proxy-url" style="font-family: monospace; color: var(--accent-primary);">-</span>
+                        </div>
+                        <div class="node-metric">
+                            <span class="label">Bootstrap:</span>
+                            <span class="value" id="bootstrap-url" style="font-family: monospace; color: var(--accent-primary);">-</span>
+                        </div>
+                        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color); font-size: 13px; color: var(--text-secondary);">
+                            <strong>Note:</strong> In Jami settings, enter DHT Proxy Address <em>without</em> the http:// prefix
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="actions-section" style="display: none; margin-top: 24px; text-align: center;">
+                <button id="refresh-btn" class="nav-btn" onclick="refreshStatus()">Refresh Status</button>
+                <button id="restart-btn" class="nav-btn" onclick="restartContainer()" style="background-color: var(--color-warning);">Restart Container</button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let currentStatus = null;
+
+        async function refreshStatus() {
+            try {
+                const response = await fetch('/api/opendht/status');
+                const data = await response.json();
+                currentStatus = data;
+                renderStatus(data);
+            } catch (error) {
+                console.error('Error fetching status:', error);
+                document.getElementById('status-container').innerHTML = '<div class="error">Error loading OpenDHT status</div>';
+            }
+        }
+
+        function renderStatus(data) {
+            const container = document.getElementById('status-container');
+            
+            // Container status card
+            const containerStatus = data.container_running ? 'RUNNING' : 'STOPPED';
+            const containerClass = data.container_running ? 'connected' : 'disconnected';
+            const containerColor = data.container_running ? 'var(--color-connected)' : 'var(--color-disconnected)';
+            
+            // Peer count card
+            const peerCount = data.peers_connected;
+            const peerStatus = peerCount >= 1 ? 'Healthy' : 'No Peers';
+            const peerClass = peerCount >= 1 ? 'connected' : 'disconnected';
+            const peerColor = peerCount >= 1 ? 'var(--color-connected)' : 'var(--color-disconnected)';
+            
+            // Render status cards
+            container.innerHTML = `
+                <div class="node-card ${containerClass}">
+                    <div class="node-header">
+                        <span class="node-ip">Container Status</span>
+                    </div>
+                    <div class="node-body" style="text-align: center;">
+                        <div style="font-size: 48px; font-weight: bold; color: ${containerColor}; margin: 16px 0;">
+                            ${containerStatus === 'RUNNING' ? '●' : '○'}
+                        </div>
+                        <div style="font-size: 24px; font-weight: bold; margin-bottom: 8px;">
+                            ${containerStatus}
+                        </div>
+                        <div style="font-size: 14px; color: var(--text-secondary);">
+                            ${containerStatus === 'RUNNING' ? 'Container is active' : 'Container is not running'}
+                        </div>
+                    </div>
+                    <div class="node-status-label ${containerClass}">
+                        ${containerStatus}
+                    </div>
+                </div>
+
+                <div class="node-card ${peerClass}">
+                    <div class="node-header">
+                        <span class="node-ip">DHT Network</span>
+                    </div>
+                    <div class="node-body" style="text-align: center;">
+                        <div style="font-size: 48px; font-weight: bold; color: ${peerColor}; margin: 16px 0;">
+                            ${peerCount}
+                        </div>
+                        <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">
+                            Connected Peers
+                        </div>
+                        <div style="font-size: 14px; color: var(--text-secondary);">
+                            ${peerStatus}
+                        </div>
+                        ${peerCount === 0 ? `
+                        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color); font-size: 13px; color: var(--color-warning);">
+                            ⚠ No DHT peers connected. Check bootstrap IPs.
+                        </div>
+                        ` : ''}
+                    </div>
+                    <div class="node-status-label ${peerClass}">
+                        ${peerStatus.toUpperCase()}
+                    </div>
+                </div>
+            `;
+            
+            // Show config and actions sections
+            document.getElementById('config-section').style.display = 'block';
+            document.getElementById('actions-section').style.display = 'block';
+            
+            // Populate configuration
+            document.getElementById('network-id').textContent = data.network_id;
+            document.getElementById('mesh-ip').textContent = data.mesh_ip;
+            document.getElementById('br-lan-ip').textContent = data.br_lan_ip;
+            document.getElementById('bootstrap-ips').textContent = data.bootstrap_ips.join(', ') || 'None';
+            
+            // Jami client config
+            document.getElementById('proxy-url').textContent = data.proxy_url;
+            const bootstrapUrl = data.br_lan_ip !== 'N/A' ? `${data.br_lan_ip}:4222` : 'N/A';
+            document.getElementById('bootstrap-url').textContent = bootstrapUrl;
+        }
+
+        async function restartContainer() {
+            if (!confirm('Are you sure you want to restart the OpenDHT container?')) {
+                return;
+            }
+            
+            const button = document.getElementById('restart-btn');
+            button.disabled = true;
+            button.textContent = 'Restarting...';
+            
+            try {
+                const response = await fetch('/api/opendht/restart', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('OpenDHT container restarted successfully');
+                    // Wait a bit then refresh
+                    setTimeout(refreshStatus, 3000);
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error restarting container:', error);
+                alert('Error restarting container: ' + error.message);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Restart Container';
+            }
+        }
+
+        // Initial load
+        refreshStatus();
+    </script>
+</body>
+</html>

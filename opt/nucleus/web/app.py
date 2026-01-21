@@ -852,6 +852,106 @@ def ethernet():
     return render_template('ethernet.html')
 
 
+@app.route('/opendht')
+def opendht():
+    """OpenDHT monitoring page"""
+    return render_template('opendht.html')
+
+
+@app.route('/api/opendht/status', methods=['GET'])
+def get_opendht_status():
+    """Get OpenDHT container status and configuration"""
+    try:
+        import json
+        
+        # Check Docker container status
+        container_running = False
+        try:
+            result = subprocess.run(['sudo', 'docker', 'ps', '--filter', 'name=dhtnode', '--format', '{{.Status}}'],
+                                  capture_output=True, text=True, timeout=5)
+            container_running = 'Up' in result.stdout
+        except Exception as e:
+            print(f"Error checking container: {e}")
+        
+        # Query DHT peer count
+        peers_connected = 0
+        try:
+            result = subprocess.run(['curl', '-s', 'http://127.0.0.1:8000/'],
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout:
+                data = json.loads(result.stdout)
+                # DHT response is nested: {"ipv4": {"good": 1}}
+                peers_connected = data.get('ipv4', {}).get('good', 0)
+        except Exception as e:
+            print(f"Error querying DHT peers: {e}")
+        
+        # Read configuration from mesh.conf
+        config = {}
+        try:
+            with open('/etc/nucleus/mesh.conf', 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        config[key] = value.strip('"')
+        except Exception as e:
+            print(f"Error reading config: {e}")
+        
+        # Extract values
+        mesh_ip = config.get('MESH_IP', '10.20.1.X')
+        network_id = config.get('OPENDHT_NETWORK_ID', 'N/A')
+        bootstrap_ips_str = config.get('OPENDHT_BOOTSTRAP_IPS', '')
+        bootstrap_ips = [ip.strip() for ip in bootstrap_ips_str.split(',') if ip.strip()]
+        
+        # Calculate br-lan IP from mesh IP (10.20.1.X -> 10.20.X.1)
+        br_lan_ip = 'N/A'
+        try:
+            parts = mesh_ip.split('.')
+            if len(parts) == 4 and parts[0] == '10' and parts[1] == '20' and parts[2] == '1':
+                node_num = parts[3]
+                br_lan_ip = f'10.20.{node_num}.1'
+        except Exception as e:
+            print(f"Error calculating br-lan IP: {e}")
+        
+        proxy_url = f'{br_lan_ip}:8000' if br_lan_ip != 'N/A' else 'N/A'
+        
+        return jsonify({
+            'container_running': container_running,
+            'peers_connected': peers_connected,
+            'network_id': network_id,
+            'mesh_ip': mesh_ip,
+            'br_lan_ip': br_lan_ip,
+            'bootstrap_ips': bootstrap_ips,
+            'proxy_url': proxy_url
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/opendht/restart', methods=['POST'])
+def restart_opendht():
+    """Restart OpenDHT container"""
+    try:
+        result = subprocess.run(['sudo', '/opt/nucleus/bin/opendht-start.sh'],
+                              capture_output=True, text=True, timeout=30)
+        
+        if result.returncode != 0:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to restart OpenDHT',
+                'output': result.stderr or result.stdout
+            }), 500
+        
+        return jsonify({
+            'success': True,
+            'message': 'OpenDHT container restarted'
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Command timed out'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/eth0-mode/status', methods=['GET'])
 def get_eth0_status():
     """Get current eth0 mode"""

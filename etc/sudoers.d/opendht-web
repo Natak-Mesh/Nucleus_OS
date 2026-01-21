@@ -1,0 +1,5 @@
+# Allow www-data to run Docker commands for OpenDHT monitoring
+www-data ALL=(ALL) NOPASSWD: /usr/bin/docker ps *
+
+# Allow www-data to restart OpenDHT container
+www-data ALL=(ALL) NOPASSWD: /opt/nucleus/bin/opendht-start.sh
