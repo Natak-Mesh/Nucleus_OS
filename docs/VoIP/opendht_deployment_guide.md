@@ -23,6 +23,8 @@ Edit `/etc/nucleus/mesh.conf` (or your local copy before deployment) to configur
 # OpenDHT Configuration (Jami Support)
 OPENDHT_ENABLED=true
 OPENDHT_NETWORK_ID=12345
+# IMPORTANT: Update the IPs below to match YOUR actual mesh node IPs
+# Example: If you have nodes at 10.20.1.2 and 10.20.1.3, use: OPENDHT_BOOTSTRAP_IPS="10.20.1.2,10.20.1.3"
 OPENDHT_BOOTSTRAP_IPS="10.20.1.11,10.20.1.12,10.20.1.13"
 ```
 
@@ -30,8 +32,10 @@ OPENDHT_BOOTSTRAP_IPS="10.20.1.11,10.20.1.12,10.20.1.13"
 - `OPENDHT_ENABLED`: Set to `true` to enable OpenDHT, `false` to disable
 - `OPENDHT_NETWORK_ID`: Network ID to isolate from public DHT (default: 12345)
 - `OPENDHT_BOOTSTRAP_IPS`: Comma-separated list of mesh IPs of other nodes
-  - The script automatically filters out the current node's IP
+  - **CRITICAL:** Replace the example IPs with your actual mesh node IPs
+  - The script automatically filters out the current node's own IP
   - List at least 2-3 other node IPs for redundancy
+  - Example: If your mesh has nodes at 10.20.1.2, 10.20.1.3, 10.20.1.5, list all of them
 
 ### 3. Deploy Configuration
 Run the deployment script to copy all files to system locations:
@@ -125,23 +129,71 @@ Where `XX` is your node number (e.g., 10.20.12.1 for node 12).
 
 ## Troubleshooting
 
+### Jami Shows "No Distributor" Error
+
+This is the most common issue - Jami cannot connect to the DHT network.
+
+**Step 1: Verify DHT is working between nodes**
+```bash
+# On the node where Jami is having issues:
+curl http://127.0.0.1:8000/
+```
+
+Look for `"good":` value in the response:
+- `"good":0` = **Problem!** No DHT peers connected
+- `"good":1` or higher = DHT is working between nodes
+
+**Step 2: If "good":0, check bootstrap configuration**
+```bash
+# View which IP the container is trying to bootstrap to:
+sudo docker logs dhtnode 2>&1 | head -10
+
+# Check if that IP is actually in your mesh:
+ping -c 3 <bootstrap_ip>
+
+# Check if the other node has DHT running:
+curl http://<bootstrap_ip>:8000/
+```
+
+**Common cause:** Bootstrap IPs in `/etc/nucleus/mesh.conf` are incorrect or from an old mesh configuration.
+
+**Solution:**
+1. Update `OPENDHT_BOOTSTRAP_IPS` in `/etc/nucleus/mesh.conf` with your actual mesh node IPs
+2. Restart OpenDHT: `sudo /opt/nucleus/bin/opendht-start.sh`
+3. Verify: `curl http://127.0.0.1:8000/` should show `"good":1` or higher
+
+**Step 3: If DHT is working but Jami still says "No Distributor"**
+
+The issue is likely Jami configuration. Verify from your phone's browser:
+```
+http://10.20.XX.1:8000/
+```
+(Replace XX with your node number)
+
+If this loads in the browser but Jami doesn't work, check Jami settings:
+- **DHT Proxy Address** must be `10.20.XX.1:8000` (br-lan gateway IP, NOT mesh IP)
+- **NO** `http://` prefix in the DHT Proxy Address field
+- **Use DHT proxy:** Must be Enabled ✓
+- **Use DHT proxy list:** Must be Disabled ✗
+
 ### Container Not Starting
 Check Docker service status:
 ```bash
 sudo systemctl status docker
 ```
 
-### No DHT Peers
+### No DHT Peers Connecting
 - Verify bootstrap IPs are correct and reachable
 - Check that mesh network is up: `ip addr show wlan1`
 - Verify firewall allows ports 4222 and 8000
+- Ensure at least 2 nodes have OpenDHT running
 
 ### Restart OpenDHT
 ```bash
-docker stop dhtnode
-docker rm dhtnode
-/opt/nucleus/bin/opendht-start.sh
+sudo /opt/nucleus/bin/opendht-start.sh
 ```
+
+This script automatically stops and removes the old container before starting a new one.
 
 ## Disabling OpenDHT
 
