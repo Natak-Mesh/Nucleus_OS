@@ -7,11 +7,20 @@
 - Takserver can be run on the Nucleus to provide a portable server that stays with the user
 - ATAK can take advantage of the onboard Meshtastic radio with the official Meshtastic ATAK plugin giving a long range/low throughput data connection in addition to the IP mesh
 ## Meshtastic
-- continue
+- Onboard RAK4631 Meshtastic radio, acts just like a stand alone unit. Powered by the Nucleus, interface via the official Meshtastic app.
 ## Reticulum
+- Onboard Reticulum instance. Configured as a transport instance for devices connected via wlan0 or eth0. Will work across mesh network or itnernet if connected
+- Interface for Btech UV-Pro can be activated
 ## "Off Grid" text/VoIP
+- Jami can take advantage of onboard OpenDHT server for text and voice over the IP mesh network
 ## Internet Gateway
+- If set in WAN mode, ethernet connection can pass internet back to mesh network
 ## Wi-Fi Scanning
+- Airmon package allows scanning of the local 2.4 GHz environment to allow selection of the least congested band for mesh connections.
+- Part of the Aircrack-NG tool suite that can be configured to users desire
+## Tailscale
+- Tailscale instance for user configured VPN.
+- Will come preconfigured with the natak tailnet to allow remote updates and troubleshooting if desired. User activated and can be switched as desired via web UI
 # Interfaces
 ## Wi-Fi
 ### 2.4 GHz 802.11s mesh network on wlan1. 
