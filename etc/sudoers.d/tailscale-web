@@ -1,0 +1,5 @@
+# Allow natak user to run Tailscale commands without password for web GUI
+natak ALL=(ALL) NOPASSWD: /usr/bin/tailscale up
+natak ALL=(ALL) NOPASSWD: /usr/bin/tailscale down
+natak ALL=(ALL) NOPASSWD: /usr/bin/tailscale switch
+natak ALL=(ALL) NOPASSWD: /usr/bin/tailscale switch *

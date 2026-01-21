@@ -907,86 +907,180 @@ def switch_eth0_mode():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/rpi-connect/status', methods=['GET'])
-def get_rpi_connect_status():
-    """Get Raspberry Pi Connect status"""
+@app.route('/api/tailscale/status', methods=['GET'])
+def get_tailscale_status():
+    """Get Tailscale status"""
     try:
-        result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'status'],
-                              capture_output=True, text=True)
+        result = subprocess.run(['tailscale', 'status', '--json'],
+                              capture_output=True, text=True, timeout=5)
         
-        # Check both stdout and stderr for "not running"
-        combined_output = (result.stdout + result.stderr).lower()
-        
-        if 'not running' in combined_output:
+        if result.returncode != 0:
             return jsonify({
-                'running': False,
-                'message': 'Raspberry Pi Connect is not running'
+                'connected': False,
+                'status': 'Stopped'
             })
         
-        # Parse status fields from stdout (original case)
-        status = {'running': True}
-        for line in result.stdout.split('\n'):
-            line = line.strip()
-            if ':' in line:
-                key, value = line.split(':', 1)
-                key = key.strip().lower().replace(' ', '_')
-                value = value.strip()
-                status[key] = value
+        import json
+        status_data = json.loads(result.stdout)
         
-        return jsonify(status)
+        # Extract self node information
+        self_info = status_data.get('Self', {})
+        backend_state = status_data.get('BackendState', '')
+        
+        # Get Tailscale IP
+        ip_result = subprocess.run(['tailscale', 'ip', '-4'],
+                                  capture_output=True, text=True, timeout=5)
+        tailscale_ip = ip_result.stdout.strip() if ip_result.returncode == 0 else 'N/A'
+        
+        # Get current tailnet name from switch list
+        tailnet_name = 'N/A'
+        switch_result = subprocess.run(['sudo', 'tailscale', 'switch', '--list'],
+                                      capture_output=True, text=True, timeout=5)
+        if switch_result.returncode == 0:
+            for line in switch_result.stdout.strip().split('\n')[1:]:
+                if not line.strip():
+                    continue
+                parts = line.split()
+                if len(parts) >= 3:
+                    account = parts[2]
+                    if account.endswith('*'):
+                        tailnet_name = parts[1]
+                        break
+        
+        # Determine connection status
+        connected = backend_state == 'Running'
+        
+        return jsonify({
+            'connected': connected,
+            'ip': tailscale_ip if connected else 'N/A',
+            'tailnet': tailnet_name if connected else 'N/A',
+            'hostname': self_info.get('HostName', 'N/A'),
+            'status': backend_state
+        })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'connected': False,
+            'status': 'Error',
+            'error': str(e)
+        }), 500
 
 
-@app.route('/api/rpi-connect/on', methods=['POST'])
-def turn_rpi_connect_on():
-    """Turn on Raspberry Pi Connect"""
+@app.route('/api/tailscale/up', methods=['POST'])
+def turn_tailscale_up():
+    """Turn on Tailscale"""
     try:
-        result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'on'],
-                              capture_output=True, text=True)
+        result = subprocess.run(['sudo', 'tailscale', 'up'],
+                              capture_output=True, text=True, timeout=30)
         
-        # Check actual status regardless of exit code
-        status_result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'status'],
-                                     capture_output=True, text=True)
-        
-        if 'not running' in status_result.stdout.lower():
+        if result.returncode != 0:
             return jsonify({
                 'success': False,
-                'error': 'Failed to start Raspberry Pi Connect',
+                'error': 'Failed to start Tailscale',
                 'output': result.stderr or result.stdout
             }), 500
         
         return jsonify({
             'success': True,
-            'message': 'Raspberry Pi Connect started'
+            'message': 'Tailscale connected'
         })
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Command timed out'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/rpi-connect/off', methods=['POST'])
-def turn_rpi_connect_off():
-    """Turn off Raspberry Pi Connect"""
+@app.route('/api/tailscale/down', methods=['POST'])
+def turn_tailscale_down():
+    """Turn off Tailscale"""
     try:
-        result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'off'],
-                              capture_output=True, text=True)
+        result = subprocess.run(['sudo', 'tailscale', 'down'],
+                              capture_output=True, text=True, timeout=10)
         
-        # Check actual status
-        status_result = subprocess.run(['sudo', '-u', 'natak', 'env', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', 'rpi-connect', 'status'],
-                                     capture_output=True, text=True)
-        
-        combined_output = (status_result.stdout + status_result.stderr).lower()
-        if 'not running' not in combined_output:
+        if result.returncode != 0:
             return jsonify({
                 'success': False,
-                'error': 'Failed to stop Raspberry Pi Connect',
+                'error': 'Failed to stop Tailscale',
                 'output': result.stderr or result.stdout
             }), 500
         
         return jsonify({
             'success': True,
-            'message': 'Raspberry Pi Connect stopped'
+            'message': 'Tailscale disconnected'
         })
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Command timed out'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tailscale/profiles', methods=['GET'])
+def get_tailscale_profiles():
+    """Get list of Tailscale profiles"""
+    try:
+        result = subprocess.run(['sudo', 'tailscale', 'switch', '--list'],
+                              capture_output=True, text=True, timeout=5)
+        
+        if result.returncode != 0:
+            return jsonify({'profiles': []})
+        
+        profiles = []
+        lines = result.stdout.strip().split('\n')
+        
+        # Skip header line (ID    Tailnet    Account)
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            
+            # Split by whitespace, handling the * marker for current profile
+            parts = line.split()
+            if len(parts) >= 3:
+                profile_id = parts[0]
+                tailnet = parts[1]
+                account = parts[2]
+                
+                # Check if this is the current profile (account ends with *)
+                is_current = account.endswith('*')
+                if is_current:
+                    account = account.rstrip('*')
+                
+                profiles.append({
+                    'id': profile_id,
+                    'tailnet': tailnet,
+                    'account': account,
+                    'current': is_current
+                })
+        
+        return jsonify({'profiles': profiles})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tailscale/switch', methods=['POST'])
+def switch_tailscale_profile():
+    """Switch to a different Tailscale profile"""
+    try:
+        data = request.get_json()
+        profile_id = data.get('profile_id')
+        
+        if not profile_id:
+            return jsonify({'error': 'Missing profile_id'}), 400
+        
+        result = subprocess.run(['sudo', 'tailscale', 'switch', profile_id],
+                              capture_output=True, text=True, timeout=30)
+        
+        if result.returncode != 0:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to switch profile',
+                'output': result.stderr or result.stdout
+            }), 500
+        
+        return jsonify({
+            'success': True,
+            'message': f'Switched to profile {profile_id}'
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Command timed out'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
