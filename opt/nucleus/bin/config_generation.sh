@@ -11,7 +11,7 @@
 #       ...         ....        ..   
 
 #############################################
-#        N A T A K   -   Nucleus OS v2.0    #
+#        N A T A K   -   Nucleus OS         #
 #                                           #
 #      Configuration File Generation        #
 #############################################

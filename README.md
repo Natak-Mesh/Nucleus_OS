@@ -11,6 +11,7 @@
 ## Reticulum
 ## "Off Grid" text/VoIP
 ## Internet Gateway
+## Wi-Fi Scanning
 # Interfaces
 ## Wi-Fi
 ### 2.4 GHz 802.11s mesh network on wlan1. 
