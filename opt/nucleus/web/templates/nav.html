@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Natak Mesh - Main Menu</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .nav-page {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        .node-ip-display {
+            font-size: 48px;
+            font-weight: bold;
+            color: var(--accent-primary);
+            margin: 30px 0;
+            font-family: monospace;
+        }
+        .nav-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 40px;
+        }
+        .nav-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 30px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            color: var(--text-primary);
+            display: block;
+        }
+        .nav-card:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--accent-primary);
+            transform: translateY(-4px);
+        }
+        .nav-card h3 {
+            margin: 0 0 10px 0;
+            color: var(--accent-secondary);
+            font-size: 20px;
+        }
+        .nav-card p {
+            margin: 0;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
+    </header>
+
+    <main>
+        <div class="nav-page">
+            <h1>Natak Mesh Node</h1>
+            <div class="node-ip-display" id="node-ip">Loading...</div>
+            
+            <div class="nav-grid">
+                <a href="/monitor" class="nav-card">
+                    <h3>Network Monitor</h3>
+                    <p>View mesh nodes and connections</p>
+                </a>
+                
+                <a href="/config" class="nav-card">
+                    <h3>Configuration</h3>
+                    <p>Mesh and network settings</p>
+                </a>
+                
+                <a href="/scan" class="nav-card">
+                    <h3>Wi-Fi Channel Scan</h3>
+                    <p>Analyze channel congestion</p>
+                </a>
+                
+                <a href="/remote" class="nav-card">
+                    <h3>Remote Access</h3>
+                    <p>Tailscale management</p>
+                </a>
+                
+                <a href="/ethernet" class="nav-card">
+                    <h3>Ethernet Mode</h3>
+                    <p>WAN/LAN configuration</p>
+                </a>
+                
+                <a href="/opendht" class="nav-card">
+                    <h3>OpenDHT Status</h3>
+                    <p>Jami DHT monitoring</p>
+                </a>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        async function loadNodeIP() {
+            try {
+                const response = await fetch('/api/node-ip');
+                const data = await response.json();
+                document.getElementById('node-ip').textContent = data.ip || 'N/A';
+            } catch (error) {
+                console.error('Error loading node IP:', error);
+                document.getElementById('node-ip').textContent = 'Error';
+            }
+        }
+        
+        loadNodeIP();
+    </script>
+</body>
+</html>

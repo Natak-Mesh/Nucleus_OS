@@ -758,9 +758,30 @@ def run_channel_scan(duration):
 
 @app.route('/')
 def index():
-    """Main dashboard page"""
-    return render_template('index.html', 
+    """Main navigation page"""
+    return render_template('nav.html')
+
+
+@app.route('/monitor')
+def monitor():
+    """Network monitoring dashboard"""
+    return render_template('monitor.html', 
                          refresh_interval=REFRESH_INTERVAL)
+
+
+@app.route('/api/node-ip')
+def get_node_ip():
+    """Get node IP address from mesh config"""
+    try:
+        with open('/etc/nucleus/mesh.conf', 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('MESH_IP='):
+                    ip = line.split('=', 1)[1].strip('"')
+                    return jsonify({'ip': ip})
+        return jsonify({'ip': 'N/A'})
+    except Exception as e:
+        return jsonify({'ip': 'Error', 'error': str(e)}), 500
 
 
 @app.route('/api/nodes')
