@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Natak Mesh - Network Monitor</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        header {
+            position: relative;
+            justify-content: center;
+        }
+        header nav {
+            position: absolute;
+            right: 16px;
+        }
+    </style>
 </head>
 <body>
     <header>
@@ -16,7 +26,7 @@
 
     <main>
         <div class="dashboard">
-            <h1>Mesh Network Nodes</h1>
+            <h1>Connected Nodes</h1>
             <div id="node-container" class="node-grid">
                 <div class="loading">Loading mesh nodes...</div>
             </div>

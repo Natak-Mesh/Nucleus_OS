@@ -12,11 +12,23 @@
             padding: 40px 20px;
             text-align: center;
         }
+        .nav-page .logo {
+            height: 100px;
+            width: auto;
+            margin-bottom: 20px;
+        }
+        .node-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
         .node-ip-display {
             font-size: 48px;
             font-weight: bold;
-            color: var(--accent-primary);
-            margin: 30px 0;
+            color: #1A09f1;
+            margin-bottom: 30px;
             font-family: monospace;
         }
         .nav-grid {
@@ -54,13 +66,10 @@
     </style>
 </head>
 <body>
-    <header>
-        <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
-    </header>
-
     <main>
         <div class="nav-page">
-            <h1>Natak Mesh Node</h1>
+            <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
+            <div class="node-label">Node Mesh Interface IP</div>
             <div class="node-ip-display" id="node-ip">Loading...</div>
             
             <div class="nav-grid">
