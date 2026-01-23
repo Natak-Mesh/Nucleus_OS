@@ -12,18 +12,18 @@
 - Reticulum
 ## Text
 ### Meshtastic
-- Onboard stand along Meshtastic node. Interface via official application over BT
+- Onboard stand alone Meshtastic node. Interface via official application over BT
 ### Reticulum
 - Onboard transport instance. Connected/configured Reticulum devices can communicate over the mesh network
 ### Jami
 - Direct and group text
 ## VOIP
 ### Jami
-- Direct and group calls, PTT or full tim voice functionality
+- Direct and group calls, PTT or full time voice functionality
 ### Reticulum
 - Voice messages via Sideband
 ## VPN
-- Onboard Tailscale instance pre-configured to the natakmesh Tailnet but avialable to user to add their own
+- Onboard Tailscale instance pre-configured to the natakmesh Tailnet but available to user to add their own
 ## Internet Gateway
 - Any mesh node can be connected to an Internet source and pass that connection out across the mesh
 
