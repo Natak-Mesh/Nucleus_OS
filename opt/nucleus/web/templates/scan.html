@@ -192,13 +192,6 @@
             background: #3a3a3a;
         }
 
-        .channel-table tr.recommended {
-            background: #2a3a2a;
-        }
-
-        .channel-table tr.recommended:hover {
-            background: #3a4a3a;
-        }
 
         .status-badge {
             padding: 4px 8px;
@@ -279,19 +272,20 @@
 
             <div class="warning-box">
                 <strong>⚠️ Warning:</strong>
-                Scanning will temporarily disconnect the mesh network for the duration of the scan. 
-                Mesh services will automatically restart after the scan completes.
+                Scanning will temporarily disconnect the mesh network during the scan. 
+                The scan covers 11 channels (1-11) at the selected dwell time per channel.
+                Total scan time = 11 channels × dwell time + overhead (~20 seconds).
             </div>
 
             <div class="scan-controls">
                 <h2>Start Channel Scan</h2>
                 <div class="control-group">
-                    <label for="duration">Scan Duration:</label>
+                    <label for="duration">Channel Dwell Time:</label>
                     <select id="duration">
-                        <option value="30">30 seconds</option>
-                        <option value="60" selected>60 seconds (recommended)</option>
-                        <option value="90">90 seconds</option>
-                        <option value="120">2 minutes</option>
+                        <option value="5">5 seconds (~75s total)</option>
+                        <option value="10" selected>10 seconds (~130s total, recommended)</option>
+                        <option value="15">15 seconds (~185s total)</option>
+                        <option value="20">20 seconds (~240s total)</option>
                     </select>
                     <button id="start-scan-btn" class="btn btn-primary" onclick="startScan()">Start Scan</button>
                 </div>
@@ -308,7 +302,7 @@
             <div id="scan-results" class="scan-results">
                 <h2>Scan Results</h2>
                 <div class="results-summary">
-                    <h3>Recommended Channels (Non-overlapping: 1, 6, 11)</h3>
+                    <h3>Least Congested Channels</h3>
                     <div id="best-channels" class="best-channels"></div>
                 </div>
                 <table class="channel-table">
@@ -316,10 +310,9 @@
                         <tr>
                             <th>Channel</th>
                             <th>Frequency</th>
-                            <th>Networks</th>
-                            <th>Congestion Score</th>
+                            <th>RF Busy %</th>
                             <th>Status</th>
-                            <th>Detected Networks</th>
+                            <th>Notes</th>
                         </tr>
                     </thead>
                     <tbody id="results-body">
@@ -431,23 +424,19 @@
             // Display best channels
             const bestChannelsDiv = document.getElementById('best-channels');
             bestChannelsDiv.innerHTML = data.best_channels.map(ch => 
-                `<div class="best-channel">Channel ${ch.channel} (${ch.status})</div>`
+                `<div class="best-channel">Channel ${ch.channel} - ${ch.score}% busy (${ch.status})</div>`
             ).join('');
             
             // Display all channels in table
             const tbody = document.getElementById('results-body');
             tbody.innerHTML = data.all_channels.map(ch => {
-                const isRecommended = [1, 6, 11].includes(ch.channel);
-                const networkNames = ch.networks.map(n => n.essid || n.bssid).join(', ');
-                
                 return `
-                    <tr class="${isRecommended ? 'recommended' : ''}">
-                        <td><strong>Channel ${ch.channel}${isRecommended ? ' ⭐' : ''}</strong></td>
+                    <tr>
+                        <td><strong>Channel ${ch.channel}</strong></td>
                         <td>${WIFI_CHANNELS[ch.channel]} MHz</td>
-                        <td>${ch.network_count}</td>
-                        <td>${ch.score}</td>
+                        <td><strong>${ch.score}%</strong></td>
                         <td><span class="status-badge status-${ch.status}">${ch.status}</span></td>
-                        <td class="network-list">${networkNames || 'None detected'}</td>
+                        <td class="network-list"></td>
                     </tr>
                 `;
             }).join('');
