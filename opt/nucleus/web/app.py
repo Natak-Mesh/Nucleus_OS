@@ -592,8 +592,8 @@ def parse_scan_csv(csv_file):
                     channel = row[channel_idx].strip()
                     essid = row[essid_idx].strip()
                     
-                    # Skip invalid entries
-                    if channel == '-1' or channel == '' or power == -1:
+                    # Skip invalid entries (keep networks with power -1 as they still exist on that channel)
+                    if channel == '-1' or channel == '':
                         continue
                     
                     channel = int(channel)
