@@ -1,0 +1,29 @@
+[Unit]
+Description=MediaMTX RTSP/RTMP/HLS/WebRTC Server
+Documentation=https://github.com/bluenviron/mediamtx
+After=network.target mesh-start.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nucleus/mediamtx
+ExecStart=/opt/nucleus/mediamtx/mediamtx
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Go memory optimization - Added 2026-01-22 for Debian Trixie
+# GOGC=50 forces Go to release memory more aggressively (default is 100)
+Environment="GOGC=50"
+
+# MEMORY OPTIMIZATION - Added 2026-01-22 for Pi 4 4GB RAM
+# MemoryMax: Hard limit - process will be killed if exceeded (prevents system crash)
+# Options: 256M (very conservative), 512M (recommended for RTSP-only), 1G (if re-enabling protocols)
+# Current config: RTSP-only with reduced writeQueueSize should use <100MB under normal load
+MemoryMax=512M
+# MemoryHigh: Soft limit - triggers throttling before hitting hard limit
+# Set to 80% of MemoryMax to give early warning via performance degradation
+MemoryHigh=410M
+
+[Install]
+WantedBy=multi-user.target

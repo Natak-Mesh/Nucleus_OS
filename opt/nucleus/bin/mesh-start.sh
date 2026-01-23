@@ -48,6 +48,9 @@ sleep 15
 ip addr add $MESH_IP/24 dev wlan1
 ip -6 addr add $MESH_IPV6_LL/64 dev wlan1
 
+# Enable RTS/CTS for collision avoidance (helps in congested/hidden node scenarios)
+iw phy phy1 set rts 500
+
 # Restore DNS configuration
 sleep 2
 echo "nameserver 8.8.8.8" > /etc/resolv.conf

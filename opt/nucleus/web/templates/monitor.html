@@ -100,6 +100,12 @@
                                 <span class="value">${node.wifi.expected_throughput.toFixed(1)} Mbps</span>
                             </div>
                             ` : ''}
+                            ${node.wifi.link_quality !== null ? `
+                            <div class="wifi-metric">
+                                <span class="label">Link Quality:</span>
+                                <span class="value signal-${node.wifi.link_quality_status}">${node.wifi.link_quality.toFixed(0)}%</span>
+                            </div>
+                            ` : ''}
                         </div>
                         ` : ''}
                         ${node.routes && node.routes.length > 0 ? `

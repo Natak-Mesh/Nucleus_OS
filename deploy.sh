@@ -5,6 +5,7 @@
 # NOTE: Run ./SSH_fix.sh on the node to optimize SSH settings
 # NOTE: Check IP addresses in babeld.conf, ensure they match your system
 # NOTE: Run 'sudo /opt/nucleus/bin/sd-wear-setup.sh' after deploy to minimize SD card wear
+# NOTE: Run 'sudo /opt/nucleus/bin/ram-optimize.sh' after deploy for TAKServer RAM corrections (Debian Trixie)
 
 set -e
 
@@ -43,6 +44,7 @@ sudo cp "$SOURCE_DIR/etc/systemd/system/brlan-setup.service" /etc/systemd/system
 sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-start.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-web.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/rnsd.service" /etc/systemd/system/
+sudo cp "$SOURCE_DIR/etc/systemd/system/mediamtx.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
 sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/systemd/system/babeld.service.d/
 sudo systemctl daemon-reload
@@ -50,6 +52,8 @@ sudo systemctl enable brlan-setup.service
 sudo systemctl enable mesh-start.service
 sudo systemctl enable mesh-web.service
 sudo systemctl enable rnsd.service
+# Note: mediamtx.service is copied but not enabled - enable manually on nodes that need video streaming:
+#       sudo systemctl enable --now mediamtx.service
 
 # Copy opt files
 sudo mkdir -p /opt/nucleus/bin
@@ -58,11 +62,13 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/mesh-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/eth0-mode.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/opendht-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
 sudo chmod +x /opt/nucleus/bin/opendht-start.sh
 sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
+sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 
 # Copy web directory if exists
 if [ -d "$SOURCE_DIR/opt/nucleus/web" ]; then

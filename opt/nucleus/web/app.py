@@ -239,6 +239,12 @@ def get_wifi_station_stats():
                 if match:
                     current_stats['expected_throughput'] = float(match.group(1))
             
+            # Parse tx packets for retry rate calculation
+            elif 'tx packets:' in line and current_mac:
+                match = re.search(r'tx packets:\s+(\d+)', line)
+                if match:
+                    current_stats['tx_packets'] = int(match.group(1))
+            
             # Parse tx retries/failed for link quality
             elif 'tx retries:' in line and current_mac:
                 match = re.search(r'tx retries:\s+(\d+)', line)
@@ -467,6 +473,27 @@ def get_mesh_nodes():
         
         # Add WiFi metrics if available
         if wifi:
+            # Calculate retry rate and link quality
+            tx_packets = wifi.get('tx_packets', 0)
+            tx_retries = wifi.get('tx_retries', 0)
+            retry_rate = None
+            link_quality = None
+            link_quality_status = None
+            
+            if tx_packets > 0:
+                retry_rate = (tx_retries / tx_packets) * 100
+                link_quality = 100 - retry_rate  # Inverse of retry rate
+                
+                # Classify link quality
+                if retry_rate < 10:
+                    link_quality_status = 'excellent'
+                elif retry_rate < 30:
+                    link_quality_status = 'good'
+                elif retry_rate < 50:
+                    link_quality_status = 'fair'
+                else:
+                    link_quality_status = 'poor'
+            
             node['wifi'] = {
                 'signal': wifi.get('signal'),
                 'signal_avg': wifi.get('signal_avg'),
@@ -477,7 +504,11 @@ def get_mesh_nodes():
                 'rx_mcs': wifi.get('rx_mcs'),
                 'expected_throughput': wifi.get('expected_throughput'),
                 'tx_retries': wifi.get('tx_retries'),
-                'tx_failed': wifi.get('tx_failed')
+                'tx_failed': wifi.get('tx_failed'),
+                'tx_packets': tx_packets,
+                'retry_rate': retry_rate,
+                'link_quality': link_quality,
+                'link_quality_status': link_quality_status
             }
         
         nodes.append(node)
