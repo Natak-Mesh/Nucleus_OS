@@ -1,12 +1,13 @@
 [Unit]
 Description=Reticulum Network Stack Daemon
-After=mesh-start.service
-Wants=mesh-start.service
+After=mesh-start.service network-online.target
+Wants=mesh-start.service network-online.target
 
 [Service]
 Type=simple
 User=natak
 Group=natak
+ExecStartPre=/bin/sleep 10
 ExecStart=/usr/local/bin/rnsd
 Restart=on-failure
 RestartSec=5
