@@ -119,7 +119,7 @@ listen_port = 4242
 
 [[UV-RF]]
 type = KISSInterface
-enabled = yes
+enabled = false
 port = /dev/rfcomm0
 speed = 115200
 databits = 8
