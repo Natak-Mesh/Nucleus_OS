@@ -4,7 +4,7 @@
 
 ## Contents
 
-Each Nucleus V1 comes with the node itself, antennas for the Wi-Fi and LoRa radios, a USB to M12 power cable and an short ethernet cable.
+Each Nucleus comes with the node itself, antennas for the Wi-Fi and LoRa radios, a USB to M12 power cable and an short ethernet cable.
 
 <div style="text-align: center;">
 <img src="Photos-1-001/full%20contents.jpg" alt="Full Contents" width="400" style="transform: rotate(270deg);">
@@ -61,7 +61,7 @@ Ensure antennas are installed before applying power to avoid potential damage to
 
 ## Connections
 
-After 1-2 minutes the Nucleus will have set up an access point that can be connected to just like any other Wi-Fi access point. Search for Wi-Fi networks, it will be labeled as 'Nucleus_xxx" where xxx is the serial number printed into the top cap of the node. In this case, serial number 11. The default password is 52235223, this can be changed in /etc/hostapd/hostapd.conf along with the AP channel and name.
+After 1-2 minutes the Nucleus will have set up an access point that can be connected to just like any other Wi-Fi access point. Search for Wi-Fi networks, it will be labeled as '0003-nucleus" where xxx is the serial number printed into the top cap of the node. In this case, serial number 11. The default password is 52235223, this can be changed in the config section of the web UI or at /etc/hostapd/hostapd.conf along with the AP channel and name.
 
 &nbsp;
 
@@ -89,7 +89,7 @@ The Meshtastic node can act independently via the Meshtastic application. This w
 
 Use the provided RJ45 port to connect a Nucleus node into a Starlink antenna to provide internet access to the entire Wi-Fi mesh. Set up the onboard Tailscale instance to allow your Nucleus network VPN access to online resources.
 
-Use the onboard Reticulum and Nomadnet instances as another method to leverage the Wi-Fi mesh and internet connection via pre-configured interfaces to communicate locally or securely and anonymously over the internet.
+Use the onboard Reticulum instance is another method to leverage the Wi-Fi mesh and internet connection via pre-configured interfaces to communicate locally or securely and anonymously over the internet.
 
 If TAKserver is enabled on a node (or all the nodes) use the provided SSL certs to bring devices onto the server allowing for data sync, video streaming, server federation, etc.
 
