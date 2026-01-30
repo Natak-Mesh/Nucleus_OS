@@ -1,15 +1,21 @@
-<div style="text-align: center;">
-<img src="NatakMeshsecondary-overlay@2x.png" alt="Natak Mesh">
+<div style="text-align: center; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 80vh;">
+<img src="NatakMeshsecondary-overlay@2x.png" alt="Natak Mesh" style="max-width: 500px;">
+<h1 style="margin-top: 50px; font-size: 2.5em;">Nucleus Start Up</h1>
+<p style="font-size: 1.5em; margin-top: 20px;">natakmesh.com</p>
 </div>
+
+<div style="page-break-after: always;"></div>
 
 ## Contents
 
-Each Nucleus comes with the node itself, antennas for the Wi-Fi and LoRa radios, a USB to M12 power cable and an short ethernet cable.
+Each Nucleus comes with the node itself, antennas for the Wi-Fi and LoRa radios, and a USB to M12 power cable.
 
 <div style="text-align: center;">
 <img src="Photos-1-001/full%20contents.jpg" alt="Full Contents" width="400" style="transform: rotate(270deg);">
 <br><em>Fig.1: Contents of Nucleus order</em>
 </div>
+
+<div style="page-break-after: always;"></div>
 
 ## Assembly
 
@@ -35,6 +41,8 @@ The antennas are recessed into the upper cap of the Nucleus. Note that the knurl
 <br><em>Fig.4: Turn indicated knurled section to tighten antenna to connector</em>
 </div>
 
+<div style="page-break-after: always;"></div>
+
 ## Cabling
 
 The Nucleus receives power via the M12 port. This is an A-coded M12 connection that can only be installed in a single orientation. The other end of the cable is standard USB A, allowing the Nucleus to use any 5V USB port as power. The remaining port is a standard RJ-45 connection. Note this connection is NOT waterproof without the provided cap installed.
@@ -50,6 +58,8 @@ The Nucleus receives power via the M12 port. This is an A-coded M12 connection t
 </div>
 </div>
 
+<div style="page-break-after: always;"></div>
+
 ## Start Up
 
 Ensure antennas are installed before applying power to avoid potential damage to the radios. Connect M12 power cable to the Nucleus and plug the USB connection into something like a USB power bank or USB wall charger. This will start the Nucleus and it will begin its auto boot procedure. The standard networking module along with Wi-Fi access point and Meshtastic radio should be available within 1-2 minutes.
@@ -59,9 +69,11 @@ Ensure antennas are installed before applying power to avoid potential damage to
 <br><em>Fig.7: Nucleus node powered up</em>
 </div>
 
+<div style="page-break-after: always;"></div>
+
 ## Connections
 
-After 1-2 minutes the Nucleus will have set up an access point that can be connected to just like any other Wi-Fi access point. Search for Wi-Fi networks, it will be labeled as '0003-nucleus" where xxx is the serial number printed into the top cap of the node. In this case, serial number 11. The default password is 52235223, this can be changed in the config section of the web UI or at /etc/hostapd/hostapd.conf along with the AP channel and name.
+After 1-2 minutes the Nucleus will have set up an access point that can be connected to just like any other Wi-Fi access point. Search for Wi-Fi networks, it will be labeled as '0011-nucleus" or "nucleus-0011" depending on software version, where xxx is the serial number printed into the top cap of the node. In this case, serial number 11. The default password is 52235223, this can be changed in the config section of the web UI or at /etc/hostapd/hostapd.conf along with the AP channel and name.
 
 &nbsp;
 
@@ -72,7 +84,7 @@ After 1-2 minutes the Nucleus will have set up an access point that can be conne
 
 &nbsp;
 
-At this point the Meshtastic radio should be powered up and will be broadcasting its pairing request. The ID of the Meshtastic node associated with your Nucleus will be included in the spreadsheet emailed to you. Pair with this like a standard Meshtastic node, use the official Meshtastic application to interface with it. The default pairing password for the Meshtastic node is 123456.
+At this point the Meshtastic radio should be powered up and will be broadcasting its pairing request. The ID of the Meshtastic node associated with your Nucleus will be included in the spreadsheet emailed to you. Pair with this like a standard Meshtastic node, use the official Meshtastic application to interface with it. The default pairing password for the Meshtastic node is 123456. If you ordered a batch of Nucleus units, the Meshtastic radios will be pre-configured the same private channel.
 
 &nbsp;
 
@@ -80,6 +92,8 @@ At this point the Meshtastic radio should be powered up and will be broadcasting
 <img src="Photos-1-001/lora.png" alt="LoRa" width="400">
 <br><em>Fig.9: Pairing to Meshtastic node</em>
 </div>
+
+<div style="page-break-after: always;"></div>
 
 ## Communicate
 
