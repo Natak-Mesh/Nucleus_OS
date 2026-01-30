@@ -1,0 +1,45 @@
+:root {
+    --background-color: #1a1a1a;
+    --text-color: #ffffff;
+    --card-background: #2d2d2d;
+}
+
+body {
+    font-family: monospace;
+    margin: 0;
+    padding: 16px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+}
+
+img {
+    margin: 10px;
+    margin-bottom: 5px;
+}
+
+div {
+    margin: 20px 0;
+}
+
+br {
+    display: block;
+    content: "";
+    margin-top: 2px;
+}
+
+h1, h2 {
+    margin-top: 24px;
+    color: var(--text-color);
+}
+
+em {
+    color: #cccccc;
+    font-style: normal;
+    display: block;
+    margin-top: 2px;
+}
+
+.header {
+    margin-bottom: 24px;
+    text-align: center;
+}
