@@ -2,13 +2,15 @@
 """
 Meshtastic Flask API
 =====================
-Standalone Flask server wrapping the MeshtasticManager.
-Runs on port 5001 for independent testing before integration.
+Flask Blueprint wrapping the MeshtasticManager.
+Can run standalone on port 5001 or be registered into the main app.
 
-Phase 3: REST API with persistent connection.
-
-Usage:
+Usage (standalone):
     python3 meshtastic_api.py
+
+Usage (integrated):
+    from meshtastic_api import meshtastic_bp, mgr
+    app.register_blueprint(meshtastic_bp)
 
 Test with curl:
     curl -X POST localhost:5001/api/meshtastic/connect
@@ -21,19 +23,20 @@ Test with curl:
 import sys
 import os
 
-# Add parent directory so we can import the manager
+# Add meshtastic module directory so we can import the manager
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from flask import Flask, jsonify, request
+from flask import Flask, Blueprint, jsonify, request
 from meshtastic_manager import MeshtasticManager
 
-app = Flask(__name__)
+# Blueprint for integration into main app
+meshtastic_bp = Blueprint('meshtastic', __name__)
 
 # Single persistent manager instance
 mgr = MeshtasticManager()
 
 
-@app.route('/api/meshtastic/connect', methods=['POST'])
+@meshtastic_bp.route('/api/meshtastic/connect', methods=['POST'])
 def connect():
     """Take serial control of the meshtastic radio."""
     data = request.get_json(silent=True) or {}
@@ -44,7 +47,7 @@ def connect():
     return jsonify(result), status_code
 
 
-@app.route('/api/meshtastic/disconnect', methods=['POST'])
+@meshtastic_bp.route('/api/meshtastic/disconnect', methods=['POST'])
 def disconnect():
     """Release serial control and reboot radio to restore BLE."""
     data = request.get_json(silent=True) or {}
@@ -55,13 +58,13 @@ def disconnect():
     return jsonify(result), status_code
 
 
-@app.route('/api/meshtastic/status', methods=['GET'])
+@meshtastic_bp.route('/api/meshtastic/status', methods=['GET'])
 def status():
     """Get current connection status and node info."""
     return jsonify(mgr.get_status())
 
 
-@app.route('/api/meshtastic/send', methods=['POST'])
+@meshtastic_bp.route('/api/meshtastic/send', methods=['POST'])
 def send():
     """Send a text message.
     
@@ -83,7 +86,7 @@ def send():
     return jsonify(result), status_code
 
 
-@app.route('/api/meshtastic/messages', methods=['GET'])
+@meshtastic_bp.route('/api/meshtastic/messages', methods=['GET'])
 def messages():
     """Get recent sent and received messages."""
     limit = request.args.get('limit', 50, type=int)
@@ -95,7 +98,12 @@ def messages():
     })
 
 
+# ── Standalone mode ────────────────────────────────────────────
+
 if __name__ == '__main__':
+    app = Flask(__name__)
+    app.register_blueprint(meshtastic_bp)
+
     print("Meshtastic API server starting on port 5001...")
     print("Endpoints:")
     print("  POST /api/meshtastic/connect")

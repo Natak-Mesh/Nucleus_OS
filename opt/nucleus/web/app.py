@@ -25,7 +25,17 @@ import glob
 from collections import defaultdict
 import time
 
+# Add meshtastic module to path
+sys.path.insert(0, '/opt/nucleus/meshtastic')
+
 app = Flask(__name__)
+
+# Register meshtastic API blueprint
+try:
+    from meshtastic_api import meshtastic_bp
+    app.register_blueprint(meshtastic_bp)
+except ImportError as e:
+    print(f"Warning: Could not load meshtastic module: {e}")
 
 # Configuration
 BABELD_HOST = 'localhost'
@@ -735,6 +745,12 @@ def ethernet():
 def opendht():
     """OpenDHT monitoring page"""
     return render_template('opendht.html')
+
+
+@app.route('/meshtastic')
+def meshtastic_page():
+    """Meshtastic radio control page"""
+    return render_template('meshtastic.html')
 
 
 @app.route('/api/opendht/status', methods=['GET'])
