@@ -214,16 +214,50 @@ class MeshtasticManager:
 
     # ── Pub/Sub Callbacks ───────────────────────────────────────
 
+    def _resolve_node_name(self, node_id: str, node_num: int = None) -> str:
+        """Look up the long name for a node from the node database.
+        
+        Falls back to node_id if name not found.
+        """
+        if self.interface is None:
+            return node_id or "unknown"
+        
+        try:
+            nodes = self.interface.nodes
+            if nodes:
+                # Try lookup by node ID string (e.g. "!abcd1234")
+                if node_id and node_id in nodes:
+                    user = nodes[node_id].get("user", {})
+                    name = user.get("longName") or user.get("shortName")
+                    if name:
+                        return name
+                
+                # Try lookup by node number
+                if node_num:
+                    for nid, node_data in nodes.items():
+                        if node_data.get("num") == node_num:
+                            user = node_data.get("user", {})
+                            name = user.get("longName") or user.get("shortName")
+                            if name:
+                                return name
+        except Exception:
+            pass
+        
+        return node_id or "unknown"
+
     def _on_text_receive(self, packet, interface):
         """Called when a text message is received."""
         try:
-            sender = packet.get("fromId", "unknown")
+            sender_id = packet.get("fromId", "unknown")
+            sender_num = packet.get("from")
+            sender_name = self._resolve_node_name(sender_id, sender_num)
             text = packet.get("decoded", {}).get("text", "")
             msg = {
                 "direction": "received",
                 "text": text,
-                "from": sender,
-                "from_num": packet.get("from"),
+                "from": sender_name,
+                "from_id": sender_id,
+                "from_num": sender_num,
                 "to": packet.get("toId", "unknown"),
                 "channel": packet.get("channel", 0),
                 "timestamp": datetime.now().isoformat(),
@@ -231,7 +265,7 @@ class MeshtasticManager:
             }
             self.messages.append(msg)
             self._save_messages()
-            logger.info(f"Received from {sender}: {text}")
+            logger.info(f"Received from {sender_name}: {text}")
         except Exception as e:
             logger.error(f"Error handling received message: {e}")
 
