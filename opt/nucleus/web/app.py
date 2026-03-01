@@ -624,9 +624,64 @@ def run_channel_scan(duration):
             scan_state['process'] = None
 
 
+def get_wlan1_status():
+    """Get wlan1 mesh interface status from iw"""
+    try:
+        result = subprocess.run(['iw', 'wlan1', 'info'],
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return {'active': False, 'channel': None, 'meshid': None}
+
+        output = result.stdout
+        active = 'mesh point' in output
+
+        channel = None
+        match = re.search(r'channel\s+(\d+)', output)
+        if match:
+            channel = int(match.group(1))
+
+        meshid = None
+        match = re.search(r'meshid\s+(\S+)', output)
+        if match:
+            meshid = match.group(1)
+
+        return {'active': active, 'channel': channel, 'meshid': meshid}
+    except Exception as e:
+        print(f"Error getting wlan1 status: {e}")
+        return {'active': False, 'channel': None, 'meshid': None}
+
+
+def get_ap_status():
+    """Get wlan0 AP interface status"""
+    try:
+        result = subprocess.run(['iw', 'wlan0', 'info'],
+                              capture_output=True, text=True, timeout=5)
+
+        ap_active = False
+        ssid = None
+        if result.returncode == 0:
+            output = result.stdout
+            ap_active = bool(re.search(r'type\s+AP', output))
+            match = re.search(r'ssid\s+(.+)', output)
+            if match:
+                ssid = match.group(1).strip()
+
+        # Count connected clients
+        clients = 0
+        station_result = subprocess.run(['iw', 'wlan0', 'station', 'dump'],
+                                       capture_output=True, text=True, timeout=5)
+        if station_result.returncode == 0:
+            clients = station_result.stdout.count('Station ')
+
+        return {'active': ap_active, 'ssid': ssid, 'clients': clients}
+    except Exception as e:
+        print(f"Error getting AP status: {e}")
+        return {'active': False, 'ssid': None, 'clients': 0}
+
+
 @app.route('/')
 def index():
-    """Main navigation page"""
+    """Main dashboard page"""
     return render_template('nav.html')
 
 
@@ -635,6 +690,45 @@ def monitor():
     """Network monitoring dashboard"""
     return render_template('monitor.html', 
                          refresh_interval=REFRESH_INTERVAL)
+
+
+@app.route('/api/dashboard')
+def api_dashboard():
+    """Dashboard API - single endpoint for front page status data"""
+    # Get mesh IP
+    mesh_ip = 'N/A'
+    try:
+        with open('/etc/nucleus/mesh.conf', 'r') as f:
+            for line in f:
+                if line.strip().startswith('MESH_IP='):
+                    mesh_ip = line.strip().split('=', 1)[1].strip('"')
+                    break
+    except Exception:
+        pass
+
+    # Get interface statuses
+    wlan1 = get_wlan1_status()
+    ap = get_ap_status()
+
+    # Get neighbors (reuse existing mesh node logic, return simplified)
+    nodes = get_mesh_nodes()
+    neighbors = []
+    for node in nodes:
+        neighbors.append({
+            'ip': node['ipv4'],
+            'cost': node['cost'],
+            'cost_quality': node.get('cost_quality', 'unknown'),
+            'status': node['status'],
+            'duration': node['duration'],
+        })
+
+    return jsonify({
+        'mesh_ip': mesh_ip,
+        'wlan1': wlan1,
+        'ap': ap,
+        'neighbors': neighbors,
+        'timestamp': datetime.now().isoformat()
+    })
 
 
 @app.route('/api/node-ip')

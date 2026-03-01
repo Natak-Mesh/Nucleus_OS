@@ -3,127 +3,233 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Natak Mesh - Main Menu</title>
+    <title>Natak Mesh - Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
-        .nav-page {
-            max-width: 800px;
+        .dash {
+            max-width: 700px;
             margin: 0 auto;
-            padding: 40px 20px;
+            padding: 24px 16px;
+        }
+
+        /* -- This Node -- */
+        .node-info {
             text-align: center;
+            margin-bottom: 28px;
         }
-        .nav-page .logo {
-            height: 100px;
+        .node-info .logo {
+            height: 80px;
             width: auto;
-            margin-bottom: 20px;
+            margin-bottom: 12px;
         }
-        .node-label {
+        .mesh-ip {
+            font-size: 44px;
+            font-weight: bold;
+            color: #1A09f1;
+            font-family: monospace;
+            margin: 4px 0 12px 0;
+        }
+        .status-row {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
             font-size: 14px;
+        }
+        .status-item {
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .dot-green { background: var(--color-connected); }
+        .dot-red { background: var(--color-disconnected); }
+
+        /* -- Neighbors -- */
+        .neighbors {
+            margin-bottom: 28px;
+        }
+        .neighbors h2 {
+            font-size: 13px;
             color: var(--text-secondary);
             text-transform: uppercase;
             letter-spacing: 1px;
             margin-bottom: 10px;
+            text-align: center;
         }
-        .node-ip-display {
-            font-size: 48px;
-            font-weight: bold;
-            color: #1A09f1;
-            margin-bottom: 30px;
-            font-family: monospace;
+        .nb-table {
+            width: 100%;
+            border-collapse: collapse;
         }
-        .nav-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-top: 40px;
-        }
-        .nav-card {
-            background: rgba(255, 255, 255, 0.05);
-            border: 2px solid var(--border-color);
-            border-radius: 8px;
-            padding: 30px;
-            cursor: pointer;
-            transition: all 0.3s;
-            text-decoration: none;
-            color: var(--text-primary);
-            display: block;
-        }
-        .nav-card:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: var(--accent-primary);
-            transform: translateY(-4px);
-        }
-        .nav-card h3 {
-            margin: 0 0 10px 0;
-            color: var(--accent-secondary);
-            font-size: 20px;
-        }
-        .nav-card p {
-            margin: 0;
+        .nb-table th {
+            text-align: left;
             color: var(--text-secondary);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .nb-table td {
+            padding: 8px 10px;
             font-size: 14px;
+            font-family: monospace;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .nb-table tr.lost td {
+            opacity: 0.45;
+        }
+        .nb-empty {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 20px;
+            font-size: 14px;
+        }
+        .q-good { color: var(--color-connected); }
+        .q-fair { color: var(--color-warning); }
+        .q-poor { color: var(--color-disconnected); }
+
+        /* -- Nav pills -- */
+        .nav-pills {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+        }
+        .pill {
+            padding: 8px 16px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .pill:hover {
+            background: rgba(26, 9, 241, 0.2);
+            border-color: #1A09f1;
+            color: var(--text-primary);
+        }
+
+        #last-update {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-top: 16px;
         }
     </style>
 </head>
 <body>
     <main>
-        <div class="nav-page">
-            <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
-            <div class="node-label">Node Mesh Interface IP</div>
-            <div class="node-ip-display" id="node-ip">Loading...</div>
-            
-            <div class="nav-grid">
-                <a href="/monitor" class="nav-card">
-                    <h3>Network Monitor</h3>
-                    <p>View mesh nodes and connections</p>
-                </a>
-                
-                <a href="/config" class="nav-card">
-                    <h3>Configuration</h3>
-                    <p>Mesh and network settings</p>
-                </a>
-                
-                <a href="/scan" class="nav-card">
-                    <h3>Wi-Fi Channel Scan</h3>
-                    <p>Analyze channel congestion</p>
-                </a>
-                
-                <a href="/remote" class="nav-card">
-                    <h3>Remote Access</h3>
-                    <p>Tailscale management</p>
-                </a>
-                
-                <a href="/ethernet" class="nav-card">
-                    <h3>Ethernet Mode</h3>
-                    <p>WAN/LAN configuration</p>
-                </a>
-                
-                <a href="/opendht" class="nav-card">
-                    <h3>OpenDHT Status</h3>
-                    <p>Jami DHT monitoring</p>
-                </a>
-                
-                <a href="/meshtastic" class="nav-card">
-                    <h3>Meshtastic Radio</h3>
-                    <p>Serial control &amp; messaging</p>
-                </a>
+        <div class="dash">
+
+            <!-- This Node -->
+            <div class="node-info">
+                <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
+                <div class="mesh-ip" id="mesh-ip">--</div>
+                <div class="status-row">
+                    <span class="status-item" id="wlan1-status"><span class="dot"></span>Mesh: --</span>
+                    <span class="status-item" id="ap-status"><span class="dot"></span>AP: --</span>
+                </div>
             </div>
+
+            <!-- Mesh Neighbors -->
+            <div class="neighbors">
+                <h2>Mesh Neighbors</h2>
+                <div id="nb-container">
+                    <div class="nb-empty">Loading...</div>
+                </div>
+            </div>
+
+            <!-- Navigation -->
+            <div class="nav-pills">
+                <a href="/monitor" class="pill">Monitor</a>
+                <a href="/config" class="pill">Config</a>
+                <a href="/scan" class="pill">Wi-Fi Scan</a>
+                <a href="/remote" class="pill">Remote</a>
+                <a href="/ethernet" class="pill">Ethernet</a>
+                <a href="/opendht" class="pill">OpenDHT</a>
+                <a href="/meshtastic" class="pill">Meshtastic</a>
+            </div>
+
+            <div id="last-update"></div>
         </div>
     </main>
 
     <script>
-        async function loadNodeIP() {
+        const QUALITY = {good: 'Good', fair: 'Fair', poor: 'Poor'};
+
+        async function refresh() {
             try {
-                const response = await fetch('/api/node-ip');
-                const data = await response.json();
-                document.getElementById('node-ip').textContent = data.ip || 'N/A';
-            } catch (error) {
-                console.error('Error loading node IP:', error);
-                document.getElementById('node-ip').textContent = 'Error';
+                const r = await fetch('/api/dashboard');
+                const d = await r.json();
+
+                // Mesh IP
+                document.getElementById('mesh-ip').textContent = d.mesh_ip || 'N/A';
+
+                // wlan1
+                const w = document.getElementById('wlan1-status');
+                if (d.wlan1.active) {
+                    w.innerHTML = '<span class="dot dot-green"></span>Mesh: Ch ' + (d.wlan1.channel || '?');
+                } else {
+                    w.innerHTML = '<span class="dot dot-red"></span>Mesh: Down';
+                }
+
+                // AP
+                const a = document.getElementById('ap-status');
+                if (d.ap.active) {
+                    const c = d.ap.clients;
+                    a.innerHTML = '<span class="dot dot-green"></span>' + (d.ap.ssid || 'AP') + ' &mdash; ' + c + ' client' + (c !== 1 ? 's' : '');
+                } else {
+                    a.innerHTML = '<span class="dot dot-red"></span>AP: Down';
+                }
+
+                // Neighbors
+                const box = document.getElementById('nb-container');
+                if (!d.neighbors || d.neighbors.length === 0) {
+                    box.innerHTML = '<div class="nb-empty">No mesh neighbors</div>';
+                } else {
+                    let h = '<table class="nb-table"><thead><tr><th>Node</th><th>Link</th><th>Status</th></tr></thead><tbody>';
+                    d.neighbors.forEach(n => {
+                        const cls = n.status === 'disconnected' ? ' class="lost"' : '';
+                        let link, status;
+
+                        if (n.status === 'connected') {
+                            const q = n.cost_quality || 'unknown';
+                            link = '<span class="q-' + q + '">' + (QUALITY[q] || q) + ' (' + n.cost + ')</span>';
+                            status = '<span class="q-good">● ' + n.duration + '</span>';
+                        } else {
+                            link = '--';
+                            status = '<span class="q-poor">○ lost ' + n.duration + '</span>';
+                        }
+
+                        h += '<tr' + cls + '><td>' + n.ip + '</td><td>' + link + '</td><td>' + status + '</td></tr>';
+                    });
+                    h += '</tbody></table>';
+                    box.innerHTML = h;
+                }
+
+                // Timestamp
+                const t = new Date(d.timestamp);
+                document.getElementById('last-update').textContent = 'Updated ' + t.toLocaleTimeString();
+
+            } catch (e) {
+                console.error('Dashboard fetch error:', e);
             }
         }
-        
-        loadNodeIP();
+
+        refresh();
+        setInterval(refresh, 5000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
     </script>
 </body>
 </html>
