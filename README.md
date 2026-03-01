@@ -12,7 +12,7 @@
 - Reticulum
 ## Text
 ### Meshtastic
-- Onboard stand alone Meshtastic node. Interface via official application over BT
+- Onboard stand alone Meshtastic node. Interface via official application over BT or via serial with control/interaction via Nucleus web UI
 ### Reticulum
 - Onboard transport instance. Connected/configured Reticulum devices can communicate over the mesh network
 ### Jami
