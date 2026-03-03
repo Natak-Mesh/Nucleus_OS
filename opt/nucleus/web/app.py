@@ -24,6 +24,8 @@ import sys
 import glob
 from collections import defaultdict
 import time
+import urllib.request as _urlreq
+import urllib.error as _urlerr
 
 # Add meshtastic module to path
 sys.path.insert(0, '/opt/nucleus/meshtastic')
@@ -1386,6 +1388,194 @@ def restart_mesh():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# --- OpenTAKServer Integration ---
+# Reverse proxy OTS web UI through Flask so phone clients on br-lan
+# can access it without hitting the OTS_IP_WHITELIST (which only allows 127.0.0.1).
+# Flask connects to OTS nginx on localhost, so the whitelist is always satisfied.
+
+OTS_UPSTREAM = 'http://127.0.0.1:8080'
+
+
+def _proxy_to_ots(subpath):
+    """Transparent reverse proxy to OpenTAKServer via nginx.
+    
+    Rewrites URLs in HTML/JS responses so the OTS SPA works under the /ots/ prefix.
+    """
+    from flask import Response
+
+    target = f'{OTS_UPSTREAM}/{subpath}'
+    qs = request.query_string.decode()
+    if qs:
+        target += '?' + qs
+
+    # Build proxy request headers (skip hop-by-hop headers)
+    skip = {'host', 'content-length', 'transfer-encoding', 'connection'}
+    headers = {}
+    for key, value in request.headers:
+        if key.lower() not in skip:
+            headers[key] = value
+    headers['Host'] = '127.0.0.1'
+    headers['Accept-Encoding'] = 'identity'  # No compression so we can rewrite
+
+    body = None
+    if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        body = request.get_data()
+        if not body:
+            body = None
+
+    req = _urlreq.Request(target, data=body, headers=headers, method=request.method)
+
+    try:
+        resp = _urlreq.urlopen(req, timeout=30)
+        status = resp.status
+    except _urlerr.HTTPError as e:
+        resp = e
+        status = e.code
+    except Exception as e:
+        return jsonify({'error': f'OTS proxy error: {e}'}), 502
+
+    data = resp.read()
+    content_type = ''
+    for k, v in resp.getheaders():
+        if k.lower() == 'content-type':
+            content_type = v
+            break
+
+    # Rewrite URLs in HTML/JS so the SPA works under /ots/ prefix
+    if 'text/html' in content_type or 'javascript' in content_type:
+        rewrites = [
+            (b'"/api/', b'"/ots/api/'),
+            (b"'/api/", b"'/ots/api/"),
+            (b'`/api/', b'`/ots/api/'),
+            (b'"/Marti/', b'"/ots/Marti/'),
+            (b"'/Marti/", b"'/ots/Marti/"),
+            (b'"/socket.io', b'"/ots/socket.io'),
+            (b"'/socket.io", b"'/ots/socket.io"),
+            (b'"/oauth/', b'"/ots/oauth/'),
+        ]
+        for old, new in rewrites:
+            data = data.replace(old, new)
+
+    if 'text/html' in content_type:
+        # Rewrite asset references in HTML
+        html_rewrites = [
+            (b'href="/assets/', b'href="/ots/assets/'),
+            (b'src="/assets/', b'src="/ots/assets/'),
+            (b'href="/favicon', b'href="/ots/favicon'),
+            (b'src="/favicon', b'src="/ots/favicon'),
+        ]
+        for old, new in html_rewrites:
+            data = data.replace(old, new)
+
+    if 'text/css' in content_type:
+        data = data.replace(b'url(/', b'url(/ots/')
+        data = data.replace(b"url('/", b"url('/ots/")
+        data = data.replace(b'url("/', b'url("/ots/')
+
+    # Build response headers, excluding hop-by-hop
+    excluded = {'transfer-encoding', 'content-encoding', 'content-length', 'connection'}
+    resp_headers = []
+    for k, v in resp.getheaders():
+        if k.lower() not in excluded:
+            resp_headers.append((k, v))
+
+    return Response(data, status=status, headers=resp_headers)
+
+
+@app.route('/opentakserver')
+def opentakserver_page():
+    """OpenTAKServer status and management page"""
+    return render_template('opentakserver.html')
+
+
+@app.route('/api/opentakserver/status', methods=['GET'])
+def get_ots_status():
+    """Get OpenTAKServer service status, connected clients, and video streams"""
+    import json as _json
+
+    result_data = {
+        'service_running': False,
+        'clients': 0,
+        'video_streams': []
+    }
+
+    # Check service status
+    try:
+        svc = subprocess.run(
+            ['systemctl', 'is-active', 'opentakserver'],
+            capture_output=True, text=True, timeout=5
+        )
+        result_data['service_running'] = svc.stdout.strip() == 'active'
+    except Exception:
+        pass
+
+    # Count connected EUDs by checking TCP connections on OTS streaming ports
+    # Port 8088 = unencrypted TCP, Port 8089 = SSL
+    try:
+        ss_result = subprocess.run(
+            ['ss', '-tn', 'state', 'established', '( sport = :8088 or sport = :8089 )'],
+            capture_output=True, text=True, timeout=5
+        )
+        # Count lines minus the header
+        lines = [l for l in ss_result.stdout.strip().split('\n') if l.strip()]
+        result_data['clients'] = max(0, len(lines) - 1)  # subtract header line
+    except Exception as e:
+        print(f"Error counting OTS clients: {e}")
+
+    # Get active video streams from MediaMTX API
+    try:
+        req = _urlreq.Request('http://127.0.0.1:9997/v3/paths/list')
+        resp = _urlreq.urlopen(req, timeout=5)
+        paths_data = _json.loads(resp.read())
+        items = paths_data.get('items', [])
+        for item in items:
+            if item.get('ready', False):
+                result_data['video_streams'].append({
+                    'name': item.get('name', 'unknown'),
+                    'source': item.get('source', {}).get('type', 'unknown')
+                })
+    except Exception:
+        pass
+
+    return jsonify(result_data)
+
+
+@app.route('/api/opentakserver/restart', methods=['POST'])
+def restart_ots():
+    """Restart OpenTAKServer and related services"""
+    try:
+        result = subprocess.run(
+            ['sudo', 'systemctl', 'restart', 'opentakserver'],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to restart OpenTAKServer',
+                'output': result.stderr or result.stdout
+            }), 500
+
+        return jsonify({
+            'success': True,
+            'message': 'OpenTAKServer restarted'
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Command timed out'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/ots/')
+@app.route('/ots/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+def ots_proxy(subpath=''):
+    """Reverse proxy to OpenTAKServer web UI.
+    
+    All requests to /ots/... are forwarded to OTS nginx on localhost:8080.
+    This bypasses the OTS_IP_WHITELIST since Flask connects from 127.0.0.1.
+    """
+    return _proxy_to_ots(subpath)
 
 
 if __name__ == '__main__':

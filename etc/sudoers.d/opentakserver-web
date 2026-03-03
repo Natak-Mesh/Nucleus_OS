@@ -1,0 +1,5 @@
+# Allow natak user to manage opentakserver service from web interface
+natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart opentakserver
+natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart eud_handler
+natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart eud_handler_ssl
+natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart cot_parser
