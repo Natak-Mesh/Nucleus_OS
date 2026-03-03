@@ -847,6 +847,97 @@ def meshtastic_page():
     return render_template('meshtastic.html')
 
 
+@app.route('/reticulum')
+def reticulum_page():
+    """Reticulum network status page"""
+    return render_template('reticulum.html')
+
+
+@app.route('/api/reticulum/status', methods=['GET'])
+def get_reticulum_status():
+    """Get Reticulum network status from rnstatus and rnpath CLI tools"""
+    import json
+
+    result_data = {
+        'service_running': False,
+        'transport_id': None,
+        'transport_uptime': None,
+        'rxb': 0,
+        'txb': 0,
+        'interfaces': [],
+        'destinations': [],
+        'destinations_count': 0,
+    }
+
+    # Check rnsd service status
+    try:
+        svc = subprocess.run(
+            ['sudo', 'systemctl', 'status', 'rnsd'],
+            capture_output=True, text=True, timeout=5
+        )
+        result_data['service_running'] = svc.returncode == 0
+    except Exception as e:
+        print(f"Error checking rnsd service: {e}")
+
+    # Get interface status from rnstatus -j
+    try:
+        rs = subprocess.run(
+            ['rnstatus', '-j'],
+            capture_output=True, text=True, timeout=10
+        )
+        if rs.returncode == 0 and rs.stdout.strip():
+            status = json.loads(rs.stdout)
+            result_data['transport_id'] = status.get('transport_id')
+            result_data['transport_uptime'] = status.get('transport_uptime')
+            result_data['rxb'] = status.get('rxb', 0)
+            result_data['txb'] = status.get('txb', 0)
+            result_data['interfaces'] = status.get('interfaces', [])
+    except Exception as e:
+        print(f"Error running rnstatus: {e}")
+
+    # Get known destinations from rnpath -t -j
+    try:
+        rp = subprocess.run(
+            ['rnpath', '-t', '-j'],
+            capture_output=True, text=True, timeout=10
+        )
+        if rp.returncode == 0 and rp.stdout.strip():
+            destinations = json.loads(rp.stdout)
+            if isinstance(destinations, list):
+                result_data['destinations'] = destinations
+                result_data['destinations_count'] = len(destinations)
+    except Exception as e:
+        print(f"Error running rnpath: {e}")
+
+    return jsonify(result_data)
+
+
+@app.route('/api/reticulum/restart', methods=['POST'])
+def restart_reticulum():
+    """Restart the rnsd service"""
+    try:
+        result = subprocess.run(
+            ['sudo', 'systemctl', 'restart', 'rnsd'],
+            capture_output=True, text=True, timeout=30
+        )
+
+        if result.returncode != 0:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to restart rnsd',
+                'output': result.stderr or result.stdout
+            }), 500
+
+        return jsonify({
+            'success': True,
+            'message': 'rnsd service restarted'
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Command timed out'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/opendht/status', methods=['GET'])
 def get_opendht_status():
     """Get OpenDHT container status and configuration"""

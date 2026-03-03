@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Natak Mesh - Reticulum Status</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* Tables */
+        .rt-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+        }
+        .rt-table th {
+            text-align: left;
+            color: var(--text-secondary);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .rt-table td {
+            padding: 10px 10px;
+            font-size: 13px;
+            font-family: monospace;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+        .rt-table tr:last-child td { border-bottom: none; }
+        .rt-table .dim { color: var(--text-secondary); }
+
+        /* Status dot */
+        .dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .dot-green { background: var(--color-connected); }
+        .dot-red { background: var(--color-disconnected); }
+        .dot-yellow { background: var(--color-warning); }
+
+        /* Big number in cards */
+        .big-num {
+            font-size: 48px;
+            font-weight: bold;
+            margin: 12px 0;
+        }
+        .stat-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 13px;
+        }
+        .stat-row .label { color: var(--text-secondary); }
+        .stat-row .value { color: var(--text-primary); font-family: monospace; }
+
+        /* Collapsible section */
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding: 12px 0;
+        }
+        .section-header h2 {
+            font-size: 13px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 0;
+        }
+        .section-toggle {
+            font-size: 12px;
+            border: 1px solid var(--border-color);
+            background: transparent;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            color: var(--text-secondary);
+        }
+        .section-toggle:hover {
+            border-color: var(--accent-primary);
+            color: var(--text-primary);
+        }
+
+        /* Connection type badges */
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+        }
+        .badge-tcp {
+            background: rgba(26, 9, 241, 0.2);
+            color: #7B73FF;
+            border: 1px solid rgba(26, 9, 241, 0.3);
+        }
+        .badge-mesh {
+            background: rgba(0, 255, 136, 0.1);
+            color: var(--color-connected);
+            border: 1px solid rgba(0, 255, 136, 0.2);
+        }
+
+        /* Transport ID */
+        .transport-id {
+            font-family: monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            word-break: break-all;
+        }
+
+        /* Empty state */
+        .empty-msg {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 16px;
+            font-size: 13px;
+        }
+
+        /* Actions */
+        .actions-row {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-top: 24px;
+            flex-wrap: wrap;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
+        <nav>
+            <button class="nav-btn" onclick="window.location.href='/'">← Back to Menu</button>
+        </nav>
+    </header>
+
+    <main>
+        <div class="dashboard">
+            <h1>Reticulum Status</h1>
+
+            <!-- Top Status Cards -->
+            <div id="status-cards" class="node-grid">
+                <div class="loading">Loading Reticulum status...</div>
+            </div>
+
+            <!-- Reachable Destinations Section -->
+            <div id="devices-section" style="display: none; margin-top: 24px;">
+                <div class="node-card">
+                    <div class="node-header">
+                        <span class="node-ip">Reachable Destinations</span>
+                    </div>
+                    <div id="devices-body"></div>
+                </div>
+            </div>
+
+            <!-- Mesh Nodes Section -->
+            <div id="mesh-nodes-section" style="display: none; margin-top: 24px;">
+                <div class="node-card">
+                    <div class="node-header">
+                        <span class="node-ip">Mesh Nodes</span>
+                    </div>
+                    <div id="mesh-nodes-body"></div>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div id="actions-section" style="display: none;">
+                <div class="actions-row">
+                    <button class="nav-btn" onclick="refreshStatus()">Refresh Status</button>
+                    <button class="nav-btn" id="restart-btn" onclick="restartRnsd()" style="background-color: var(--color-warning);">Restart rnsd</button>
+                </div>
+            </div>
+
+            <div id="last-update" style="text-align: center; color: var(--text-secondary); font-size: 12px; margin-top: 16px;"></div>
+        </div>
+    </main>
+
+    <script>
+        function formatBytes(bytes) {
+            if (bytes === 0 || bytes == null) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let i = 0;
+            let val = bytes;
+            while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+            return (i === 0 ? val : val.toFixed(1)) + ' ' + units[i];
+        }
+
+        function formatBps(bps) {
+            if (bps === 0 || bps == null) return '0 bps';
+            if (bps >= 1e9) return (bps / 1e9).toFixed(2) + ' Gbps';
+            if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' Mbps';
+            if (bps >= 1e3) return (bps / 1e3).toFixed(1) + ' Kbps';
+            return bps.toFixed(0) + ' bps';
+        }
+
+        function formatUptime(seconds) {
+            if (!seconds) return '--';
+            const s = Math.floor(seconds);
+            const d = Math.floor(s / 86400);
+            const h = Math.floor((s % 86400) / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            let parts = [];
+            if (d > 0) parts.push(d + 'd');
+            if (h > 0) parts.push(h + 'h');
+            parts.push(m + 'm');
+            return parts.join(' ');
+        }
+
+        function timeAgo(ts) {
+            if (!ts) return '--';
+            const diff = Math.floor(Date.now() / 1000 - ts);
+            if (diff < 60) return diff + 's ago';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+            return Math.floor(diff / 86400) + 'd ago';
+        }
+
+        async function refreshStatus() {
+            try {
+                const r = await fetch('/api/reticulum/status');
+                const d = await r.json();
+                renderStatus(d);
+            } catch (e) {
+                console.error('Error:', e);
+                document.getElementById('status-cards').innerHTML = '<div class="error">Error loading Reticulum status</div>';
+            }
+        }
+
+        function renderStatus(d) {
+            const ifaces = d.interfaces || [];
+            const dests = d.destinations || [];
+
+            // ── Categorize interfaces ──
+            let meshNodeCount = 0;
+            let tcpClientCount = 0;
+            let localPrograms = 0;
+            const meshPeers = [];    // AutoInterfacePeer entries
+            const tcpClients = [];   // TCPClientInterface entries (actual phone connections)
+            const mainIfaces = [];   // For raw view
+
+            ifaces.forEach(iface => {
+                if (iface.type === 'AutoInterfacePeer') {
+                    meshNodeCount++;
+                    meshPeers.push(iface);
+                } else if (iface.type === 'TCPClientInterface' && iface.parent_interface_name) {
+                    // This is an actual connected client (child of TCPServerInterface)
+                    tcpClientCount++;
+                    tcpClients.push(iface);
+                } else if (iface.type === 'LocalServerInterface') {
+                    localPrograms = iface.clients || 0;
+                    mainIfaces.push(iface);
+                } else if (iface.type === 'LocalClientInterface') {
+                    // skip - internal plumbing
+                } else {
+                    mainIfaces.push(iface);
+                }
+            });
+
+            // ── Classify destinations by connection type ──
+            const devices = dests.map(dest => {
+                const via = dest.interface || '';
+                let connType = 'mesh';
+                let connDetail = '';
+
+                if (via.includes('TCPInterface') || via.includes('TCPClient')) {
+                    connType = 'tcp';
+                    // Extract IP from interface name like "TCPInterface[Client on LAN TCP Server/10.20.20.27:40706]"
+                    const ipMatch = via.match(/(\d+\.\d+\.\d+\.\d+)/);
+                    connDetail = ipMatch ? ipMatch[1] : 'TCP';
+                } else if (via.includes('AutoInterfacePeer')) {
+                    connType = 'mesh';
+                    // Extract link-local from "AutoInterfacePeer[wlan1/fe80::21]"
+                    const llMatch = via.match(/fe80::[^\s\]]+/);
+                    connDetail = llMatch ? 'via ' + llMatch[0] : 'Mesh';
+                }
+
+                return {
+                    hash: dest.hash,
+                    hops: dest.hops,
+                    connType: connType,
+                    connDetail: connDetail,
+                    timestamp: dest.timestamp,
+                    via: via
+                };
+            });
+
+            const directCount = devices.filter(d => d.connType === 'tcp').length;
+            const meshDeviceCount = devices.filter(d => d.connType === 'mesh').length;
+            const totalDevices = devices.length;
+
+            // ── Card 1: Transport Status ──
+            const running = d.service_running;
+            const statusColor = running ? 'var(--color-connected)' : 'var(--color-disconnected)';
+            const statusText = running ? 'RUNNING' : 'STOPPED';
+            const statusClass = running ? 'connected' : 'disconnected';
+
+            // ── Card 2: Connected Devices ──
+            const devColor = totalDevices > 0 ? 'var(--color-connected)' : 'var(--color-warning)';
+
+            document.getElementById('status-cards').innerHTML = `
+                <div class="node-card ${statusClass}">
+                    <div class="node-header">
+                        <span class="node-ip">Transport</span>
+                    </div>
+                    <div class="node-body" style="text-align: center;">
+                        <div class="big-num" style="color: ${statusColor};">
+                            ${running ? '●' : '○'}
+                        </div>
+                        <div style="font-size: 20px; font-weight: bold; margin-bottom: 12px;">
+                            ${statusText}
+                        </div>
+                    </div>
+                    <div style="padding: 0 4px;">
+                        <div class="stat-row">
+                            <span class="label">Uptime:</span>
+                            <span class="value">${formatUptime(d.transport_uptime)}</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="label">Traffic:</span>
+                            <span class="value">↑${formatBytes(d.txb)}  ↓${formatBytes(d.rxb)}</span>
+                        </div>
+                    </div>
+                    <div class="node-status-label ${statusClass}">${statusText}</div>
+                </div>
+
+                <div class="node-card ${totalDevices > 0 ? 'connected' : ''}">
+                    <div class="node-header">
+                        <span class="node-ip">Reachable Destinations</span>
+                    </div>
+                    <div class="node-body" style="text-align: center;">
+                        <div class="big-num" style="color: ${devColor};">
+                            ${totalDevices}
+                        </div>
+                        <div class="stat-label">Total Reachable</div>
+                    </div>
+                    <div style="padding: 0 4px;">
+                        <div class="stat-row">
+                            <span class="label">Direct (TCP):</span>
+                            <span class="value">${directCount}</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="label">Via Mesh:</span>
+                            <span class="value">${meshDeviceCount}</span>
+                        </div>
+                    </div>
+                    ${totalDevices === 0 ? `
+                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color); font-size: 13px; color: var(--color-warning); text-align: center;">
+                        ⚠ No devices discovered yet
+                    </div>` : ''}
+                </div>
+            `;
+
+            // ── Connected Devices Table ──
+            const devSec = document.getElementById('devices-section');
+            const devBody = document.getElementById('devices-body');
+
+            if (devices.length > 0) {
+                devSec.style.display = 'block';
+                let h = `<table class="rt-table">
+                    <thead><tr>
+                        <th>Destination</th>
+                        <th>Connection</th>
+                        <th>Hops</th>
+                        <th>Last Seen</th>
+                    </tr></thead><tbody>`;
+
+                devices.forEach(dev => {
+                    const shortHash = dev.hash || '--';
+                    const badgeClass = dev.connType === 'tcp' ? 'badge-tcp' : 'badge-mesh';
+                    const badgeLabel = dev.connType === 'tcp' ? 'TCP' : 'MESH';
+
+                    h += `<tr>
+                        <td title="${dev.hash || ''}">${shortHash}</td>
+                        <td>
+                            <span class="badge ${badgeClass}">${badgeLabel}</span>
+                            <span class="dim" style="margin-left: 6px; font-size: 12px;">${dev.connDetail}</span>
+                        </td>
+                        <td>${dev.hops != null ? dev.hops + ' hop' + (dev.hops !== 1 ? 's' : '') : '--'}</td>
+                        <td class="dim">${timeAgo(dev.timestamp)}</td>
+                    </tr>`;
+                });
+                h += '</tbody></table>';
+                devBody.innerHTML = h;
+            } else {
+                devSec.style.display = 'block';
+                devBody.innerHTML = '<div class="empty-msg">No devices discovered yet. Devices will appear when Sideband or other Reticulum apps announce.</div>';
+            }
+
+            // ── Mesh Nodes Table ──
+            const meshSec = document.getElementById('mesh-nodes-section');
+            const meshBody = document.getElementById('mesh-nodes-body');
+
+            if (meshPeers.length > 0) {
+                meshSec.style.display = 'block';
+                let mh = `<table class="rt-table">
+                    <thead><tr>
+                        <th>Node</th>
+                        <th>Traffic</th>
+                        <th>Announces</th>
+                        <th>Status</th>
+                    </tr></thead><tbody>`;
+
+                meshPeers.forEach(peer => {
+                    // Extract readable name from "AutoInterfacePeer[wlan1/fe80::21]"
+                    const nameMatch = peer.name.match(/\[(.+)\]/);
+                    const peerName = nameMatch ? nameMatch[1] : peer.name;
+
+                    const up = peer.status === true;
+                    const dotClass = up ? 'dot-green' : 'dot-red';
+
+                    const inFreq = peer.incoming_announce_frequency;
+                    const announceStr = inFreq > 0 ? (inFreq * 60).toFixed(1) + '/min' : 'idle';
+
+                    mh += `<tr>
+                        <td>${peerName}</td>
+                        <td>↑${formatBytes(peer.txb)}  ↓${formatBytes(peer.rxb)}</td>
+                        <td class="dim">${announceStr}</td>
+                        <td><span class="dot ${dotClass}"></span>${up ? 'Up' : 'Down'}</td>
+                    </tr>`;
+                });
+                mh += '</tbody></table>';
+                meshBody.innerHTML = mh;
+            } else {
+                meshSec.style.display = 'none';
+            }
+
+            // Show actions
+            document.getElementById('actions-section').style.display = 'block';
+
+            // Timestamp
+            document.getElementById('last-update').textContent = 'Updated ' + new Date().toLocaleTimeString();
+        }
+
+        async function restartRnsd() {
+            if (!confirm('Are you sure you want to restart the Reticulum daemon (rnsd)?')) return;
+
+            const btn = document.getElementById('restart-btn');
+            btn.disabled = true;
+            btn.textContent = 'Restarting...';
+
+            try {
+                const r = await fetch('/api/reticulum/restart', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await r.json();
+
+                if (result.success) {
+                    alert('rnsd restarted successfully');
+                    setTimeout(refreshStatus, 3000);
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Error restarting rnsd:', e);
+                alert('Error restarting rnsd: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Restart rnsd';
+            }
+        }
+
+        // Initial load and auto-refresh
+        refreshStatus();
+        setInterval(refreshStatus, 10000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
+    </script>
+</body>
+</html>
