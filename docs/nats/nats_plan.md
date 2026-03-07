@@ -22,15 +22,17 @@ The system operates across three distinct physical and logical layers, managed b
 ---
 
 ## 3. The Unified Packet Specification
-To ensure interoperability and zero-waste efficiency, the system utilizes a "Universal Packet" design optimized for the 237-byte MTU of Meshtastic LoRa.
 
-### 3.1 Packet Structure (237 Bytes Total)
-* **Global Message ID (4 Bytes):** A unique `uint32` hash generated at the source. Used for cross-interface deduplication.
-* **Metadata Header (1 Byte):** Defines payload type (Text, Telemetry, Command) and priority flags.
-* **Payload (232 Bytes):** Application data in protobuf format (see 3.2).
+### 3.1 Design Constraint: 233-Byte Ceiling
+
+**Reference:** Meshtastic protobuf `Constants.DATA_PAYLOAD_LEN = 233` (from `mesh.proto`)
+
+The Meshtastic `Data.payload` field accepts a maximum of **233 bytes**. This is the application-level payload limit after Meshtastic handles its own framing, encryption, and LoRa modulation. All Nucleus messages are sized to fit within this ceiling.
+
+**The same protobuf format is used on ALL transports** — Wi-Fi (NATS), LoRa (Meshtastic), and VHF (Reticulum). The format is sized for the smallest pipe (LoRa at 233 bytes) so that any message can travel over any transport without modification. There is no separate wrapper or header; the serialized protobuf IS the packet.
 
 ### 3.2 Nucleus Message Format (Protobuf)
-The system uses **Protocol Buffers (protobuf)** as its wire format. Protobuf provides compact binary encoding with schema evolution support (adding fields without breaking old nodes), language-agnostic codegen, and varint encoding that is already highly compact. Messages are designed to fit in a single Meshtastic packet.
+The system uses **Protocol Buffers (protobuf)** as its wire format. Protobuf provides compact binary encoding with schema evolution support (adding fields without breaking old nodes), language-agnostic codegen, and varint encoding that is already highly compact. Messages are designed to fit in a single Meshtastic packet (≤233 bytes serialized).
 
 Messages **can be converted to CoT (Cursor on Target) format if needed** for optional ATAK bridging, but CoT is not the native format.
 
@@ -48,30 +50,34 @@ enum MessageType {
 }
 
 message NucleusMessage {
-    MessageType type = 1;       // What kind of message
-    uint32 sender_id = 2;       // Node identifier (maps to callsign/UID)
-    uint32 timestamp = 3;       // Unix epoch (seconds)
-    sint32 latitude = 4;        // Scaled: lat × 1e7 (signed int32)
-    sint32 longitude = 5;       // Scaled: lon × 1e7 (signed int32)
-    bytes payload = 6;          // Free-form content (text, telemetry, etc.)
+    uint32 message_id = 1;      // Global dedup ID (unique per message, used across all transports)
+    MessageType type = 2;       // What kind of message
+    uint32 sender_id = 3;       // Node identifier (maps to callsign/UID)
+    uint32 timestamp = 4;       // Unix epoch (seconds)
+    sint32 latitude = 5;        // Scaled: lat × 1e7 (signed int32)
+    sint32 longitude = 6;       // Scaled: lon × 1e7 (signed int32)
+    bytes payload = 7;          // Free-form content (text, telemetry, etc.)
 }
 ```
 
 **Estimated sizes:**
-* Chat message ("hello team"): ~40-60 bytes
-* PLI (position report): ~20-25 bytes
-* Alert with text: ~50-70 bytes
+* Chat message ("hello team"): ~45-65 bytes
+* PLI (position report): ~25-30 bytes
+* Alert with text: ~55-75 bytes
 
-All well within the 232-byte application data ceiling.
+All well within the 233-byte ceiling.
 
 **Design Principles:**
+* **One format, all transports.** The serialized NucleusMessage protobuf is the packet on every transport — Wi-Fi, LoRa, and VHF. No transport-specific wrappers or headers.
+* **Sized for the bottleneck.** All messages must serialize to ≤233 bytes so they can traverse any transport, including LoRa.
 * **CoT-convertible, not CoT-native.** A separate converter module can map these fields to CoT protobuf/XML for TAK Server or ATAK when desired. This is an option, not a requirement.
-* **Protobuf, not text.** Binary encoding keeps messages compact for the 237-byte LoRa MTU. No XML, no JSON on the wire.
+* **Protobuf, not text.** Binary encoding keeps messages compact. No XML, no JSON on the wire.
 * **Schema evolution.** Protobuf allows adding new fields in future versions without breaking older nodes — critical for a mesh where nodes may run different firmware versions.
 * **Position is optional.** If `type` indicates a text-only message, lat/lon default to zero and cost only 1 byte each (varint zero).
+* **Deduplication is built in.** The `message_id` field is part of every message on every transport, enabling cross-interface deduplication without external framing.
 
 ### 3.3 Fragmentation Policy
-* **Single Frame:** Standard messages must fit within the 237-byte limit.
+* **Single Frame:** Standard messages must serialize to ≤233 bytes (the Meshtastic `DATA_PAYLOAD_LEN`).
 * **Multi-Frame:** Larger data is handled by the NATS layer over Wi-Fi only. Large-scale fragmentation over LoRa/VHF is discouraged to prevent channel saturation.
 
 ---
@@ -108,6 +114,8 @@ JetStream is NATS' built-in persistence engine. It supports memory and file stor
 * **Local-only persistence** — Each node's JetStream is independent. Streams are not replicated between nodes.
 * **Used as the Gatekeeper's outbox** — When a message can't be delivered (no Wi-Fi route, destination unreachable), the Gatekeeper stores it in a local JetStream stream. When the route comes back, the Gatekeeper drains the queue and delivers the messages.
 
+**Note on JetStream Meta Group:** When JetStream is enabled in a NATS cluster, all JetStream-enabled servers automatically form a "Meta Group" that uses Raft for JetStream API operations (creating/deleting streams and consumers). This Meta Group requires quorum (½ cluster + 1). However, this is a non-issue for our use case: each node creates its outbox streams at startup when it is standalone (quorum = 1 = itself). Once created, R=1 streams continue to accept messages regardless of Meta Group quorum state. If a Wi-Fi peer goes down, there is no Wi-Fi peer to message anyway — the Gatekeeper bridges to LoRa/Reticulum instead.
+
 **What we are NOT using:**
 * ~~JetStream clustering (Raft/quorum)~~ — Requires odd numbers of nodes, minimum 3 for R=3. Incompatible with arbitrary node counts in a MANET.
 * ~~JetStream file storage~~ — Would cause SD card wear on the Raspberry Pi.
@@ -120,7 +128,7 @@ JetStream is NATS' built-in persistence engine. It supports memory and file stor
 | Nodes A and B are connected via Wi-Fi | NATS Core Cluster | Publish on Node A is transparently delivered to subscribers on Node B. Fire-and-forget. |
 | Node B goes offline | JetStream R=1 Memory | Gatekeeper on Node A detects no route (via babeld). Stores outbound message in local JetStream stream as "outbox." |
 | Node B comes back online | NATS Core Cluster + Gatekeeper | Cluster re-forms via gossip. Gatekeeper drains the outbox, publishes queued messages. Node B receives them. |
-| Node B unreachable via Wi-Fi, reachable via LoRa | Gatekeeper → Meshtastic | Gatekeeper serializes to protobuf (≤237 bytes), injects via Meshtastic Serial API. |
+| Node B unreachable via Wi-Fi, reachable via LoRa | Gatekeeper → Meshtastic | Gatekeeper serializes to protobuf (≤233 bytes), injects via Meshtastic Serial API. |
 | Node B unreachable via Wi-Fi and LoRa | Gatekeeper → Reticulum | Gatekeeper hands packet to Reticulum for VHF broadcast/routing. |
 
 ---
@@ -129,13 +137,18 @@ JetStream is NATS' built-in persistence engine. It supports memory and file stor
 The Gatekeeper is the local routing intelligence that bridges NATS subjects to physical radio interfaces.
 
 ### 5.1 Outbound Selection Logic (Priority Pathing)
-1. **NATS/IP:** If `babeld` confirms a Wi-Fi route to the destination, the message stays in the NATS IP stack. Core clustering handles delivery transparently.
-2. **Meshtastic:** If IP is unavailable, the Gatekeeper checks the Meshtastic NodeDB for the peer. If found, it serializes the protobuf to ≤237 bytes and injects via the Serial API.
-3. **Reticulum:** If both fail, the Gatekeeper hands the packet to Reticulum for VHF broadcast/routing.
+When a message needs to be sent, the Gatekeeper looks up the destination in the local **Node Map** (see Section 6) to retrieve its IP address, Meshtastic ID, and Reticulum hash. It then selects the transport based on reachability:
+
+1. **NATS/IP:** Query `babeld` — is there a Wi-Fi route to the destination's IP? If yes, publish via NATS. Core clustering handles delivery transparently.
+2. **Meshtastic:** If no IP route exists, use the destination's Meshtastic ID from the Node Map and serialize the protobuf to ≤233 bytes, inject via the Serial API.
+3. **Reticulum:** If both IP and LoRa are unavailable, use the destination's Reticulum hash from the Node Map and hand the packet to Reticulum for VHF broadcast/routing.
+4. **Outbox:** If no transport can reach the destination, queue the message in the local JetStream outbox (see Section 5.3).
+
+The Gatekeeper never queries external systems (Meshtastic NodeDB, Reticulum path tables) at send time for addressing. All addresses come from the Node Map. External systems are only queried for **reachability** (babeld route check) or as **inputs to populate** the Node Map (see Section 6.2).
 
 ### 5.2 Inbound Deduplication
 The Gatekeeper monitors all interfaces (Serial, IP, VHF) simultaneously. When a packet arrives:
-* The 4-byte **Global ID** is extracted.
+* The protobuf is deserialized and the `message_id` field is extracted.
 * The ID is compared against a local "Seen-List" cache.
 * If the ID is a duplicate (e.g., arrived via LoRa after Wi-Fi), it is discarded. If new, it is passed to the local NATS bus for application use.
 
@@ -148,42 +161,67 @@ When the Gatekeeper cannot deliver a message on any transport:
 
 ---
 
-## 6. Identity & Discovery
-The system maps multiple hardware-specific addresses to a single human-readable Node Identity.
+## 6. Identity & Discovery: The Node Map
 
-### 6.1 The Mapping Table
-A localized registry linking Node Names to:
-* **Meshtastic ID:** (e.g., `!a1b2c3d4`)
-* **Reticulum Hash:** (e.g., `80cf...f21a`)
-* **IP Address:** (e.g., `10.20.1.x`)
+Each node on the mesh has three different addresses — one per transport. The **Node Map** is the local registry that ties them together into a single identity. It is the **single source of truth** for the Gatekeeper when addressing messages (see Section 5.1).
 
-### 6.2 Heartbeat Strategy (Per-Transport)
-Heartbeat frequency and method are tuned per transport to respect bandwidth constraints:
+### 6.1 The Node Map (NATS KV Store)
 
-| Transport | Method | Frequency | Rationale |
-| :--- | :--- | :--- | :--- |
-| **Wi-Fi (NATS)** | Publish full mapping to `mesh.heartbeat` subject | Every 30-60 seconds | Bandwidth is cheap on IP. |
-| **LoRa (Meshtastic)** | Lightweight 22-byte packet via Serial API | Every 5 minutes | Preserves scarce LoRa airtime. |
-| **VHF (Reticulum)** | Passive — read existing announce/path tables | N/A | Zero additional transmissions. |
+The Node Map is implemented as a **JetStream Key/Value bucket** (`node-map`) on each node. Since JetStream R=1 memory is already running locally, KV is available with zero additional components — it's a built-in JetStream feature.
 
-### 6.3 LoRa Heartbeat Packet (22 Bytes)
-The LoRa heartbeat is intentionally minimal to preserve airtime (~0.5s air time per transmission):
+Each entry maps a node identifier to all known addresses for that node:
 
-| Field | Size | Description |
+| Field | Example | Description |
 | :--- | :--- | :--- |
-| Node Number | 1-2 bytes | Local node identifier |
-| IP Address | 4 bytes | Node's mesh IP (e.g., `10.20.1.12`) |
-| Reticulum Hash | 16 bytes | Truncated destination hash |
+| `sender_id` | `11` | Nucleus node number (matches protobuf `sender_id`) |
+| `name` | `"Alpha"` | Human-readable node name |
+| `ip` | `"10.20.1.11"` | Wi-Fi mesh IP (for NATS/babeld) |
+| `meshtastic_id` | `"!a1b2c3d4"` | Meshtastic device ID (for LoRa) |
+| `reticulum_hash` | `"80cf...f21a"` | Reticulum destination hash (for VHF) |
+| `last_seen` | `1709800000` | Unix timestamp of last contact on any transport |
 
-**Note:** The sender's Meshtastic ID is implicit — it is already known to the receiver because the packet arrived via the Meshtastic transport. This eliminates 4 bytes of redundancy.
+Entries may be incomplete — a node discovered only via LoRa heartbeat will have `meshtastic_id` and `ip` but may not yet have a `reticulum_hash`. The Gatekeeper works with whatever addresses are available.
 
-### 6.4 Passive Correlation
-For transports without a dedicated heartbeat (Reticulum), the Gatekeeper builds its mapping table by reading existing data sources:
-* **babeld route table** → IP peers
-* **Meshtastic NodeDB** → LoRa peers
-* **Reticulum path table** → VHF/HF peers
+### 6.2 How the Node Map Gets Populated
 
-The Wi-Fi heartbeat distributes the authoritative mapping. LoRa heartbeats provide a fallback for nodes that have never had Wi-Fi contact. Passive correlation is a last resort.
+Three input sources feed the Node Map, in order of completeness and authority:
+
+**1. Wi-Fi Heartbeats (Primary — most complete)**
+
+| | |
+| :--- | :--- |
+| **Transport** | NATS publish to `mesh.heartbeat` subject |
+| **Frequency** | Every 30-60 seconds |
+| **Content** | Full identity: sender_id, name, IP, Meshtastic ID, Reticulum hash |
+| **Rationale** | Bandwidth is cheap on Wi-Fi. This is the authoritative source. |
+
+When a node receives a heartbeat via NATS, it updates (or creates) the corresponding entry in its local KV store. This is the most complete source because it carries all three addresses.
+
+**2. LoRa Heartbeats (Fallback — for nodes never seen on Wi-Fi)**
+
+| | |
+| :--- | :--- |
+| **Transport** | Meshtastic Serial API (22-byte packet) |
+| **Frequency** | Every 5 minutes |
+| **Content** | Node number (1-2 bytes) + IP address (4 bytes) + Reticulum hash (16 bytes) |
+| **Rationale** | Preserves scarce LoRa airtime (~0.5s per transmission). |
+
+The sender's **Meshtastic ID is implicit** — it is already known to the receiver because the packet arrived via the Meshtastic transport. This eliminates 4 bytes of redundancy from the packet. The receiving node can build a complete mapping entry from a single LoRa heartbeat: it knows the Meshtastic ID (from the transport), the IP (from the packet), and the Reticulum hash (from the packet).
+
+**3. Passive Correlation (Bootstrap / last resort)**
+
+| | |
+| :--- | :--- |
+| **Transport** | Local system queries (no transmissions) |
+| **Frequency** | At startup, and periodically as background task |
+| **Sources** | babeld route table → IP peers, Meshtastic NodeDB → LoRa peers, Reticulum path table → VHF peers |
+| **Rationale** | Zero airtime cost. Populates partial entries before heartbeats arrive. |
+
+At startup or when heartbeats haven't been received yet, the Gatekeeper reads existing data from local system tables. These may produce incomplete entries (e.g., knows the IP from babeld but not the Meshtastic ID). Entries are merged — if a partial entry already exists from passive correlation and a heartbeat arrives later with more fields, the entry is updated, not replaced.
+
+### 6.3 Priority and Merging
+
+The Node Map merges data from all sources. If a field is provided by multiple sources, the most recent value wins. Wi-Fi heartbeats are the most authoritative because they carry the complete identity published by the node itself. LoRa heartbeats fill in gaps for nodes not reachable via Wi-Fi. Passive correlation provides a bootstrap until heartbeats arrive.
 
 ---
 
@@ -278,7 +316,7 @@ Get the messaging backbone working across the mesh over IP.
 ### Phase 2 — Meshtastic Bridge (Gatekeeper v1)
 Bridge NATS messaging to LoRa when Wi-Fi is unavailable.
 - Gatekeeper daemon that subscribes to NATS subjects
-- Outbound: when babeld shows no IP route for a destination, serialize protobuf to ≤237 bytes and inject via Meshtastic Serial API
+- Outbound: when babeld shows no IP route for a destination, serialize protobuf to ≤233 bytes and inject via Meshtastic Serial API
 - Inbound: listen on Meshtastic serial, deserialize protobuf, publish to local NATS bus
 - Global ID deduplication (seen-list cache)
 - Store-and-forward outbox using local JetStream memory streams
