@@ -377,3 +377,255 @@ All architectural decisions in this document are grounded in the official NATS d
 | JetStream Clustering (Raft, quorum, why we don't use R>1) | [clustering/jetstream_clustering/README.md](https://github.com/nats-io/nats.docs/blob/master/running-a-nats-service/configuration/clustering/jetstream_clustering/README.md) |
 | JetStream Configuration (max_mem, store_dir, domain) | [jetstream-config/resource_management.md](https://github.com/nats-io/nats.docs/blob/master/running-a-nats-service/configuration/jetstream-config/resource_management.md) |
 | Leaf Nodes (hub-spoke topology — evaluated and rejected for MANET) | [leafnodes/README.md](https://github.com/nats-io/nats.docs/blob/master/running-a-nats-service/configuration/leafnodes/README.md) |
+
+---
+
+## Appendix B: Stage 1 Implementation Specification — Node Map + Unified Status
+
+This appendix provides the exact implementation details for the first deliverable: getting NATS running on the mesh and using it to power a unified connection status page that shows both Wi-Fi (babeld) and LoRa (Meshtastic) peers.
+
+### B.1 NATS Infrastructure Setup
+
+**Binaries to install on each node:**
+
+| Binary | Source | Install Path |
+| :--- | :--- | :--- |
+| `nats-server` | [nats-io/nats-server releases](https://github.com/nats-io/nats-server/releases) — asset: `nats-server-vX.X.X-linux-arm64.tar.gz` | `/usr/local/bin/nats-server` |
+| `nats` CLI | [nats-io/natscli releases](https://github.com/nats-io/natscli/releases) — asset: `nats-X.X.X-linux-arm64.tar.gz` | `/usr/local/bin/nats` |
+| `nats-py` | `pip install --break-system-packages nats-py` | System Python |
+
+**Config generation** — add to `/opt/nucleus/bin/config_generation.sh`:
+1. Read `MESH_IP` from `/etc/nucleus/mesh.conf` (e.g., `10.20.1.12`)
+2. Extract node number from last octet (e.g., `12`)
+3. Read `OPENDHT_BOOTSTRAP_IPS` for seed routes (e.g., `10.20.1.11,10.20.1.12`)
+4. Write `/etc/nucleus/nats-server.conf`:
+
+```
+server_name: nucleus-12
+listen: 0.0.0.0:4222
+
+jetstream {
+    max_mem: 64M
+    store_dir: /tmp/nats-jetstream
+    domain: nucleus
+}
+
+cluster {
+    name: natak-mesh
+    listen: 0.0.0.0:6222
+
+    routes: [
+        nats://10.20.1.11:6222
+        nats://10.20.1.12:6222
+    ]
+}
+```
+
+**Systemd service** — `/etc/systemd/system/nats-server.service`:
+```ini
+[Unit]
+Description=NATS Server (Nucleus Mesh)
+After=mesh-start.service
+Wants=mesh-start.service
+
+[Service]
+ExecStart=/usr/local/bin/nats-server -c /etc/nucleus/nats-server.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**UFW** — open ports 4222/tcp and 6222/tcp on wlan1.
+
+**Verification test:** On Node A: `nats sub test`. On Node B: `nats pub test hello`. Node A receives the message, confirming NATS clustering works over the 802.11s/babeld mesh.
+
+---
+
+### B.2 Node Map Population Service
+
+A Python service running as a background thread inside the existing Flask app (`app.py`). Connects to `nats://localhost:4222` using `nats-py` (async client).
+
+#### B.2.1 At Startup — Read Own Identity
+
+The service reads this node's own identities from two sources:
+
+**From `/etc/nucleus/mesh.conf`:**
+- `MESH_IP` → e.g., `10.20.1.12` — this node's Wi-Fi mesh IP
+- Last octet of `MESH_IP` → `sender_id` (e.g., `12`)
+
+**From Meshtastic serial interface** (via existing `MeshtasticManager`):
+- `self.interface.getMyNodeInfo()["num"]` → this node's Meshtastic node number (uint32)
+- Convert node number to Meshtastic ID string: `"!" + hex(num)[2:]` → e.g., `"!a1b2c3d4"`
+- `self.interface.getLongName()` → this node's human-readable name (e.g., `"Alpha"`)
+
+**From Reticulum** (deferred — not in Stage 1):
+- `reticulum_hash` set to `null` for now
+
+This gives the service the complete identity for the local node:
+```json
+{
+    "sender_id": 12,
+    "name": "Alpha",
+    "ip": "10.20.1.12",
+    "meshtastic_id": "!a1b2c3d4",
+    "reticulum_hash": null
+}
+```
+
+#### B.2.2 Create KV Bucket
+
+At startup, create (or open if exists) the JetStream KV bucket `node-map`:
+- Storage: memory
+- Replicas: 1
+- TTL / max_age: 300 seconds (entries expire if no heartbeat refreshes them — indicates the node is gone)
+
+Write this node's own entry immediately.
+
+#### B.2.3 Wi-Fi Heartbeat — Publish
+
+Every 30 seconds, publish to NATS subject `mesh.heartbeat.<sender_id>`.
+
+**Payload** (JSON — only travels over Wi-Fi where bandwidth is cheap):
+```json
+{
+    "sender_id": 12,
+    "name": "Alpha",
+    "ip": "10.20.1.12",
+    "meshtastic_id": "!a1b2c3d4",
+    "reticulum_hash": null,
+    "timestamp": 1709800030
+}
+```
+
+This contains **all five identity fields**: `sender_id`, `name`, `ip`, `meshtastic_id`, and `reticulum_hash`. Every field that this node knows about itself is included explicitly. Because NATS Core Clustering is active, this publish is transparently delivered to all other NATS-connected nodes on the Wi-Fi mesh.
+
+#### B.2.4 Wi-Fi Heartbeat — Subscribe
+
+Subscribe to `mesh.heartbeat.>` (wildcard — receives heartbeats from all nodes).
+
+When a heartbeat is received:
+1. Parse the JSON payload
+2. Use `sender_id` (as a string) as the KV key
+3. Write/update the entry in the local `node-map` KV bucket with all fields from the heartbeat
+4. Set `mapping_source` to `"wifi_heartbeat"`
+
+#### B.2.5 LoRa Heartbeat — Transmit
+
+Every 5 minutes, send a 22-byte binary packet via Meshtastic Serial API to broadcast address `0xFFFFFFFF`, using a custom portnum (`PRIVATE_APP` = 256):
+
+| Offset | Size | Field | Value |
+|:-------|:-----|:------|:------|
+| 0 | 2 bytes | `sender_id` | `uint16` big-endian, e.g., `12` |
+| 2 | 4 bytes | IP address | 4 raw octets, e.g., `[10, 20, 1, 12]` |
+| 6 | 16 bytes | Reticulum hash | 16 raw bytes (all zeros if not available) |
+
+Total: 22 bytes.
+
+The sender's **Meshtastic ID** is NOT in the packet. It is implicit — every Meshtastic `MeshPacket` carries the sender's node number in the `MeshPacket.from` field at the transport layer. The receiver extracts it there.
+
+#### B.2.6 LoRa Heartbeat — Receive
+
+Subscribe to incoming Meshtastic data packets on custom portnum 256. When a 22-byte packet arrives:
+
+1. Parse binary fields:
+   - Bytes 0-1: `sender_id` (`uint16` big-endian)
+   - Bytes 2-5: `ip` (4 octets → format as `"X.X.X.X"`)
+   - Bytes 6-21: `reticulum_hash` (16 bytes → hex string, or `null` if all zeros)
+2. Extract sender's Meshtastic ID from `MeshPacket.from` (uint32 from the transport layer)
+3. Convert `MeshPacket.from` to Meshtastic ID string: `"!" + hex(from_num)[2:]`
+4. Write/update the entry in the local `node-map` KV bucket:
+   - `sender_id`: from packet bytes 0-1
+   - `ip`: from packet bytes 2-5
+   - `meshtastic_id`: from `MeshPacket.from` (implicit, extracted from transport)
+   - `reticulum_hash`: from packet bytes 6-21 (or `null` if zeros)
+   - `last_seen`: current timestamp
+   - `mapping_source`: `"lora_heartbeat"`
+
+This produces a **complete mapping** from a single LoRa heartbeat: `sender_id` (explicit), `ip` (explicit), `meshtastic_id` (implicit from transport), `reticulum_hash` (explicit).
+
+#### B.2.7 Passive Correlation — Background Task
+
+Every 30 seconds, as a fallback for nodes that haven't sent any heartbeat yet:
+
+**babeld** → query the babeld monitoring socket at `[::1]:33123` (reuse existing `query_babeld()` from `app.py`) → parse neighbor list → for each peer IP not already in the KV store, create a partial entry with only `ip` and `last_seen` populated. Set `mapping_source` to `"passive"`.
+
+**Meshtastic NodeDB** → read `self.interface.nodes` (the radio's local node database, a dict keyed by node ID string) → for each node entry:
+- Extract `node["user"]["id"]` → Meshtastic ID (e.g., `"!a1b2c3d4"`)
+- Extract `node["user"]["longName"]` → name
+- Extract `node["num"]` → node number
+- Extract `node.get("snr")` → SNR
+- Extract `node.get("lastHeard")` → last heard timestamp
+- Extract `node.get("hopsAway")` → hop count
+
+For any Meshtastic node not already in the KV store with a heartbeat-sourced entry, create a partial entry with `meshtastic_id`, `name`, and `last_seen` populated. Set `mapping_source` to `"passive"`.
+
+Passive entries are **never overwritten by other passive entries**, but ARE overwritten when a Wi-Fi or LoRa heartbeat arrives for that node (heartbeats always take priority).
+
+---
+
+### B.3 Unified Connection Status API
+
+**Endpoint:** `GET /api/node-map`
+
+Reads all entries from the `node-map` KV bucket. For each entry, enriches with live reachability data:
+
+**Wi-Fi reachability check:** Is `entry.ip` present in the current babeld neighbor list? (Reuse `parse_babeld_dump()` and `query_babeld()` from `app.py`.) If yes, also pull:
+- Babel cost from the neighbor entry
+- WiFi signal average from `get_wifi_station_stats()` (correlated via MAC address, same method as existing `get_mesh_nodes()`)
+
+**LoRa reachability check:** Is `entry.meshtastic_id` present in the Meshtastic NodeDB (`self.interface.nodes`)? If yes, and `lastHeard` is within the last 15 minutes, the node is LoRa-reachable. Pull:
+- `snr` from the node entry
+- `hopsAway` from the node entry
+- `lastHeard` from the node entry
+
+**Response format:**
+```json
+{
+    "nodes": [
+        {
+            "sender_id": 11,
+            "name": "Alpha",
+            "ip": "10.20.1.11",
+            "meshtastic_id": "!a1b2c3d4",
+            "reticulum_hash": null,
+            "wifi_reachable": true,
+            "wifi_cost": 256,
+            "wifi_signal_avg": -52,
+            "lora_reachable": true,
+            "lora_snr": 10.5,
+            "lora_hops_away": 0,
+            "lora_last_heard": 1709800000,
+            "last_seen": 1709800030,
+            "mapping_source": "wifi_heartbeat"
+        }
+    ],
+    "self": {
+        "sender_id": 12,
+        "name": "Bravo",
+        "ip": "10.20.1.12",
+        "meshtastic_id": "!e5f6g7h8"
+    },
+    "timestamp": "2026-03-07T13:00:00"
+}
+```
+
+`mapping_source` values: `"wifi_heartbeat"` (authoritative, all fields present), `"lora_heartbeat"` (complete, derived from LoRa), `"passive"` (partial, from babeld/NodeDB only).
+
+---
+
+### B.4 Unified Connection Status Web Page
+
+A new page or updated dashboard that renders the `/api/node-map` response as a table. Auto-refreshes every 5 seconds (matching the existing monitor page pattern).
+
+| Node | IP | Wi-Fi | LoRa | Source | Last Seen |
+|:-----|:---|:------|:-----|:-------|:----------|
+| Alpha (11) | 10.20.1.11 | ✅ cost 256, -52 dBm | ✅ SNR 10.5, 0 hops | wifi_heartbeat | 30s ago |
+| Charlie (13) | 10.20.1.13 | ❌ | ✅ SNR 5.2, 1 hop | lora_heartbeat | 2m ago |
+| ??? (14) | 10.20.1.14 | ✅ cost 350 | ❌ | passive | 10s ago |
+
+- Green checkmark: transport is reachable
+- Red X: transport is not reachable or no address known
+- "Source" column shows how the identity mapping was established
+- "???" for name indicates a passive entry where the node name is not yet known
