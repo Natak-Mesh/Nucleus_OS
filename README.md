@@ -4,8 +4,8 @@
 - Connected ATAK EUD's will automatically discover other EUD's connected to IP mesh network or Meshtastic network (if plugin enabled)
 - Enough throughput for instant position and text updates along with pictures,video, routes, etc
 ### TAKserver
-- Full official TAKserver running locally on the Nucleus
-- Included Mediamtx install allows video to be streamed to TAKserver and distributed out to other devices on the IP mesh network.
+- OpenTAKserver can be installed to run locally on the Nucleus
+- Included Mediamtx install allows video to be streamed to OpenTAKserver and distributed out to other devices on the IP mesh network.
 ## Data
 ### Wi-Fi IP Mesh Network
 - Any program using an IP network connection
