@@ -33,11 +33,14 @@ sudo cp "$SOURCE_DIR/etc/smcroute.conf" /etc/
 sudo cp "$SOURCE_DIR/etc/babeld.conf" /etc/
 sudo chown natak:natak /etc/babeld.conf
 
-# Copy sudoers file for Tailscale web GUI
+# Copy sudoers files for web GUI privilege escalation
 sudo mkdir -p /etc/sudoers.d
 sudo cp "$SOURCE_DIR/etc/sudoers.d/tailscale-web" /etc/sudoers.d/
 sudo chmod 0440 /etc/sudoers.d/tailscale-web
 sudo chown root:root /etc/sudoers.d/tailscale-web
+sudo cp "$SOURCE_DIR/etc/sudoers.d/nucleus-config" /etc/sudoers.d/
+sudo chmod 0440 /etc/sudoers.d/nucleus-config
+sudo chown root:root /etc/sudoers.d/nucleus-config
 
 # Copy systemd service files
 sudo cp "$SOURCE_DIR/etc/systemd/system/brlan-setup.service" /etc/systemd/system/

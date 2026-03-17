@@ -804,8 +804,8 @@ def apply_and_reboot():
         with open('/etc/nucleus/mesh.conf', 'w') as f:
             f.writelines(new_lines)
         
-        # Step 2: Run config generation script
-        result = subprocess.run(['/opt/nucleus/bin/config_generation.sh'],
+        # Step 2: Run config generation script (sudo required - writes to /etc/)
+        result = subprocess.run(['sudo', '/opt/nucleus/bin/config_generation.sh'],
                               capture_output=True, text=True, timeout=30)
         
         if result.returncode != 0:

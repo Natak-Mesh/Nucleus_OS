@@ -1,0 +1,2 @@
+# Allow natak user to run config_generation.sh as root (needed by mesh-web.service)
+natak ALL=(ALL) NOPASSWD: /opt/nucleus/bin/config_generation.sh
