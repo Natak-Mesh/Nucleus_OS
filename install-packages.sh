@@ -14,34 +14,28 @@ echo "========================================"
 echo ""
 
 # Update package lists
-echo "[1/6] Updating package lists..."
+echo "[1/7] Updating package lists..."
 sudo apt update
 
 # Install core system packages
-echo "[2/6] Installing core system packages..."
+echo "[2/7] Installing core system packages..."
 sudo apt install -y \
   git \
   hostapd \
   python3 \
   python3-pip \
-  aircrack-ng \
   iperf3 \
   ufw \
   babeld \
   smcroute \
   nftables \
-  tcpdump \
-  mumble-server
+  tcpdump
 
 # Install Python packages
-echo "[3/6] Installing Python packages..."
+echo "[3/7] Installing Python packages..."
 # Reticulum - Cryptographic networking stack
 # Note: Must start rns/rnsd at least once to generate config
-pip3 install --break-system-packages rns lxmf
-
-# Nomadnet - Off-grid messaging and information sharing
-# Note: Update config after starting nomadnet once
-pip3 install --break-system-packages nomadnet
+pip3 install --break-system-packages rns
 
 # Flask - Web framework for mesh web interface
 sudo pip3 install --break-system-packages flask
@@ -51,7 +45,7 @@ pip3 install --upgrade --break-system-packages pytap2
 pip3 install --upgrade --break-system-packages --ignore-installed "meshtastic[cli]"
 
 # Configure environment
-echo "[4/6] Configuring environment..."
+echo "[4/7] Configuring environment..."
 # Add ~/.local/bin to PATH for Python packages
 if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc; then
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
@@ -59,7 +53,7 @@ if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc; then
 fi
 
 # Install Docker
-echo "[5/8] Installing Docker..."
+echo "[5/7] Installing Docker..."
 if ! command -v docker &> /dev/null; then
     curl -fsSL https://get.docker.com | sh
     sudo usermod -aG docker $USER
@@ -69,7 +63,7 @@ else
 fi
 
 # Pull OpenDHT image (while online)
-echo "[6/8] Pulling OpenDHT Docker image..."
+echo "[6/7] Pulling OpenDHT Docker image..."
 if docker images | grep -q opendht-alpine; then
     echo "OpenDHT image already exists."
 else
@@ -78,14 +72,14 @@ else
 fi
 
 # Install Tailscale
-echo "[7/8] Installing Tailscale..."
+echo "[7/7] Installing Tailscale..."
 curl -fsSL https://tailscale.com/install.sh | sh
 # Enable Tailscale daemon (user can configure profiles manually when ready)
 sudo systemctl enable tailscaled
 sudo systemctl start tailscaled
 
 # Enable NetworkManager
-echo "[8/8] Enabling NetworkManager..."
+echo "Enabling NetworkManager..."
 sudo systemctl enable NetworkManager
 
 echo ""
@@ -100,7 +94,6 @@ echo "   with the one used for wlan1. Don't forget to unmask and enable hostapd.
 echo ""
 echo "2. First-run configuration required:"
 echo "   - Start rns/rnsd at least once to generate Reticulum config"
-echo "   - Start nomadnet at least once to generate its config"
 echo ""
 echo "3. MANUAL INSTALLATION REQUIRED:"
 echo ""
