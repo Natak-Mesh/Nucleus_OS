@@ -14,11 +14,11 @@ echo "========================================"
 echo ""
 
 # Update package lists
-echo "[1/7] Updating package lists..."
+echo "[1/8] Updating package lists..."
 sudo apt update
 
 # Install core system packages
-echo "[2/7] Installing core system packages..."
+echo "[2/8] Installing core system packages..."
 sudo apt install -y \
   git \
   hostapd \
@@ -29,10 +29,12 @@ sudo apt install -y \
   babeld \
   smcroute \
   nftables \
-  tcpdump
+  tcpdump \
+  mosquitto \
+  mosquitto-clients
 
 # Install Python packages
-echo "[3/7] Installing Python packages..."
+echo "[3/8] Installing Python packages..."
 # Reticulum - Cryptographic networking stack
 # Note: Must start rns/rnsd at least once to generate config
 pip3 install --break-system-packages rns
@@ -45,7 +47,7 @@ pip3 install --upgrade --break-system-packages pytap2
 pip3 install --upgrade --break-system-packages --ignore-installed "meshtastic[cli]"
 
 # Configure environment
-echo "[4/7] Configuring environment..."
+echo "[4/8] Configuring environment..."
 # Add ~/.local/bin to PATH for Python packages
 if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc; then
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
@@ -53,7 +55,7 @@ if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc; then
 fi
 
 # Install Docker
-echo "[5/7] Installing Docker..."
+echo "[5/8] Installing Docker..."
 if ! command -v docker &> /dev/null; then
     curl -fsSL https://get.docker.com | sh
     sudo usermod -aG docker $USER
@@ -63,7 +65,7 @@ else
 fi
 
 # Pull OpenDHT image (while online)
-echo "[6/7] Pulling OpenDHT Docker image..."
+echo "[6/8] Pulling OpenDHT Docker image..."
 if docker images | grep -q opendht-alpine; then
     echo "OpenDHT image already exists."
 else
@@ -71,15 +73,26 @@ else
     echo "OpenDHT image pulled successfully."
 fi
 
+# Install Yggdrasil
+echo "[7/8] Installing Yggdrasil overlay network..."
+sudo apt-get install -y dirmngr
+sudo mkdir -p /usr/local/apt-keys
+gpg --fetch-keys https://neilalexander.s3.dualstack.eu-west-2.amazonaws.com/deb/key.txt
+gpg --export 1C5162E133015D81A811239D1840CDAC6011C5EA | sudo tee /usr/local/apt-keys/yggdrasil-keyring.gpg > /dev/null
+echo 'deb [signed-by=/usr/local/apt-keys/yggdrasil-keyring.gpg] http://neilalexander.s3.dualstack.eu-west-2.amazonaws.com/deb/ debian yggdrasil' | sudo tee /etc/apt/sources.list.d/yggdrasil.list
+sudo apt-get update
+sudo apt-get install -y yggdrasil
+echo "Yggdrasil installed. Configure peers in /etc/yggdrasil/yggdrasil.conf"
+
 # Install Tailscale
-echo "[7/7] Installing Tailscale..."
+echo "[8/8] Installing Tailscale..."
 curl -fsSL https://tailscale.com/install.sh | sh
 # Enable Tailscale daemon (user can configure profiles manually when ready)
 sudo systemctl enable tailscaled
 sudo systemctl start tailscaled
 
-# Enable NetworkManager
-echo "Enabling NetworkManager..."
+# Enable services
+echo "Enabling services..."
 sudo systemctl enable NetworkManager
 
 echo ""
@@ -95,7 +108,17 @@ echo ""
 echo "2. First-run configuration required:"
 echo "   - Start rns/rnsd at least once to generate Reticulum config"
 echo ""
-echo "3. MANUAL INSTALLATION REQUIRED:"
+echo "3. Mosquitto MQTT broker is installed but NOT enabled."
+echo "   - Enable: sudo systemctl enable --now mosquitto"
+echo "   - Configure bridging for federation in /etc/mosquitto/conf.d/"
+echo "   - Test with: mosquitto_sub -t 'test/#' and mosquitto_pub -t 'test/hello' -m 'hi'"
+echo ""
+echo "4. Yggdrasil overlay network is installed but NOT enabled."
+echo "   - Enable: sudo systemctl enable --now yggdrasil"
+echo "   - Configure peers in /etc/yggdrasil/yggdrasil.conf"
+echo "   - Check status: yggdrasilctl getSelf"
+echo ""
+echo "5. MANUAL INSTALLATION REQUIRED:"
 echo ""
 echo "   TAKserver (arm64):"
 echo "   - Download from https://tak.gov"
@@ -105,7 +128,7 @@ echo "   MediaMTX (arm64):"
 echo "   - Download: wget https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_linux_arm64.tar.gz"
 echo "   - Extract: tar -xvzf mediamtx_linux_arm64.tar.gz"
 echo ""
-echo "4. Reload your shell or run: source ~/.bashrc"
+echo "6. Reload your shell or run: source ~/.bashrc"
 echo ""
 echo "Next step: Run ./deploy.sh to deploy Nucleus configuration files"
 echo ""
