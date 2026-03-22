@@ -148,18 +148,16 @@ The UDP broadcast payload should be a simple JSON envelope containing the packet
 
 ## Implementation Phases
 
-### Already Complete
+### Complete
 - Phase 1: Meshtastic Python library installed, RAK4631 detected on /dev/ttyACM0
 - Phase 2: MeshtasticManager with serial connect/disconnect/send/receive, CLI-testable
-- Phase 3 (in progress): Flask API (meshtastic_api.py) — endpoints built, standalone testing
-- Phase 4 (in progress): Web UI integration — template and nav link built, integrated into main app
-
-### New Phases for Dual-Transport
-- Phase 5: Add UDP broadcast sender to MeshtasticManager — when a LoRa message is received or a user sends a message, broadcast via UDP
-- Phase 6: Add UDP listener thread — receive UDP broadcasts from other Pis, feed into message pipeline with dedup
-- Phase 7: Transport tagging — mark each message with its delivery transport in the message log
-- Phase 8: Web UI updates — show transport indicators, UDP listener status
-- Phase 9: Configuration — add UDP settings to mesh.conf, make broadcast address configurable
+- Phase 3: Flask API (meshtastic_api.py) — endpoints built, registered as blueprint in main app
+- Phase 4: Web UI integration — template, nav link, message log, node table, send form
+- Phase 5: UDP broadcast sender — fires on LoRa receive and user send, JSON payload to WiFi mesh broadcast address
+- Phase 6: UDP listener thread — background thread in MeshtasticManager.__init__, receives broadcasts from other Pis, dedup gate, independent of serial connection
+- Phase 7: Deduplication + transport tagging — seen-packets dict with 5-min expiry, thread-safe lock, "transport" field on all messages (lora/wifi/local)
+- Phase 8: Web UI updates — transport badges (LoRa/WiFi/local) on messages, UDP relay status panel (enabled, listener state, broadcast address)
+- Phase 9: Configuration — MESHTASTIC_UDP_RELAY and MESHTASTIC_UDP_PORT in mesh.conf, broadcast address derived from MESH_IP
 
 ---
 
@@ -176,3 +174,102 @@ The UDP broadcast payload should be a simple JSON envelope containing the packet
 5. **Graceful degradation.** Either transport can fail independently. WiFi down means LoRa-only delivery (slower but functional). Radio disconnected means UDP-only delivery (no range extension but Pis still communicate). Both working means instant delivery with full range.
 
 6. **The Meshtastic radio is always in the loop.** The serial interface is always active and always receives packets. The radio has no awareness of the UDP layer. Dedup filtering happens after the packet has been received and decoded, at the application layer in Python.
+
+---
+
+## Deployment & Usage
+
+### Configuration
+
+Two settings in `/etc/nucleus/mesh.conf` control the UDP relay:
+
+```
+MESHTASTIC_UDP_RELAY=true
+MESHTASTIC_UDP_PORT=4403
+```
+
+- **MESHTASTIC_UDP_RELAY** — Master switch. `true` enables the WiFi UDP relay between Pis. `false` disables it (LoRa-only mode).
+- **MESHTASTIC_UDP_PORT** — UDP port for broadcasts. Default 4403. All nodes must use the same port.
+- The broadcast address is derived automatically from `MESH_IP` (last octet replaced with 255, e.g., `10.20.1.20` → `10.20.1.255`).
+
+### Deploying to a Node
+
+The `deploy.sh` script in the repo root handles all file deployment. It copies:
+- `etc/nucleus/mesh.conf` → `/etc/nucleus/mesh.conf`
+- `opt/nucleus/meshtastic/` → `/opt/nucleus/meshtastic/` (recursive)
+- `opt/nucleus/web/` → `/opt/nucleus/web/` (recursive)
+
+Run from the repo directory:
+```bash
+sudo ./deploy.sh
+```
+
+Or copy individual files manually:
+```bash
+sudo cp etc/nucleus/mesh.conf /etc/nucleus/mesh.conf
+sudo cp opt/nucleus/meshtastic/meshtastic_manager.py /opt/nucleus/meshtastic/
+sudo cp opt/nucleus/web/templates/meshtastic.html /opt/nucleus/web/templates/
+sudo chown -R natak:natak /opt/nucleus/
+```
+
+After deploying, restart the web service:
+```bash
+sudo systemctl restart mesh-web
+```
+
+### Verifying the UDP Relay
+
+1. Open the Meshtastic page in the web UI (`http://<node-ip>:5000/meshtastic`).
+2. The **UDP Relay** status panel (always visible, independent of radio connection) should show:
+   - UDP Relay: **Enabled** (green)
+   - UDP Listener: **Running** (green)
+   - Broadcast: **10.20.1.255:4403** (or your subnet's broadcast address)
+3. Click **Take Control** to connect to the radio via serial.
+4. Send a message — it goes out on both LoRa and UDP simultaneously. The message log shows a green **local** badge.
+5. When another Pi sends a message, it arrives with either a cyan **WiFi** badge (via UDP, fast) or an amber **LoRa** badge (via serial, slower). Dedup ensures you see it once — whichever path was fastest.
+
+### Transport Badges
+
+Each message in the web UI and CLI output is tagged with its delivery transport:
+- **local** (green) — You sent this message from this node.
+- **LoRa** (amber) — Arrived via the RAK4631 radio's serial interface.
+- **WiFi** (cyan) — Arrived via UDP broadcast from another Pi on the 802.11s mesh.
+
+### CLI Usage
+
+The CLI commands work as before, with transport information now included:
+
+```bash
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py connect          # Connect + start listening
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py send "hello"     # Send via LoRa + UDP
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py messages         # Shows (lora), (wifi), (local) per message
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py status           # Shows connection + UDP relay state
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py disconnect       # Release radio back to BLE
+```
+
+### Per-Node Configuration
+
+Every Pi in the mesh needs:
+- `MESHTASTIC_UDP_RELAY=true` in its `/etc/nucleus/mesh.conf`
+- The updated `meshtastic_manager.py` and `meshtastic.html`
+- A restart of the `mesh-web` service
+
+To disable UDP relay on a specific node (LoRa-only), set `MESHTASTIC_UDP_RELAY=false` in that node's `mesh.conf` and restart. The node still works — it just won't send or receive via WiFi UDP.
+
+### Message Flow Example
+
+**User sends "hello" on Node A:**
+1. Node A sends "hello" to its RAK4631 via serial → LoRa transmission begins.
+2. Node A simultaneously UDP broadcasts the message to 10.20.1.255:4403.
+3. Node A registers the packet ID in its dedup dictionary.
+4. Node B's UDP listener gets it in ~5ms → dedup passes → logged with WiFi badge.
+5. Node B's radio eventually delivers it via serial seconds later → dedup catches it → silently dropped.
+6. User on Node B sees the message once, with a WiFi badge (the fast path won).
+
+**A phone user sends "hey" on LoRa (no Pi attached):**
+1. LoRa mesh routes it hop by hop.
+2. Node A's radio hears it first → serial callback fires → dedup passes → logged with LoRa badge.
+3. Node A immediately UDP broadcasts it to the WiFi mesh.
+4. Node B gets it via UDP in ~5ms → dedup passes → logged with WiFi badge.
+5. Node B's radio eventually delivers it via serial → dedup catches it → dropped.
+6. Node C (out of WiFi range, no UDP) gets it purely via LoRa → logged with LoRa badge.
