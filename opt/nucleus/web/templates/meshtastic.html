@@ -213,7 +213,7 @@
                     countEl.textContent = '(' + data.count + ')';
 
                     var html = '<table class="node-table"><thead><tr>';
-                    html += '<th>Name</th><th>Last Heard</th><th>SNR</th>';
+                    html += '<th>Name</th><th>Position</th><th>Last Heard</th><th>SNR</th>';
                     html += '</tr></thead><tbody>';
 
                     data.nodes.forEach(function(node) {
@@ -231,8 +231,15 @@
                             else snrClass = 'node-snr-poor';
                         }
 
+                        // Format position with line break for Lat/Lon
+                        var posHtml = '—';
+                        if (node.position && node.position !== '—') {
+                            posHtml = escapeHtml(node.position).replace('\n', '<br>');
+                        }
+
                         html += '<tr' + rowClass + '>';
                         html += '<td>' + nameLabel + '</td>';
+                        html += '<td style="font-size:12px; white-space:nowrap;">' + posHtml + '</td>';
                         html += '<td>' + escapeHtml(node.last_heard) + '</td>';
                         html += '<td class="' + snrClass + '">' + escapeHtml(snrText) + '</td>';
                         html += '</tr>';

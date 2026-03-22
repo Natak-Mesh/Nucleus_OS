@@ -244,7 +244,7 @@ class MeshtasticManager:
             return {"state": self.state, "nodes": [], "count": 0}
 
         try:
-            raw_nodes = self.interface.nodes
+            raw_nodes = self.interface.nodesByNum
             if not raw_nodes:
                 return {"state": self.state, "nodes": [], "count": 0}
 
@@ -265,8 +265,12 @@ class MeshtasticManager:
                     short_name = user.get("shortName", "?")
                     node_num = node_data.get("num")
 
-                    # Last heard — convert epoch to relative time string
-                    last_heard_epoch = node_data.get("lastHeard", 0)
+                    # Last heard — use best available timestamp
+                    # Position packets update position.time but NOT lastHeard,
+                    # so check both and use the most recent.
+                    last_heard_epoch = node_data.get("lastHeard", 0) or 0
+                    pos_time = node_data.get("position", {}).get("time", 0) or 0
+                    last_heard_epoch = max(last_heard_epoch, pos_time)
                     if last_heard_epoch and last_heard_epoch > 0:
                         ago = int(now - last_heard_epoch)
                         if ago < 60:
@@ -289,11 +293,21 @@ class MeshtasticManager:
 
                     is_local = (node_num == my_num) if my_num else False
 
+                    # Position (lat/lon rounded to 5 decimals ≈ 1m accuracy)
+                    position = node_data.get("position", {})
+                    lat = position.get("latitude")
+                    lon = position.get("longitude")
+                    if lat and lon:
+                        pos_str = f"Lat: {lat:.5f}\nLon: {lon:.5f}"
+                    else:
+                        pos_str = "—"
+
                     node_list.append({
                         "short_name": short_name,
                         "last_heard": last_heard,
                         "last_heard_epoch": last_heard_epoch or 0,
                         "snr": snr_str,
+                        "position": pos_str,
                         "is_local": is_local,
                     })
                 except Exception:
