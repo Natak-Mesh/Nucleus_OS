@@ -98,6 +98,29 @@ def messages():
     })
 
 
+@meshtastic_bp.route('/api/meshtastic/nodes', methods=['GET'])
+def nodes():
+    """Get known mesh nodes.
+
+    Returns an empty list gracefully when disconnected (e.g. radio in BLE mode).
+    """
+    return jsonify(mgr.get_nodes())
+
+
+@meshtastic_bp.route('/api/meshtastic/clear-messages', methods=['POST'])
+def clear_messages():
+    """Clear the message log."""
+    return jsonify(mgr.clear_messages())
+
+
+@meshtastic_bp.route('/api/meshtastic/reset-nodedb', methods=['POST'])
+def reset_nodedb():
+    """Clear the radio's node database."""
+    result = mgr.reset_nodedb()
+    status_code = 200 if result['success'] else 500
+    return jsonify(result), status_code
+
+
 # ── Standalone mode ────────────────────────────────────────────
 
 if __name__ == '__main__':

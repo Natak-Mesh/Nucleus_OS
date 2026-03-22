@@ -12,6 +12,14 @@
         .msg-who { color: #a0a0a0; font-size: 13px; }
         .message-item { padding: 8px 0; border-bottom: 1px solid #333; }
         .message-log { max-height: 400px; overflow-y: auto; }
+        .node-table { width: 100%; border-collapse: collapse; }
+        .node-table th { text-align: left; padding: 8px 12px; border-bottom: 2px solid #444; color: #a0a0a0; font-size: 13px; }
+        .node-table td { padding: 8px 12px; border-bottom: 1px solid #333; }
+        .node-table tr.node-local td { color: #4a9eff; }
+        .node-snr-good { color: #00ff88; }
+        .node-snr-ok { color: #ffcc00; }
+        .node-snr-poor { color: #ff4444; }
+        .node-snr-na { color: #666; }
         #send-form { display: flex; gap: 10px; margin-top: 10px; }
         #send-form input[type="text"] { flex: 1; padding: 12px; font-size: 16px; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 4px; }
         #send-form button { padding: 12px 24px; background: #4a9eff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; }
@@ -41,13 +49,14 @@
                 </div>
             </div>
 
-            <!-- Connect/Disconnect Control -->
+            <!-- Radio Control -->
             <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                <h3>Serial Control</h3>
+                <h3>Radio Control</h3>
                 <p style="color: #a0a0a0; margin: 5px 0 15px 0;">Take control of the radio via serial or release back to Bluetooth/phone app.</p>
-                <div>
-                    <button id="btn-connect" onclick="doConnect()" style="padding: 15px 30px; margin-right: 10px; background: #00ff88; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold;">Take Control</button>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                    <button id="btn-connect" onclick="doConnect()" style="padding: 15px 30px; background: #00ff88; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold;">Take Control</button>
                     <button id="btn-disconnect" onclick="doDisconnect()" style="padding: 15px 30px; background: #ff4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold;" disabled>Release to BLE</button>
+                    <button id="btn-reset-nodedb" onclick="doResetNodeDb()" style="padding: 15px 30px; background: #ff8800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold;" disabled>Clear Node DB</button>
                 </div>
             </div>
 
@@ -60,9 +69,17 @@
                 </form>
             </div>
 
+            <!-- Known Nodes (only visible when connected) -->
+            <div id="nodes-section" style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0; display: none;">
+                <h3>Known Nodes <span id="node-count" style="color: #666; font-size: 14px;"></span></h3>
+                <div id="nodes-body">
+                    <div style="color: #666; padding: 20px; text-align: center;">No nodes discovered yet.</div>
+                </div>
+            </div>
+
             <!-- Message Log -->
             <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                <h3>Messages <span id="msg-count" style="color: #666; font-size: 14px;"></span></h3>
+                <h3 style="display: flex; align-items: center; gap: 10px;">Messages <span id="msg-count" style="color: #666; font-size: 14px;"></span> <button onclick="doClearMessages()" style="margin-left: auto; padding: 5px 12px; background: #444; color: #aaa; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Clear</button></h3>
                 <div id="message-log" class="message-log">
                     <div style="color: #666; padding: 20px; text-align: center;">No messages yet.</div>
                 </div>
@@ -79,9 +96,11 @@
         window.addEventListener('DOMContentLoaded', function() {
             loadStatus();
             loadMessages();
+            loadNodes();
             refreshInterval = setInterval(function() {
                 loadStatus();
                 loadMessages();
+                loadNodes();
             }, 3000);
         });
 
@@ -95,14 +114,18 @@
                     const btnConnect = document.getElementById('btn-connect');
                     const btnDisconnect = document.getElementById('btn-disconnect');
 
+                    var nodesSection = document.getElementById('nodes-section');
+
                     if (data.state === 'CONNECTED') {
                         statusEl.textContent = 'Connected';
                         statusEl.style.color = '#00ff88';
                         detailsEl.style.display = 'block';
                         sendSection.style.display = 'block';
+                        nodesSection.style.display = 'block';
                         btnConnect.disabled = true;
                         btnConnect.textContent = 'Connected';
                         btnDisconnect.disabled = false;
+                        document.getElementById('btn-reset-nodedb').disabled = false;
 
                         if (data.node_info) {
                             document.getElementById('node-name').textContent = data.node_info.long_name || 'N/A';
@@ -121,9 +144,11 @@
                         statusEl.style.color = '#ff4444';
                         detailsEl.style.display = 'none';
                         sendSection.style.display = 'none';
+                        nodesSection.style.display = 'none';
                         btnConnect.disabled = false;
                         btnConnect.textContent = 'Take Control';
                         btnDisconnect.disabled = true;
+                        document.getElementById('btn-reset-nodedb').disabled = true;
                     }
                 })
                 .catch(err => {
@@ -166,6 +191,59 @@
                 })
                 .catch(err => {
                     console.error('Error loading messages:', err);
+                });
+        }
+
+        function loadNodes() {
+            fetch('/api/meshtastic/nodes')
+                .then(r => r.json())
+                .then(data => {
+                    var body = document.getElementById('nodes-body');
+                    var countEl = document.getElementById('node-count');
+
+                    // If not connected, just leave hidden — loadStatus handles visibility
+                    if (data.state !== 'CONNECTED' || !data.nodes || data.nodes.length === 0) {
+                        countEl.textContent = data.count ? '(' + data.count + ')' : '';
+                        if (data.state === 'CONNECTED') {
+                            body.innerHTML = '<div style="color: #666; padding: 20px; text-align: center;">No nodes discovered yet.</div>';
+                        }
+                        return;
+                    }
+
+                    countEl.textContent = '(' + data.count + ')';
+
+                    var html = '<table class="node-table"><thead><tr>';
+                    html += '<th>Name</th><th>Last Heard</th><th>SNR</th>';
+                    html += '</tr></thead><tbody>';
+
+                    data.nodes.forEach(function(node) {
+                        var rowClass = node.is_local ? ' class="node-local"' : '';
+                        var nameLabel = escapeHtml(node.short_name);
+                        if (node.is_local) nameLabel += ' <span style="font-size:11px;">(you)</span>';
+
+                        // Color-code SNR
+                        var snrClass = 'node-snr-na';
+                        var snrText = node.snr;
+                        if (snrText && snrText !== '—') {
+                            var snrVal = parseFloat(snrText);
+                            if (snrVal >= 5) snrClass = 'node-snr-good';
+                            else if (snrVal >= 0) snrClass = 'node-snr-ok';
+                            else snrClass = 'node-snr-poor';
+                        }
+
+                        html += '<tr' + rowClass + '>';
+                        html += '<td>' + nameLabel + '</td>';
+                        html += '<td>' + escapeHtml(node.last_heard) + '</td>';
+                        html += '<td class="' + snrClass + '">' + escapeHtml(snrText) + '</td>';
+                        html += '</tr>';
+                    });
+
+                    html += '</tbody></table>';
+                    body.innerHTML = html;
+                })
+                .catch(function(err) {
+                    // Silently ignore — don't freak out if radio is in BLE mode
+                    console.error('Error loading nodes:', err);
                 });
         }
 
@@ -213,6 +291,37 @@
                     showMessage('Error: ' + err.message, 'error');
                     btn.disabled = false;
                     btn.textContent = 'Release to BLE';
+                });
+        }
+
+        function doClearMessages() {
+            fetch('/api/meshtastic/clear-messages', {method: 'POST'})
+                .then(r => r.json())
+                .then(function() { loadMessages(); })
+                .catch(function(err) { console.error(err); });
+        }
+
+        function doResetNodeDb() {
+            if (!confirm('Clear the radio node database? Active nodes will re-appear as they broadcast.')) return;
+            var btn = document.getElementById('btn-reset-nodedb');
+            btn.disabled = true;
+            btn.textContent = 'Clearing...';
+            fetch('/api/meshtastic/reset-nodedb', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        showMessage('Node database cleared', 'success');
+                        loadNodes();
+                    } else {
+                        showMessage('Error: ' + (data.error || 'Reset failed'), 'error');
+                    }
+                    btn.textContent = 'Clear Node DB';
+                    btn.disabled = false;
+                })
+                .catch(err => {
+                    showMessage('Error: ' + err.message, 'error');
+                    btn.textContent = 'Clear Node DB';
+                    btn.disabled = false;
                 });
         }
 

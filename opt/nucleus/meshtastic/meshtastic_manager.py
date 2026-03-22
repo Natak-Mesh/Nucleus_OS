@@ -192,6 +192,24 @@ class MeshtasticManager:
         """Return recent messages."""
         return list(self.messages)[-limit:]
 
+    def clear_messages(self) -> Dict:
+        """Clear the message log."""
+        self.messages.clear()
+        self._save_messages()
+        return {"success": True, "message": "Message log cleared"}
+
+    def reset_nodedb(self) -> Dict:
+        """Reset the radio's node database. Requires active serial connection."""
+        if self.interface is None:
+            return {"success": False, "error": "Not connected"}
+        try:
+            self.interface.localNode.resetNodeDb()
+            logger.info("Node database reset")
+            return {"success": True, "message": "Node database cleared"}
+        except Exception as e:
+            logger.error(f"Reset nodedb failed: {e}")
+            return {"success": False, "error": str(e)}
+
     # ── Status ──────────────────────────────────────────────────
 
     def get_status(self) -> Dict:
@@ -211,6 +229,85 @@ class MeshtasticManager:
                 pass
 
         return status
+
+    def get_nodes(self) -> Dict:
+        """Get list of known nodes from the mesh radio.
+
+        Returns a clean, safe response regardless of connection state.
+        When disconnected (e.g. radio in BLE mode), returns an empty list
+        with state info — no errors, no exceptions.
+
+        Returns:
+            Dict with 'state', 'nodes' list, and 'count'.
+        """
+        if self.interface is None:
+            return {"state": self.state, "nodes": [], "count": 0}
+
+        try:
+            raw_nodes = self.interface.nodes
+            if not raw_nodes:
+                return {"state": self.state, "nodes": [], "count": 0}
+
+            my_num = None
+            try:
+                my_info = self.interface.getMyNodeInfo()
+                if my_info:
+                    my_num = my_info.get("num")
+            except Exception:
+                pass
+
+            node_list = []
+            now = time.time()
+
+            for node_id, node_data in raw_nodes.items():
+                try:
+                    user = node_data.get("user", {})
+                    short_name = user.get("shortName", "?")
+                    node_num = node_data.get("num")
+
+                    # Last heard — convert epoch to relative time string
+                    last_heard_epoch = node_data.get("lastHeard", 0)
+                    if last_heard_epoch and last_heard_epoch > 0:
+                        ago = int(now - last_heard_epoch)
+                        if ago < 60:
+                            last_heard = f"{ago}s ago"
+                        elif ago < 3600:
+                            last_heard = f"{ago // 60}m ago"
+                        elif ago < 86400:
+                            last_heard = f"{ago // 3600}h {(ago % 3600) // 60}m ago"
+                        else:
+                            last_heard = f"{ago // 86400}d ago"
+                    else:
+                        last_heard = "never"
+
+                    # SNR from the last packet we heard from this node
+                    snr = node_data.get("snr")
+                    if snr is None:
+                        snr_str = "—"
+                    else:
+                        snr_str = f"{snr:.1f} dB"
+
+                    is_local = (node_num == my_num) if my_num else False
+
+                    node_list.append({
+                        "short_name": short_name,
+                        "last_heard": last_heard,
+                        "last_heard_epoch": last_heard_epoch or 0,
+                        "snr": snr_str,
+                        "is_local": is_local,
+                    })
+                except Exception:
+                    # Skip any node that can't be parsed — never crash
+                    continue
+
+            # Sort: local node first, then by most recently heard
+            node_list.sort(key=lambda n: (not n["is_local"], -n["last_heard_epoch"]))
+
+            return {"state": self.state, "nodes": node_list, "count": len(node_list)}
+
+        except Exception as e:
+            logger.warning(f"Error reading node list: {e}")
+            return {"state": self.state, "nodes": [], "count": 0}
 
     # ── Pub/Sub Callbacks ───────────────────────────────────────
 
