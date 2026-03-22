@@ -73,6 +73,11 @@ sudo chmod +x /opt/nucleus/bin/opendht-start.sh
 sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
 sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 
+# Copy meshtastic module if exists
+if [ -d "$SOURCE_DIR/opt/nucleus/meshtastic" ]; then
+    sudo cp -r "$SOURCE_DIR/opt/nucleus/meshtastic" /opt/nucleus/
+fi
+
 # Copy web directory if exists
 if [ -d "$SOURCE_DIR/opt/nucleus/web" ]; then
     sudo cp -r "$SOURCE_DIR/opt/nucleus/web" /opt/nucleus/
