@@ -5,7 +5,15 @@ Meshtastic Serial Control Manager
 Core module for taking serial control of a meshtastic radio,
 sending/receiving text messages, and releasing back to BLE.
 
+Dual-transport: LoRa serial + WiFi UDP broadcast between Pis.
+- LoRa provides range extension via the RAK4631 mesh.
+- WiFi UDP provides near-instant delivery between Pis on the 802.11s mesh.
+- Deduplication ensures each message appears once regardless of transport.
+
 Phase 2: Standalone CLI-testable version.
+Phase 5: UDP broadcast sender.
+Phase 6: UDP listener thread + dedup.
+Phase 7: Transport tagging.
 
 Usage:
     python3 meshtastic_manager.py connect [--port /dev/ttyACM0]
@@ -19,6 +27,7 @@ import argparse
 import json
 import logging
 import os
+import socket
 import sys
 import threading
 import time
@@ -32,6 +41,11 @@ from pubsub import pub  # pypubsub — used by meshtastic lib
 STATE_FILE = "/tmp/meshtastic_manager_state.json"
 MESSAGE_LOG_FILE = "/tmp/meshtastic_messages.json"
 MAX_MESSAGES = 100
+MESH_CONF_PATH = "/etc/nucleus/mesh.conf"
+
+# Dedup settings
+DEDUP_EXPIRY_SECONDS = 300  # 5 minutes
+DEDUP_CLEANUP_INTERVAL = 60  # Run cleanup every 60 seconds
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +56,7 @@ logger = logging.getLogger("meshtastic_manager")
 
 
 class MeshtasticManager:
-    """Manages serial connection to a meshtastic radio."""
+    """Manages serial connection to a meshtastic radio and WiFi UDP relay."""
 
     def __init__(self):
         self.interface = None
@@ -52,15 +66,294 @@ class MeshtasticManager:
         self.messages: deque = deque(maxlen=MAX_MESSAGES)
         self._load_messages()
 
+        # ── Configuration (from mesh.conf) ──────────────────────
+        self._mesh_ip = None
+        self._udp_broadcast_addr = None
+        self._udp_port = 4403
+        self._udp_relay_enabled = False
+        self._load_config()
+
+        # ── Deduplication ───────────────────────────────────────
+        # Maps packet_id (int) -> timestamp (float) of first arrival.
+        # Both LoRa serial and UDP listener check this before logging.
+        self._seen_packets: Dict[int, float] = {}
+        self._seen_lock = threading.Lock()
+
+        # Start dedup cleanup timer
+        self._dedup_cleanup_timer = None
+        self._start_dedup_cleanup()
+
+        # ── UDP Listener ────────────────────────────────────────
+        # Runs independently of serial connection (graceful degradation).
+        # If radio is disconnected, we still receive messages from other Pis.
+        self._udp_listener_thread = None
+        self._udp_listener_running = False
+        self._udp_sock = None
+        if self._udp_relay_enabled:
+            self._start_udp_listener()
+
+    # ── Configuration ───────────────────────────────────────────
+
+    def _load_config(self):
+        """Read mesh.conf for UDP relay settings.
+
+        Extracts MESH_IP, MESHTASTIC_UDP_RELAY, MESHTASTIC_UDP_PORT.
+        Derives broadcast address from MESH_IP (replace last octet with 255).
+        """
+        config = {}
+        try:
+            if os.path.exists(MESH_CONF_PATH):
+                with open(MESH_CONF_PATH, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            key, value = line.split("=", 1)
+                            config[key.strip()] = value.strip().strip('"')
+        except Exception as e:
+            logger.warning(f"Could not read {MESH_CONF_PATH}: {e}")
+
+        # MESH_IP → broadcast address
+        self._mesh_ip = config.get("MESH_IP")
+        if self._mesh_ip:
+            try:
+                parts = self._mesh_ip.split(".")
+                parts[3] = "255"
+                self._udp_broadcast_addr = ".".join(parts)
+            except (IndexError, ValueError):
+                logger.warning(f"Could not derive broadcast address from MESH_IP={self._mesh_ip}")
+                self._udp_broadcast_addr = None
+
+        # UDP relay enable/disable
+        relay_str = config.get("MESHTASTIC_UDP_RELAY", "false").lower()
+        self._udp_relay_enabled = relay_str in ("true", "1", "yes")
+
+        # UDP port
+        try:
+            self._udp_port = int(config.get("MESHTASTIC_UDP_PORT", "4403"))
+        except ValueError:
+            self._udp_port = 4403
+
+        if self._udp_relay_enabled:
+            logger.info(
+                f"UDP relay enabled: broadcast={self._udp_broadcast_addr}:{self._udp_port}"
+            )
+        else:
+            logger.info("UDP relay disabled (MESHTASTIC_UDP_RELAY not set to true)")
+
+    # ── Deduplication ───────────────────────────────────────────
+
+    def _check_dedup(self, packet_id: int) -> bool:
+        """Check if a packet has already been seen.
+
+        Returns True if this is a NEW (unseen) packet.
+        Returns False if this is a DUPLICATE.
+
+        Thread-safe — called from both LoRa serial callback and UDP listener.
+        """
+        if packet_id is None:
+            # No packet ID means we can't dedup — treat as new
+            return True
+
+        now = time.time()
+        with self._seen_lock:
+            if packet_id in self._seen_packets:
+                return False  # Duplicate
+            self._seen_packets[packet_id] = now
+            return True  # New
+
+    def _cleanup_dedup(self):
+        """Remove expired entries from the seen-packets dictionary.
+
+        Runs periodically via a timer thread. Entries older than
+        DEDUP_EXPIRY_SECONDS (5 min) are removed.
+        """
+        now = time.time()
+        cutoff = now - DEDUP_EXPIRY_SECONDS
+        with self._seen_lock:
+            expired = [pid for pid, ts in self._seen_packets.items() if ts < cutoff]
+            for pid in expired:
+                del self._seen_packets[pid]
+            if expired:
+                logger.debug(f"Dedup cleanup: removed {len(expired)} expired entries")
+
+        # Reschedule
+        self._start_dedup_cleanup()
+
+    def _start_dedup_cleanup(self):
+        """Schedule the next dedup cleanup run."""
+        self._dedup_cleanup_timer = threading.Timer(
+            DEDUP_CLEANUP_INTERVAL, self._cleanup_dedup
+        )
+        self._dedup_cleanup_timer.daemon = True
+        self._dedup_cleanup_timer.start()
+
+    # ── UDP Broadcast Sender ────────────────────────────────────
+
+    def _udp_broadcast(self, payload: dict):
+        """Broadcast a JSON message via UDP to the WiFi mesh.
+
+        Args:
+            payload: Dict with message data. Must include 'packet_id'.
+                     Sent as a JSON-encoded UTF-8 datagram.
+        """
+        if not self._udp_relay_enabled:
+            return
+        if not self._udp_broadcast_addr:
+            return
+
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.sendto(data, (self._udp_broadcast_addr, self._udp_port))
+            sock.close()
+            logger.debug(
+                f"UDP broadcast sent: packet_id={payload.get('packet_id')} "
+                f"to {self._udp_broadcast_addr}:{self._udp_port}"
+            )
+        except Exception as e:
+            logger.warning(f"UDP broadcast failed: {e}")
+
+    def _build_udp_payload(self, msg: dict, origin: str) -> dict:
+        """Build the JSON payload for a UDP broadcast.
+
+        Args:
+            msg: The message dict (from send_text or _on_text_receive).
+            origin: "user_sent" or "lora_received" — prevents re-injection loops.
+
+        Returns:
+            Dict ready for JSON serialization and UDP broadcast.
+        """
+        return {
+            "type": "text",
+            "packet_id": msg.get("packet_id"),
+            "from_name": msg.get("from", msg.get("node_info", {}).get("long_name", "unknown")),
+            "from_id": msg.get("from_id", ""),
+            "from_num": msg.get("from_num"),
+            "text": msg.get("text", ""),
+            "to": msg.get("to", "^all"),
+            "channel": msg.get("channel", 0),
+            "timestamp": msg.get("timestamp", datetime.now().isoformat()),
+            "origin": origin,
+            "source_ip": self._mesh_ip,
+        }
+
+    # ── UDP Listener ────────────────────────────────────────────
+
+    def _start_udp_listener(self):
+        """Start the background UDP listener thread.
+
+        Binds to 0.0.0.0:<udp_port> and listens for broadcast datagrams
+        from other Pis. Runs independently of serial connection state.
+        """
+        if self._udp_listener_running:
+            return
+
+        try:
+            self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self._udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._udp_sock.bind(("0.0.0.0", self._udp_port))
+            # Set timeout so the thread can check the running flag periodically
+            self._udp_sock.settimeout(2.0)
+
+            self._udp_listener_running = True
+            self._udp_listener_thread = threading.Thread(
+                target=self._udp_listener_loop, daemon=True
+            )
+            self._udp_listener_thread.start()
+            logger.info(f"UDP listener started on port {self._udp_port}")
+        except Exception as e:
+            logger.error(f"Failed to start UDP listener: {e}")
+            self._udp_listener_running = False
+
+    def _stop_udp_listener(self):
+        """Stop the UDP listener thread."""
+        self._udp_listener_running = False
+        if self._udp_sock:
+            try:
+                self._udp_sock.close()
+            except Exception:
+                pass
+            self._udp_sock = None
+        if self._udp_listener_thread:
+            self._udp_listener_thread.join(timeout=5)
+            self._udp_listener_thread = None
+        logger.info("UDP listener stopped")
+
+    def _udp_listener_loop(self):
+        """Main loop for the UDP listener thread.
+
+        Receives JSON datagrams, deduplicates, and adds to the message log.
+        Messages received via UDP are NOT forwarded to the local radio.
+        """
+        logger.info("UDP listener thread running")
+        while self._udp_listener_running:
+            try:
+                data, addr = self._udp_sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                # Socket was closed
+                if self._udp_listener_running:
+                    logger.warning("UDP socket error, listener stopping")
+                break
+
+            try:
+                payload = json.loads(data.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.warning(f"UDP: invalid payload from {addr}: {e}")
+                continue
+
+            # Ignore our own broadcasts
+            source_ip = payload.get("source_ip")
+            if source_ip and source_ip == self._mesh_ip:
+                continue
+
+            # Only handle text messages for now
+            if payload.get("type") != "text":
+                continue
+
+            packet_id = payload.get("packet_id")
+
+            # Dedup check — if we already have this packet (from LoRa or earlier UDP), skip
+            if not self._check_dedup(packet_id):
+                logger.debug(
+                    f"UDP: duplicate packet_id={packet_id} from {addr[0]}, discarding"
+                )
+                continue
+
+            # Build message for the log
+            msg = {
+                "direction": "received",
+                "text": payload.get("text", ""),
+                "from": payload.get("from_name", "unknown"),
+                "from_id": payload.get("from_id", ""),
+                "from_num": payload.get("from_num"),
+                "to": payload.get("to", "^all"),
+                "channel": payload.get("channel", 0),
+                "timestamp": payload.get("timestamp", datetime.now().isoformat()),
+                "packet_id": packet_id,
+                "transport": "wifi",
+            }
+            self.messages.append(msg)
+            self._save_messages()
+            logger.info(
+                f"UDP [{addr[0]}]: {msg['from']}: {msg['text']} "
+                f"(packet_id={packet_id}, transport=wifi)"
+            )
+
+        logger.info("UDP listener thread exiting")
+
     # ── Connection ──────────────────────────────────────────────
 
     def connect(self, port: Optional[str] = None) -> Dict:
         """Open serial connection to the meshtastic radio.
-        
+
         Args:
-            port: Serial port path (e.g. /dev/ttyACM0). 
+            port: Serial port path (e.g. /dev/ttyACM0).
                   If None, auto-detects.
-        
+
         Returns:
             Dict with status info.
         """
@@ -108,7 +401,7 @@ class MeshtasticManager:
 
     def disconnect(self, reboot_radio: bool = True) -> Dict:
         """Close serial connection and optionally reboot radio to restore BLE.
-        
+
         Args:
             reboot_radio: If True, reboot the radio so BLE reinitializes
                           and the phone app can reconnect. Default True.
@@ -149,12 +442,14 @@ class MeshtasticManager:
 
     def send_text(self, text: str, destination: str = "^all", channel: int = 0) -> Dict:
         """Send a text message over the mesh.
-        
+
+        Sends via LoRa (serial to radio) AND broadcasts via UDP to WiFi mesh.
+
         Args:
             text: The message text.
             destination: Node ID or "^all" for broadcast.
             channel: Channel index (default 0 = primary).
-        
+
         Returns:
             Dict with send result.
         """
@@ -170,18 +465,34 @@ class MeshtasticManager:
                 channelIndex=channel,
             )
 
+            packet_id = result.id if result else None
+
             msg = {
                 "direction": "sent",
                 "text": text,
                 "to": destination,
                 "channel": channel,
                 "timestamp": datetime.now().isoformat(),
-                "packet_id": result.id if result else None,
+                "packet_id": packet_id,
+                "transport": "local",
             }
+
+            # Register in dedup so we don't re-log when it comes back via UDP
+            if packet_id is not None:
+                self._check_dedup(packet_id)
+
             self.messages.append(msg)
             self._save_messages()
 
-            logger.info(f"Message sent (id: {msg['packet_id']})")
+            # Broadcast via UDP to WiFi mesh
+            udp_payload = self._build_udp_payload(msg, origin="user_sent")
+            # Add sender info from node_info for the UDP payload
+            udp_payload["from_name"] = self.node_info.get("long_name", "unknown")
+            udp_payload["from_id"] = ""
+            udp_payload["from_num"] = self.node_info.get("my_node_num")
+            self._udp_broadcast(udp_payload)
+
+            logger.info(f"Message sent (id: {packet_id}, transport=local+lora+wifi)")
             return {"success": True, "message": msg}
 
         except Exception as e:
@@ -213,11 +524,17 @@ class MeshtasticManager:
     # ── Status ──────────────────────────────────────────────────
 
     def get_status(self) -> Dict:
-        """Get current manager status."""
+        """Get current manager status including UDP relay info."""
         status = {
             "state": self.state,
             "node_info": self.node_info,
             "message_count": len(self.messages),
+            "udp_relay": {
+                "enabled": self._udp_relay_enabled,
+                "listener_running": self._udp_listener_running,
+                "broadcast_addr": self._udp_broadcast_addr,
+                "port": self._udp_port,
+            },
         }
 
         if self.interface is not None:
@@ -327,12 +644,12 @@ class MeshtasticManager:
 
     def _resolve_node_name(self, node_id: str, node_num: int = None) -> str:
         """Look up the long name for a node from the node database.
-        
+
         Falls back to node_id if name not found.
         """
         if self.interface is None:
             return node_id or "unknown"
-        
+
         try:
             nodes = self.interface.nodes
             if nodes:
@@ -342,7 +659,7 @@ class MeshtasticManager:
                     name = user.get("longName") or user.get("shortName")
                     if name:
                         return name
-                
+
                 # Try lookup by node number
                 if node_num:
                     for nid, node_data in nodes.items():
@@ -353,12 +670,24 @@ class MeshtasticManager:
                                 return name
         except Exception:
             pass
-        
+
         return node_id or "unknown"
 
     def _on_text_receive(self, packet, interface):
-        """Called when a text message is received."""
+        """Called when a text message is received via LoRa serial.
+
+        Deduplicates, logs, and rebroadcasts via UDP to the WiFi mesh.
+        """
         try:
+            packet_id = packet.get("id")
+
+            # Dedup check — if already seen (via UDP or earlier LoRa), discard
+            if not self._check_dedup(packet_id):
+                logger.debug(
+                    f"LoRa: duplicate packet_id={packet_id}, discarding"
+                )
+                return
+
             sender_id = packet.get("fromId", "unknown")
             sender_num = packet.get("from")
             sender_name = self._resolve_node_name(sender_id, sender_num)
@@ -372,11 +701,17 @@ class MeshtasticManager:
                 "to": packet.get("toId", "unknown"),
                 "channel": packet.get("channel", 0),
                 "timestamp": datetime.now().isoformat(),
-                "packet_id": packet.get("id"),
+                "packet_id": packet_id,
+                "transport": "lora",
             }
             self.messages.append(msg)
             self._save_messages()
-            logger.info(f"Received from {sender_name}: {text}")
+            logger.info(f"LoRa: {sender_name}: {text} (packet_id={packet_id}, transport=lora)")
+
+            # Rebroadcast via UDP so other Pis get it instantly
+            udp_payload = self._build_udp_payload(msg, origin="lora_received")
+            self._udp_broadcast(udp_payload)
+
         except Exception as e:
             logger.error(f"Error handling received message: {e}")
 
@@ -525,7 +860,8 @@ Examples:
             direction = ">>>" if msg["direction"] == "sent" else "<<<"
             who = msg.get("to") if msg["direction"] == "sent" else msg.get("from", "?")
             ts = msg.get("timestamp", "")
-            print(f"  {ts}  {direction}  [{who}]  {msg.get('text', '')}")
+            transport = msg.get("transport", "?")
+            print(f"  {ts}  {direction}  [{who}]  ({transport})  {msg.get('text', '')}")
         if not msgs:
             print("  No messages yet.")
 
@@ -541,8 +877,6 @@ Examples:
                     time.sleep(1)
             except KeyboardInterrupt:
                 print("\nStopping listener. Radio remains connected until 'disconnect' is called.")
-                # Note: in CLI mode, disconnect happens when process exits
-                # For persistent connection, Phase 3 (daemon/API) handles this
                 mgr.disconnect()
 
     elif args.command == "disconnect":

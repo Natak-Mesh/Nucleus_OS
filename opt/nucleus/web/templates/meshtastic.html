@@ -10,6 +10,10 @@
         .msg-received { color: #00ff88; }
         .msg-time { color: #666; font-size: 12px; }
         .msg-who { color: #a0a0a0; font-size: 13px; }
+        .msg-transport { font-size: 11px; padding: 1px 6px; border-radius: 3px; margin-left: 4px; }
+        .msg-transport-lora { background: #3a2a00; color: #ffaa00; }
+        .msg-transport-wifi { background: #002a3a; color: #00ccff; }
+        .msg-transport-local { background: #1a2a1a; color: #88cc88; }
         .message-item { padding: 8px 0; border-bottom: 1px solid #333; }
         .message-log { max-height: 400px; overflow-y: auto; }
         .node-table { width: 100%; border-collapse: collapse; }
@@ -46,6 +50,11 @@
                     <div><strong>Short Name:</strong> <span id="short-name">N/A</span></div>
                     <div><strong>Port:</strong> <span id="port">N/A</span></div>
                     <div><strong>Known Nodes:</strong> <span id="known-nodes">0</span></div>
+                </div>
+                <div id="udp-relay-status" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #444; color: #a0a0a0;">
+                    <div><strong>UDP Relay:</strong> <span id="udp-enabled" style="color: #666;">—</span></div>
+                    <div><strong>UDP Listener:</strong> <span id="udp-listener" style="color: #666;">—</span></div>
+                    <div><strong>Broadcast:</strong> <span id="udp-broadcast" style="color: #666;">—</span></div>
                 </div>
             </div>
 
@@ -150,6 +159,34 @@
                         btnDisconnect.disabled = true;
                         document.getElementById('btn-reset-nodedb').disabled = true;
                     }
+
+                    // UDP Relay status (always shown, independent of serial connection)
+                    if (data.udp_relay) {
+                        var udpEl = document.getElementById('udp-enabled');
+                        var listenerEl = document.getElementById('udp-listener');
+                        var bcastEl = document.getElementById('udp-broadcast');
+
+                        if (data.udp_relay.enabled) {
+                            udpEl.textContent = 'Enabled';
+                            udpEl.style.color = '#00ff88';
+                        } else {
+                            udpEl.textContent = 'Disabled';
+                            udpEl.style.color = '#ff4444';
+                        }
+
+                        if (data.udp_relay.listener_running) {
+                            listenerEl.textContent = 'Running';
+                            listenerEl.style.color = '#00ff88';
+                        } else {
+                            listenerEl.textContent = data.udp_relay.enabled ? 'Stopped' : 'Off';
+                            listenerEl.style.color = data.udp_relay.enabled ? '#ff4444' : '#666';
+                        }
+
+                        bcastEl.textContent = data.udp_relay.broadcast_addr
+                            ? data.udp_relay.broadcast_addr + ':' + data.udp_relay.port
+                            : '—';
+                        bcastEl.style.color = data.udp_relay.broadcast_addr ? '#a0a0a0' : '#666';
+                    }
                 })
                 .catch(err => {
                     console.error('Error loading status:', err);
@@ -179,11 +216,23 @@
                         const who = isSent ? (msg.to || '^all') : (msg.from || 'unknown');
                         const ts = msg.timestamp ? msg.timestamp.split('T')[1].split('.')[0] : '';
 
+                        // Transport badge
+                        var transport = msg.transport || '';
+                        var transportBadge = '';
+                        if (transport === 'lora') {
+                            transportBadge = '<span class="msg-transport msg-transport-lora">LoRa</span>';
+                        } else if (transport === 'wifi') {
+                            transportBadge = '<span class="msg-transport msg-transport-wifi">WiFi</span>';
+                        } else if (transport === 'local') {
+                            transportBadge = '<span class="msg-transport msg-transport-local">local</span>';
+                        }
+
                         html += '<div class="message-item">';
                         html += '<span class="msg-time">' + ts + '</span> ';
                         html += '<span class="' + cssClass + '">' + arrow + '</span> ';
                         html += '<span class="msg-who">[' + who + ']</span> ';
                         html += '<span>' + escapeHtml(msg.text || '') + '</span>';
+                        html += transportBadge;
                         html += '</div>';
                     });
 

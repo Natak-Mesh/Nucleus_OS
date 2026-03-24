@@ -1,178 +1,216 @@
-# Meshtastic Integration — Architecture & Planning
+# Meshtastic Integration — Architecture & Status
 
 ## System Context
 
-### Hardware
-- **Radios:** RAK4631 (nRF52840 + SX1262 LoRa) — no WiFi, no Ethernet on the radio itself
-- **Compute:** Raspberry Pi 4 — each Pi has a RAK4631 connected via USB serial
-- **WiFi Mesh:** 802.11s mesh network between all Pis (same broadcast domain, 10.20.1.x/24)
-- **Connection:** Pi controls the radio over serial at 115200 baud using the meshtastic Python library
+- **Radios:** RAK4631 (nRF52840 + SX1262 LoRa) — no WiFi/Ethernet on the radio
+- **Compute:** Raspberry Pi 4 — each Pi has a RAK4631 connected via USB serial at 115200 baud
+- **WiFi Mesh:** 802.11s mesh between all Pis (same broadcast domain, 10.20.1.x/24)
+- **Connection:** Pi controls the radio over serial using the meshtastic Python library
 
-### Network Topology
-Every Nucleus node is a Pi + RAK4631 pair. The Pis form an 802.11s WiFi mesh for high-bandwidth local networking. The RAK4631 radios form an independent LoRa mesh for long-range, low-bandwidth messaging. The two networks are completely separate at the radio level — the Pi is the only bridge point between them.
+Every Nucleus node is a Pi + RAK4631 pair. The Pis form an 802.11s WiFi mesh for high-bandwidth local networking. The RAK4631 radios form an independent LoRa mesh for long-range, low-bandwidth messaging. The Pi is the only bridge point between the two networks.
 
-Standalone Meshtastic radios (phones, field devices without Pis) participate only on the LoRa mesh. They reach the wider system through whichever Pi node hears them first.
+The Nucleus web UI (`http://<node-ip>:5000/meshtastic`) is the primary interface for interacting with the meshtastic radio. No phone app required.
 
 ---
 
-## Dual-Transport Messaging Architecture
+## Completed Features (Phases 1–9)
 
-### The Concept
-Use both LoRa and WiFi simultaneously for message delivery. LoRa provides range extension — that is the entire reason the radios exist. WiFi provides near-instant delivery between nodes that share the mesh network. Neither transport replaces the other. They run in parallel, and both are always active.
+### Serial Control
+- MeshtasticManager class connects/disconnects to RAK4631 via serial
+- States: `DISCONNECTED` → `CONNECTING` → `CONNECTED` → `DISCONNECTING`
+- Disconnect reboots the radio to restore BLE if needed
+- Web UI buttons: "Take Control" / "Release to BLE" / "Clear Node DB"
 
-LoRa is long range, slow (seconds per hop), and low bandwidth, but works everywhere. WiFi UDP is short range (limited to the 802.11s mesh), near-instant (roughly 5ms), high bandwidth, and only works between Pis on the WiFi mesh.
+### Text Messaging
+- Send/receive text messages via `sendText()` over LoRa
+- Message log with newest-first display, stored in `/tmp/meshtastic_messages.json`
+- Send form in web UI with channel support
 
-### Why Not the Meshtastic Built-In UDP Broadcast?
-Meshtastic firmware has a "Network" setting that can broadcast mesh packets over UDP on a local network. This feature only works on devices that have their own IP network connection — ESP32 boards with WiFi, or boards with Ethernet adapters. The RAK4631 is nRF52-based. It has no WiFi and no Ethernet. It cannot use this feature. Instead, the Pi handles the UDP broadcast layer using application-level code, since the Pi is already on the 802.11s WiFi mesh.
+### Node Discovery
+- Node table showing short name, position (lat/lon), last heard, SNR
+- Color-coded SNR (good/ok/poor), local node highlighted
+- Auto-refreshes every 3 seconds
 
-### Why Not MQTT?
-MQTT was considered as a bridge between the LoRa and WiFi networks but has significant disadvantages for this use case. MQTT requires a broker — a centralized server that all nodes must connect to. This creates a single point of failure: if the broker node goes down, the bridge between transports stops working. It also adds latency (messages must route through the broker) and complexity (broker setup, topic design, subscriptions, authentication).
+### Dual-Transport: LoRa + WiFi UDP
+- Every message sent goes out on both LoRa (via radio) and WiFi UDP (broadcast to 10.20.1.255:4403)
+- LoRa provides range extension; WiFi provides near-instant delivery between Pis
+- Messages received via LoRa are rebroadcast on WiFi UDP so all Pis get them immediately
+- Messages received via WiFi UDP are NOT re-injected into LoRa (prevents duplicate traffic)
+- All radios stay in ROUTER role — LoRa mesh operates autonomously
 
-UDP broadcast requires no infrastructure at all. It is pure peer-to-peer. Every Pi on the broadcast domain hears every broadcast directly. Since all Pis share the same 10.20.1.x broadcast domain via 802.11s, UDP broadcast reaches every peer with no broker, no server, and no coordination.
+### Deduplication
+- Application-level dedup using packet ID dictionary with 5-minute expiry
+- Thread-safe — both LoRa serial callback and UDP listener check the same dictionary
+- Whichever transport delivers first wins; second delivery is silently discarded
 
----
-
-## How It Works
-
-### The MeshtasticManager as Integration Point
-The MeshtasticManager class is the central piece. It has two input sources running simultaneously: the Meshtastic serial interface (receiving decoded LoRa packets from the radio) and the UDP listener (receiving broadcasts from other Pis over WiFi). Both inputs feed into the same message log, and the web UI reads from that single log. The web UI does not know or care which transport delivered a given message.
-
-The Meshtastic serial interface is always active. The RAK4631 radio receives LoRa packets and delivers decoded data to the Pi over the serial connection. The meshtastic Python library fires a callback (`_on_text_receive`) every time a text message arrives. This happens regardless of whether the same message already arrived via UDP. The radio has no awareness of the UDP layer and cannot be told to skip a delivery.
-
-The UDP listener is also always active. It runs as a background thread, listening for broadcast datagrams from other Pis on the WiFi mesh. When a message arrives via UDP, it goes through the same processing path as a LoRa-delivered message.
-
-Both inputs pass through a deduplication gate before writing to the message log. Whichever transport delivers the message first gets it into the log. The second delivery of the same message is silently discarded.
-
-### Sending a Message
-When a user types a message on a Pi, two things happen simultaneously. The message is sent via serial to the local RAK4631, which transmits it on LoRa. This reaches distant nodes, standalone radios, and phones — anything on the LoRa mesh. At the same time, the message is broadcast via UDP to the WiFi mesh broadcast address (10.20.1.255 on port 4403). This reaches all other Pis within milliseconds. Both delivery paths are always used. LoRa for range, WiFi for speed.
-
-### Receiving a Message from LoRa
-When a Pi's RAK4631 hears a LoRa packet, the Meshtastic firmware decodes it and delivers it over serial. The Python library's callback fires. The message passes through the dedup check — if it hasn't been seen before, it gets added to the message log and displayed in the web UI. The Pi then rebroadcasts the message via UDP so all other Pis on the WiFi mesh get it immediately, without waiting for the LoRa mesh to route it hop by hop.
-
-Meanwhile, the RAK4631 firmware independently decides whether to rebroadcast the packet on LoRa based on its own internal seen-packet table and the remaining hop count. The Pi does not interfere with this decision. The LoRa mesh operates autonomously.
-
-### Receiving a Message from UDP
-When a Pi's UDP listener receives a broadcast from another Pi, the message passes through the same dedup check. If the message is new (not yet seen via LoRa or a previous UDP broadcast), it gets added to the message log and displayed. If it has already been seen, it is discarded.
-
-Messages received via UDP are not forwarded to the local RAK4631 for LoRa transmission. The originating node already transmitted on LoRa. Injecting the message into LoRa again from another node would create duplicate traffic on the LoRa mesh.
-
-### LoRa Retransmission Is Unaffected
-All radios stay in ROUTER role. The LoRa mesh operates completely independently of the WiFi layer. Receiving a message via WiFi UDP does not reduce or change LoRa retransmissions. The RAK4631 firmware makes rebroadcast decisions on its own, based on its internal state. The Pi cannot suppress firmware-level LoRa rebroadcasts, and it should not try to.
-
-This means a message will often arrive at a Pi via both WiFi UDP (fast, milliseconds) and LoRa serial (slower, seconds after firmware processing and potential multi-hop routing). The deduplication layer handles this overlap — the user sees the message once, delivered via whichever path was fastest, which will almost always be WiFi.
-
----
-
-## Deduplication
-
-### Why It's Needed
-Since both transports deliver the same messages, the same message can arrive twice: once via UDP and once via LoRa serial. Without deduplication, the user would see every message twice in the log.
-
-### How It Works
-The dedup mechanism is a simple dictionary maintained by MeshtasticManager, mapping packet IDs to timestamps. This is something we create in our code — it is not part of the Meshtastic Python library or firmware.
-
-Every Meshtastic packet has a unique ID assigned by the originating radio when the packet is first created. This ID stays the same across all LoRa hops and rebroadcasts. The UDP broadcast payload includes this same packet ID.
-
-When a message arrives from either transport, the handler extracts the packet ID and checks the dictionary. If the ID is already present, the message is a duplicate and is discarded. If the ID is not present, it is added to the dictionary with the current timestamp, and the message is processed normally and added to the log.
-
-The dictionary entries are periodically cleaned up — any entry older than about 5 minutes is removed so the dictionary doesn't grow indefinitely. Meshtastic packet IDs are unique per transmission, so there is no collision risk within this window.
-
-Both the LoRa serial callback and the UDP listener callback check the same dictionary. This is the single gate that prevents duplicates regardless of which transport delivered first.
-
-### Packet ID Origin
-The Meshtastic packet ID (accessed via `packet["id"]` in the Python library) is a 32-bit integer assigned by the originating radio's firmware. It is not something the Pi generates. It is embedded in the LoRa packet and decoded by the meshtastic library when the packet arrives over serial. When we broadcast via UDP, we include this same ID in the payload so the receiving Pi can compare it against IDs from LoRa-delivered packets.
-
----
-
-## UDP Reliability
-
-UDP is fire-and-forget — there is no acknowledgment, no retry, and no guaranteed delivery. This is acceptable for this use case for two reasons.
-
-First, UDP packet loss on a local network (even an 802.11s mesh) is very low — typically well under 1%. These are short hops on a local broadcast domain, not unreliable internet paths.
-
-Second, LoRa serves as the reliability backstop. If a UDP packet is lost, the same message is still traveling through the LoRa mesh and will arrive via serial a few seconds later. The dual-transport design provides built-in redundancy. The fast path (UDP) handles the common case; the reliable path (LoRa) catches anything that slips through.
-
-If UDP reliability ever became a concern, application-level acknowledgments could be added later, but this would add complexity for minimal benefit given the LoRa fallback.
-
----
-
-## Meshtastic Portnum vs Network Port
-
-The Meshtastic protocol uses a concept called "portnum" which is an application-layer identifier inside the protobuf packet. For example, portnum 1 is text messages, portnum 3 is position updates, portnum 4 is node info, portnum 67 is telemetry. These are not network ports — they are more like message type tags within the Meshtastic protocol.
-
-All of these portnums flow over the single serial connection between the Pi and the RAK4631. The Meshtastic Python library receives them all on that one serial link, decodes the protobuf, and dispatches them to different pub/sub topics internally.
-
-For the WiFi UDP broadcast layer, we use one network port (4403) and include the message type information in the JSON payload. A "type" field in the JSON distinguishes text messages from position updates or other data types. One network port, many message types — the same pattern the serial interface uses.
-
-Initially, only text messages need to be relayed over UDP. Position, telemetry, and nodeinfo could be added later using the same UDP port with different type values in the payload.
-
----
-
-## Standalone and Non-WiFi Meshtastic Devices
-
-Phones, handheld radios, and field devices that are not connected to a Pi participate only via LoRa. They are completely unaffected by the WiFi UDP layer.
-
-When a standalone device sends a message, the LoRa mesh routes it normally, hop by hop. The first Pi node whose RAK4631 hears it receives the message via serial. That Pi then broadcasts it via UDP to all other Pis on the WiFi mesh. All Pis now have the message — even those that were out of LoRa range of the original sender.
-
-This means the WiFi mesh effectively extends the reach of LoRa messages to all Pi nodes. A message that would take 3-4 LoRa hops (10+ seconds) arrives at all WiFi-connected Pis in milliseconds once any single Pi hears it on LoRa.
-
----
-
-## Graceful Degradation
-
-Either transport can fail independently without breaking the other. If the WiFi mesh goes down, LoRa still works normally — messages just arrive at the speed of LoRa instead of instantly. If a radio is disconnected, the UDP listener still receives messages from other Pis that have working radios. If both transports are working, users get the best of both worlds: instant WiFi delivery with LoRa range extension.
-
----
-
-## What Needs to Be Built
-
-### Additions to MeshtasticManager
-A UDP broadcast sender that fires whenever a message is received from LoRa serial or sent by the local user, broadcasting it as a UDP datagram to the WiFi mesh broadcast address.
-
-A UDP listener thread that runs in the background, receiving UDP broadcasts from other Pis and feeding received messages into the same message pipeline used by the serial interface.
-
-A deduplication layer consisting of a dictionary of recently-seen packet IDs with timestamps, checked by both the LoRa serial callback and the UDP listener callback before any message is added to the message log. Entries older than approximately 5 minutes are periodically cleaned up.
-
-Transport tagging so each message in the log indicates how it was delivered (LoRa, WiFi, or both) for debugging and potential UI display.
+### Transport Tagging
+- Every message tagged: **local** (green, you sent it), **LoRa** (amber, arrived via radio), **WiFi** (cyan, arrived via UDP)
+- Badges displayed in web UI message log
 
 ### Configuration
-The UDP broadcast address should be derived from the mesh.conf MESH_IP and subnet (e.g., 10.20.1.255). The UDP port defaults to 4403 to match Meshtastic convention. An enable/disable flag for the WiFi UDP relay should be available in case a node should operate as LoRa-only.
+```
+# /etc/nucleus/mesh.conf
+MESHTASTIC_UDP_RELAY=true     # Enable/disable WiFi UDP relay
+MESHTASTIC_UDP_PORT=4403      # UDP port (all nodes must match)
+# Broadcast address derived from MESH_IP automatically
+```
 
-### Web UI Changes
-The message log could show a transport indicator for each message (LoRa vs WiFi). The status display could show UDP listener state alongside the serial connection state.
+### Flask API Endpoints
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/meshtastic/connect` | POST | Take serial control |
+| `/api/meshtastic/disconnect` | POST | Release radio (reboot to BLE) |
+| `/api/meshtastic/status` | GET | Connection state + UDP relay info |
+| `/api/meshtastic/send` | POST | Send text message |
+| `/api/meshtastic/messages` | GET | Recent messages |
+| `/api/meshtastic/nodes` | GET | Known mesh nodes |
+| `/api/meshtastic/clear-messages` | POST | Clear message log |
+| `/api/meshtastic/reset-nodedb` | POST | Clear radio's node database |
 
-### Message Payload Format
-The UDP broadcast payload should be a simple JSON envelope containing the packet ID (for dedup), sender name and ID, message text, channel, timestamp, message type, and an origin indicator that distinguishes "user sent this" from "radio heard this on LoRa" to prevent re-injection loops. JSON is sufficient for the message volumes involved. Binary protobuf could be considered later for efficiency but is not necessary.
+### CLI
+```bash
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py connect
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py send "hello"
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py messages
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py status
+python3 /opt/nucleus/meshtastic/meshtastic_manager.py disconnect
+```
+
+### Key Design Decisions
+1. WiFi UDP is peer-to-peer broadcast — no broker, no server, no single point of failure
+2. Dedup is mandatory and application-level — not part of the meshtastic library
+3. Either transport can fail independently (graceful degradation)
+4. The radio's LoRa rebroadcast behavior is never suppressed or modified
+5. UDP payload is JSON with packet ID, sender info, text, channel, timestamp, origin, source IP
 
 ---
 
-## Implementation Phases
+## Planned Features
 
-### Already Complete
-- Phase 1: Meshtastic Python library installed, RAK4631 detected on /dev/ttyACM0
-- Phase 2: MeshtasticManager with serial connect/disconnect/send/receive, CLI-testable
-- Phase 3 (in progress): Flask API (meshtastic_api.py) — endpoints built, standalone testing
-- Phase 4 (in progress): Web UI integration — template and nav link built, integrated into main app
+### Phase 10: Canned Messages / Quick Send
 
-### New Phases for Dual-Transport
-- Phase 5: Add UDP broadcast sender to MeshtasticManager — when a LoRa message is received or a user sends a message, broadcast via UDP
-- Phase 6: Add UDP listener thread — receive UDP broadcasts from other Pis, feed into message pipeline with dedup
-- Phase 7: Transport tagging — mark each message with its delivery transport in the message log
-- Phase 8: Web UI updates — show transport indicators, UDP listener status
-- Phase 9: Configuration — add UDP settings to mesh.conf, make broadcast address configurable
+Pre-defined quick-tap message buttons in the web UI for common field communications. Saves typing on mobile browsers in field conditions.
+
+**Examples:** "Moving", "In position", "Copy", "Need resupply", "All clear", "Contact north", "Send it"
+
+**Implementation:**
+- Row of buttons above the message input in the meshtastic web UI
+- Each button calls the existing `sendText()` path — same LoRa + UDP dual transport
+- Configurable presets — either in a config file or editable in the web UI
+- Zero new backend work beyond a config endpoint; this is pure UI + existing send infrastructure
+
+**Effort:** Low. Quick win.
 
 ---
 
-## Key Design Decisions
+### Phase 11: Codec2 Voice Notes
 
-1. **All radios stay ROUTER.** LoRa rebroadcasting is not suppressed. Range extension is the entire purpose of the LoRa mesh. WiFi delivery does not reduce or replace LoRa retransmissions.
+Push-to-talk voice notes sent over LoRa and/or WiFi UDP. Uses Codec2, an ultra-low-bitrate open-source voice codec designed for HF/VHF radio. This is the same codec the meshtastic community has experimented with for audio (portnum 9 = `AUDIO_APP`).
 
-2. **WiFi UDP does not inject messages into LoRa.** Messages received via UDP are not forwarded to the local radio for LoRa transmission. Only the originating node transmits on LoRa. This prevents duplicate LoRa traffic.
+#### Why Codec2
 
-3. **No broker, no server.** UDP broadcast is peer-to-peer. Every Pi is equal. No coordination or infrastructure is needed.
+Standard audio codecs (Opus, AAC, MP3) produce bitrates far too high for LoRa. Codec2 was purpose-built for extremely constrained radio channels:
 
-4. **Deduplication is mandatory and application-level.** The seen-IDs dictionary is created and maintained in our code, not in the Meshtastic library or firmware. Both transport callbacks check the same dictionary before writing to the message log.
+| Codec2 Mode | Bitrate | Bytes/sec | 2.5s clip | Fits in 1 LoRa packet? |
+|---|---|---|---|---|
+| 700C | 700 bps | 87.5 B/s | ~219 bytes | ✅ Yes (233 byte limit) |
+| 1200 | 1200 bps | 150 B/s | ~375 bytes | ❌ No (2 packets) |
+| 1300 | 1300 bps | 162.5 B/s | ~406 bytes | ❌ No (2 packets) |
+| 2400 | 2400 bps | 300 B/s | ~750 bytes | ❌ No (4 packets) |
 
-5. **Graceful degradation.** Either transport can fail independently. WiFi down means LoRa-only delivery (slower but functional). Radio disconnected means UDP-only delivery (no range extension but Pis still communicate). Both working means instant delivery with full range.
+#### LoRa Constraint: One Packet = One Voice Note
 
-6. **The Meshtastic radio is always in the loop.** The serial interface is always active and always receives packets. The radio has no awareness of the UDP layer. Dedup filtering happens after the packet has been received and decoded, at the application layer in Python.
+The max LoRa data payload is **233 bytes**. At Codec2 700bps, **~2.5 seconds of voice fits in one packet**. This is the target.
+
+One packet = same mesh impact as sending a text message. The LoRa mesh retransmits it like any other packet. No chunking, no reassembly, no fragmentation protocol needed.
+
+2.5 seconds is short but matches military/field voice brevity: "Contact north", "Moving to rally", "Copy", "Need medevac", "All clear", "Send it".
+
+Multi-packet voice notes (longer clips) could be sent WiFi-only between Pis where bandwidth is not a concern.
+
+#### Mesh Flooding Consideration
+
+Every LoRa packet gets retransmitted by ROUTER nodes. With 6 nodes in the mesh, 1 voice packet = up to 6 LoRa transmissions. This is identical to a text message and is acceptable. Multi-packet voice (2+ packets) multiplies this — a 4-packet clip could generate 24 transmissions, eating shared airtime and potentially delaying other traffic (including video streams or ATAK data on the WiFi mesh if LoRa retransmits cause serial processing delays).
+
+**Rule: LoRa voice notes are limited to one packet (~2.5s at 700bps).** Longer recordings go WiFi-only.
+
+#### Architecture
+
+**Sending (browser → Pi → mesh):**
+1. User holds "Record" button in the web UI
+2. Browser captures audio via Web Audio API / MediaRecorder (all modern browsers, works on phones)
+3. On release, raw PCM audio is POST'd to the Pi backend (`/api/meshtastic/send-audio`)
+4. Pi encodes PCM → Codec2 700bps using `pycodec2` or `c2enc` CLI
+5. If ≤ 233 bytes: send via `interface.sendData(data, portNum=9)` — one LoRa packet to the mesh
+6. Simultaneously broadcast via WiFi UDP (same dual-transport pattern as text messages, with `type: "audio"` and base64-encoded Codec2 payload)
+7. If > 233 bytes: send WiFi UDP only, skip LoRa (too many packets)
+
+**Receiving (mesh → Pi → browser):**
+1. LoRa path: arrives via `meshtastic.receive.data.9` pub/sub callback (portnum 9 = AUDIO_APP)
+2. WiFi UDP path: arrives via existing UDP listener (JSON payload with `type: "audio"`)
+3. Both pass through the existing dedup gate (same packet ID mechanism)
+4. Pi decodes Codec2 → PCM
+5. Web UI fetches decoded audio and plays it via Web Audio API
+6. Displayed inline in the message log as a playable audio element with transport badge
+
+**WiFi-only path (longer clips):**
+For Pi-to-Pi communication, Codec2 isn't even necessary — we could send Opus or raw PCM over WiFi UDP since bandwidth is plentiful. But using Codec2 consistently keeps the format uniform. Alternatively, longer clips could use Opus over WiFi for better quality.
+
+#### Dependencies
+
+- **Codec2 C library:** `apt install codec2` (or build from source — it's lightweight)
+- **Python binding:** `pycodec2` pip package, or shell out to `c2enc`/`c2dec` CLI tools
+- **Browser:** Web Audio API for recording + playback (standard in Chrome, Firefox, Safari)
+- **No additional radio configuration:** portnum 9 (AUDIO_APP) is already in the meshtastic firmware spec
+
+#### Compatibility
+
+Portnum 9 (AUDIO_APP) is defined in the meshtastic protobuf spec. Any meshtastic device that implements Codec2 audio reception would be able to hear these voice notes. Currently few meshtastic clients implement this, but the packet format is standards-compliant. Standalone radios without Codec2 support would silently ignore the packets (standard meshtastic behavior for unhandled portnums).
+
+#### Web UI Design
+
+- **Record button:** Push-to-talk style, next to the text send form. Hold to record, release to send.
+- **Duration indicator:** Shows recording time with a color change at ~2s warning (approaching LoRa limit)
+- **LoRa/WiFi indicator:** Shows whether the clip will go LoRa+WiFi (≤2.5s) or WiFi-only (>2.5s)
+- **Playback:** Received voice notes appear in the message log as a small audio player with transport badge
+- **Fallback:** If Codec2 isn't installed on the Pi, voice notes are disabled with a message in the UI
+
+#### New API Endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/meshtastic/send-audio` | POST | Upload recorded audio, encode + send |
+| `/api/meshtastic/audio/<id>` | GET | Fetch decoded audio for playback |
+
+#### Effort
+
+High. Requires: Codec2 integration, browser audio recording, new send/receive pipeline, UI work, testing across browsers and devices. But technically sound and genuinely useful in field comms.
+
+---
+
+## Implementation Phases — Status
+
+| Phase | Description | Status |
+|---|---|---|
+| 1 | Meshtastic library installed, RAK4631 detected | ✅ Complete |
+| 2 | MeshtasticManager with serial control + CLI | ✅ Complete |
+| 3 | Flask API (meshtastic_api.py) | ✅ Complete |
+| 4 | Web UI integration — template, nav, message log, send form | ✅ Complete |
+| 5 | UDP broadcast sender (LoRa receive → WiFi broadcast) | ✅ Complete |
+| 6 | UDP listener thread (WiFi → message log, independent of serial) | ✅ Complete |
+| 7 | Deduplication + transport tagging | ✅ Complete |
+| 8 | Web UI transport badges + UDP relay status panel | ✅ Complete |
+| 9 | Configuration (mesh.conf settings for UDP relay) | ✅ Complete |
+| 10 | Canned messages / quick send buttons | 🔲 Planned |
+| 11 | Codec2 voice notes (push-to-talk, LoRa + WiFi) | 🔲 Planned |
+
+---
+
+## File Locations
+
+```
+/opt/nucleus/meshtastic/meshtastic_manager.py   # Core manager (serial + UDP + dedup)
+/opt/nucleus/meshtastic/meshtastic_api.py        # Flask API blueprint
+/opt/nucleus/web/templates/meshtastic.html       # Web UI template
+/etc/nucleus/mesh.conf                           # Configuration
+```
