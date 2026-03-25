@@ -113,6 +113,41 @@ def clear_messages():
     return jsonify(mgr.clear_messages())
 
 
+@meshtastic_bp.route('/api/meshtastic/debug-nodes', methods=['GET'])
+def debug_nodes():
+    """DEBUG: Dump raw node data from both interface.nodes and interface.nodesByNum."""
+    import time
+    import json
+
+    def make_serializable(obj):
+        """Convert non-serializable types for JSON output."""
+        if isinstance(obj, bytes):
+            return obj.hex()
+        if isinstance(obj, dict):
+            return {str(k): make_serializable(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [make_serializable(i) for i in obj]
+        return obj
+
+    result = {"nodes": None, "nodesByNum": None, "now": time.time()}
+    if mgr.interface is not None:
+        try:
+            raw_nodes = mgr.interface.nodes
+            if raw_nodes:
+                result["nodes"] = make_serializable({str(k): v for k, v in raw_nodes.items()})
+        except Exception as e:
+            result["nodes_error"] = str(e)
+        try:
+            raw_by_num = mgr.interface.nodesByNum
+            if raw_by_num:
+                result["nodesByNum"] = make_serializable({str(k): v for k, v in raw_by_num.items()})
+        except Exception as e:
+            result["nodesByNum_error"] = str(e)
+    else:
+        result["error"] = "Not connected"
+    return jsonify(result)
+
+
 @meshtastic_bp.route('/api/meshtastic/reset-nodedb', methods=['POST'])
 def reset_nodedb():
     """Clear the radio's node database."""

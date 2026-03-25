@@ -392,7 +392,13 @@ class MeshtasticManager:
             return {"success": True, "state": self.state, "node_info": self.node_info}
 
         except Exception as e:
-            self.state = "ERROR"
+            self.state = "DISCONNECTED"
+            # Close any partially-opened interface to release the serial port lock
+            if self.interface is not None:
+                try:
+                    self.interface.close()
+                except Exception:
+                    pass
             self.interface = None
             self._cleanup_pubsub()
             self._save_state()
