@@ -1,0 +1,9 @@
+# Prevent mtp-probe (libmtp-runtime) and ModemManager from probing the
+# RAK4631 Meshtastic radio.  mtp-probe sends MTP handshake bytes to
+# USB CDC-ACM devices during hotplug/boot which can crash the Meshtastic
+# firmware on the nRF52840, leaving the radio unresponsive on both serial
+# and Bluetooth until a manual hardware reset.
+#
+# This rule runs before 69-libmtp.rules (which triggers mtp-probe) and
+# sets the environment variables that tell both tools to leave the device alone.
+SUBSYSTEM=="usb", ATTR{idVendor}=="239a", ATTR{idProduct}=="8029", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{MTP_NO_PROBE}="1", MODE="0666"

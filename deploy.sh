@@ -33,6 +33,11 @@ sudo cp "$SOURCE_DIR/etc/smcroute.conf" /etc/
 sudo cp "$SOURCE_DIR/etc/babeld.conf" /etc/
 sudo chown natak:natak /etc/babeld.conf
 
+# Meshtastic udev rule — prevent mtp-probe from crashing RAK4631 firmware on boot
+sudo mkdir -p /etc/udev/rules.d
+sudo cp "$SOURCE_DIR/etc/udev/rules.d/60-meshtastic.rules" /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+
 # Copy sudoers files for web GUI privilege escalation
 sudo mkdir -p /etc/sudoers.d
 sudo cp "$SOURCE_DIR/etc/sudoers.d/tailscale-web" /etc/sudoers.d/

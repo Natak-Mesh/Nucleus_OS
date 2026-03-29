@@ -1426,6 +1426,39 @@ def get_channel_scan_results():
         })
 
 
+@app.route('/api/shutdown', methods=['POST'])
+def shutdown_node():
+    """Gracefully shut down the node.
+
+    Disconnects the meshtastic radio first (sends reboot command so the
+    radio firmware restarts cleanly and BLE comes back up), then powers
+    off the Pi.  Without the clean disconnect the radio can hang on next
+    boot, requiring a manual reset button press.
+    """
+    try:
+        # Disconnect meshtastic radio cleanly if connected
+        try:
+            from meshtastic_api import mgr
+            if mgr.interface is not None:
+                mgr.disconnect(reboot_radio=True)
+        except Exception as e:
+            print(f"Meshtastic disconnect during shutdown: {e}")
+
+        # Schedule shutdown after response is sent
+        def do_shutdown():
+            time.sleep(1)
+            subprocess.Popen(['sudo', 'shutdown', '-h', 'now'])
+
+        threading.Thread(target=do_shutdown, daemon=True).start()
+
+        return jsonify({
+            'success': True,
+            'message': 'Node shutting down...'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/restart-mesh', methods=['POST'])
 def restart_mesh():
     """Restart Flask application"""
