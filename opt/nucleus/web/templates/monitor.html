@@ -27,6 +27,10 @@
     <main>
         <div class="dashboard">
             <h1>Connected Nodes</h1>
+            <div id="channel-util" style="margin-bottom: 12px; font-size: 14px; color: #a0a0a0;">
+                <span class="label">Channel Utilization:</span>
+                <span id="channel-util-value" class="value">--</span>
+            </div>
             <div id="node-container" class="node-grid">
                 <div class="loading">Loading mesh nodes...</div>
             </div>
@@ -43,11 +47,23 @@
                 const response = await fetch('/api/nodes');
                 const data = await response.json();
                 renderNodes(data.nodes);
+                renderChannelUtil(data.channel_utilization);
                 updateTimestamp(data.timestamp);
             } catch (error) {
                 console.error('Error fetching nodes:', error);
                 document.getElementById('node-container').innerHTML = '<div class="error">Error loading mesh data</div>';
             }
+        }
+
+        function renderChannelUtil(util) {
+            const el = document.getElementById('channel-util-value');
+            if (!util) {
+                el.textContent = '--';
+                el.className = 'value';
+                return;
+            }
+            el.textContent = `Ch ${util.channel}: ${util.busy_pct}% busy`;
+            el.className = `value signal-${util.quality}`;
         }
 
         function renderNodes(nodes) {

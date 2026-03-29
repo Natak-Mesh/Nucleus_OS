@@ -100,6 +100,66 @@ def query_babeld():
         return ""
 
 
+def get_channel_utilization():
+    """Get current channel utilization from iw survey dump for the in-use channel"""
+    try:
+        result = subprocess.run(['iw', 'dev', 'wlan1', 'survey', 'dump'],
+                              capture_output=True, text=True)
+        in_use = False
+        active_time = 0
+        busy_time = 0
+        channel_freq = None
+
+        for line in result.stdout.split('\n'):
+            line = line.strip()
+            if 'frequency:' in line and '[in use]' in line:
+                in_use = True
+                match = re.search(r'frequency:\s+(\d+)', line)
+                if match:
+                    channel_freq = int(match.group(1))
+            elif in_use:
+                if 'channel active time:' in line:
+                    match = re.search(r'(\d+)', line)
+                    if match:
+                        active_time = int(match.group(1))
+                elif 'channel busy time:' in line:
+                    match = re.search(r'(\d+)', line)
+                    if match:
+                        busy_time = int(match.group(1))
+                elif 'channel transmit time:' in line:
+                    # Done parsing this entry
+                    break
+
+        if active_time > 0 and channel_freq:
+            busy_pct = round((busy_time / active_time) * 100)
+            # Convert frequency to channel number (2.4GHz)
+            if 2412 <= channel_freq <= 2484:
+                channel = (channel_freq - 2407) // 5
+            else:
+                channel = channel_freq  # fallback to freq
+
+            # Classify quality (inverted - lower busy is better)
+            if busy_pct < 30:
+                quality = 'excellent'
+            elif busy_pct < 50:
+                quality = 'good'
+            elif busy_pct < 70:
+                quality = 'fair'
+            else:
+                quality = 'poor'
+
+            return {
+                'channel': channel,
+                'frequency': channel_freq,
+                'busy_pct': busy_pct,
+                'quality': quality
+            }
+        return None
+    except Exception as e:
+        print(f"Error getting channel utilization: {e}")
+        return None
+
+
 def get_ipv6_neighbors():
     """Get IPv6 neighbor cache (link-local to MAC mapping)"""
     try:
@@ -752,8 +812,10 @@ def get_node_ip():
 def api_nodes():
     """API endpoint for mesh node data"""
     nodes = get_mesh_nodes()
+    channel_util = get_channel_utilization()
     return jsonify({
         'nodes': nodes,
+        'channel_utilization': channel_util,
         'timestamp': datetime.now().isoformat()
     })
 
