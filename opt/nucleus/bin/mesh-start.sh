@@ -49,8 +49,11 @@ ip addr add $MESH_IP/24 dev wlan1
 ip -6 addr add $MESH_IPV6_LL/64 dev wlan1
 
 # Enable RTS/CTS for collision avoidance (helps in congested/hidden node scenarios)
-# NOTE: RTS/CTS disabled - adds overhead for close-range/low-node-count deployments
-# iw phy phy1 set rts 500
+# Configurable via MESH_RTS_THRESHOLD in mesh.conf (0=disabled, 500=recommended for 3+ nodes)
+if [ "${MESH_RTS_THRESHOLD:-0}" -gt 0 ]; then
+    iw phy phy1 set rts $MESH_RTS_THRESHOLD
+    echo "RTS/CTS enabled with threshold: ${MESH_RTS_THRESHOLD} bytes"
+fi
 
 # Restore DNS configuration
 sleep 2
