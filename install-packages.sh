@@ -31,7 +31,8 @@ sudo apt install -y \
   nftables \
   tcpdump \
   mosquitto \
-  mosquitto-clients
+  mosquitto-clients \
+  uhubctl
 
 # Install Python packages
 echo "[3/8] Installing Python packages..."

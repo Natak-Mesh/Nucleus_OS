@@ -30,7 +30,7 @@
 #
 # Requires: uhubctl (sudo apt install uhubctl)
 #
-# See: docs/meshtastic/meshtastic_radio_lockup.md for full investigation.
+# See: docs/meshtastic/meshtastic_radio_locking_up.md for full investigation.
 #
 
 
