@@ -78,21 +78,19 @@ systemctl stop mesh-start.service 2>/dev/null
 pkill wpa_supplicant 2>/dev/null || true
 sleep 2
 
-# Enable monitor mode
+# Enable monitor mode using iw
 if [ "$JSON_OUTPUT" = false ]; then
     echo "Enabling monitor mode..."
 fi
-airmon-ng start wlan1 >/dev/null 2>&1
-sleep 1
-
-if ! ip link show wlan1mon >/dev/null 2>&1; then
-    echo "Error: Failed to create wlan1mon interface"
+ip link set wlan1 down 2>/dev/null
+iw dev wlan1 set type monitor 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to set wlan1 to monitor mode"
     systemctl start mesh-start.service
     exit 1
 fi
-
-# Bring interface up
-ip link set wlan1mon up
+ip link set wlan1 up
+sleep 1
 
 # Array to store results
 declare -A channel_busy
@@ -116,7 +114,7 @@ for ch in $CHANNELS; do
     fi
     
     # Set channel
-    iw dev wlan1mon set channel $ch 2>/dev/null || {
+    iw dev wlan1 set channel $ch 2>/dev/null || {
         if [ "$JSON_OUTPUT" = false ]; then
             echo "FAILED"
         fi
@@ -124,13 +122,13 @@ for ch in $CHANNELS; do
     }
     
     # Reset survey stats
-    iw dev wlan1mon survey dump >/dev/null 2>&1
+    iw dev wlan1 survey dump >/dev/null 2>&1
     
     # Wait for data to accumulate
     sleep $SCAN_DURATION
     
     # Get survey data
-    survey_output=$(iw dev wlan1mon survey dump 2>/dev/null)
+    survey_output=$(iw dev wlan1 survey dump 2>/dev/null)
     
     # Extract busy and active time for this frequency
     busy_time=$(echo "$survey_output" | awk -v freq="$freq" '
@@ -172,7 +170,9 @@ if [ "$JSON_OUTPUT" = false ]; then
     echo ""
     echo "Stopping monitor mode..."
 fi
-airmon-ng stop wlan1mon >/dev/null 2>&1
+ip link set wlan1 down 2>/dev/null
+iw dev wlan1 set type mesh 2>/dev/null
+ip link set wlan1 up 2>/dev/null
 
 # Restart mesh services
 if [ "$JSON_OUTPUT" = false ]; then
