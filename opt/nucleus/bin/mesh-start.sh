@@ -29,8 +29,26 @@ if [ "${USB_HUB_POWER_CYCLE}" = "true" ]; then
         uhubctl -a off -l 1-1
         sleep 3
         uhubctl -a on -l 1-1
-        sleep 5
-        echo "USB hub power cycle complete. Devices re-enumerated."
+        sleep 3
+
+        # Force kernel to re-enumerate devices (uhubctl power-on alone is unreliable on VIA Labs hubs)
+        echo "Forcing USB hub re-enumeration..."
+        echo "1-1" > /sys/bus/usb/drivers/usb/unbind
+        sleep 1
+        echo "1-1" > /sys/bus/usb/drivers/usb/bind
+
+        # Wait for wlan1 to appear (mt76x0u driver needs time after re-enumeration)
+        for i in $(seq 1 15); do
+            ip link show wlan1 &>/dev/null && break
+            echo "Waiting for wlan1... ($i/15)"
+            sleep 1
+        done
+
+        if ip link show wlan1 &>/dev/null; then
+            echo "USB hub power cycle complete. Devices re-enumerated."
+        else
+            echo "WARNING: wlan1 did not appear after USB power cycle!"
+        fi
     else
         echo "WARNING: uhubctl not installed — skipping USB hub power cycle."
         echo "Install with: sudo apt install uhubctl"
