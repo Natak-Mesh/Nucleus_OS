@@ -14,24 +14,7 @@
 #        N A T A K   -   Nucleus OS         #
 #                                           #
 #           Mesh Networking Radio           #
-#          (with USB hub power cycle)       #
 #############################################
-#
-# mesh-start-2.sh — Variant of mesh-start.sh that power-cycles the USB
-# hub before configuring the WiFi mesh. This is a WORKAROUND for a
-# node-specific issue where the Meshtastic radio (RAK4631 / nRF52840)
-# firmware crashes during boot, leaving it unresponsive on both serial
-# and Bluetooth.
-#
-# The USB hub power cycle resets all devices on hub 1-1 (including the
-# WiFi mesh adapter mt76x0u on port 2 and the Meshtastic radio on port 4).
-# Because this runs BEFORE any WiFi mesh configuration, no mesh state is
-# lost — the WiFi adapter is configured fresh afterward.
-#
-# Requires: uhubctl (sudo apt install uhubctl)
-#
-# See: docs/meshtastic/meshtastic_radio_locking_up.md for full investigation.
-#
 
 
 # Source configuration
@@ -39,27 +22,19 @@ source /etc/nucleus/mesh.conf
 
 sysctl -w net.ipv4.ip_forward=1
 
-# ─────────────────────────────────────────────────────────────────────
-# USB HUB POWER CYCLE — Meshtastic radio lockup workaround
-# ─────────────────────────────────────────────────────────────────────
-# The RAK4631 Meshtastic radio crashes during the Pi's USB initialization
-# on boot. Power-cycling the USB hub (1-1) resets all USB devices,
-# recovering the Meshtastic radio. The WiFi adapter also resets, but
-# since we haven't configured the mesh yet, nothing is lost.
-#
-# This must happen BEFORE any wlan1 configuration below.
-# ─────────────────────────────────────────────────────────────────────
-if command -v uhubctl &> /dev/null; then
-    echo "Power-cycling USB hub 1-1 to recover Meshtastic radio..."
-    uhubctl -a off -l 1-1
-    sleep 3
-    uhubctl -a on -l 1-1
-    # Wait for USB devices to re-enumerate after power cycle
-    sleep 5
-    echo "USB hub power cycle complete. Devices re-enumerated."
-else
-    echo "WARNING: uhubctl not installed — skipping USB hub power cycle."
-    echo "Install with: sudo apt install uhubctl"
+# USB hub power cycle (opt-in via USB_HUB_POWER_CYCLE in mesh.conf)
+if [ "${USB_HUB_POWER_CYCLE}" = "true" ]; then
+    if command -v uhubctl &> /dev/null; then
+        echo "Power-cycling USB hub 1-1 to recover Meshtastic radio..."
+        uhubctl -a off -l 1-1
+        sleep 3
+        uhubctl -a on -l 1-1
+        sleep 5
+        echo "USB hub power cycle complete. Devices re-enumerated."
+    else
+        echo "WARNING: uhubctl not installed — skipping USB hub power cycle."
+        echo "Install with: sudo apt install uhubctl"
+    fi
 fi
 
 # Set interfaces to not be managed by NetworkManager
@@ -102,9 +77,13 @@ fi
 
 # Enable RTS/CTS for collision avoidance (helps in congested/hidden node scenarios)
 # Configurable via MESH_RTS_THRESHOLD in mesh.conf (0=disabled, 500=recommended for 3+ nodes)
-# Detect correct phy dynamically (USB power cycle can change phy number)
-MESH_PHY=$(iw dev wlan1 info | grep wiphy | awk '{print "phy"$2}')
-if [ "${MESH_RTS_THRESHOLD:-0}" -gt 0 ] && [ -n "$MESH_PHY" ]; then
+if [ "${MESH_RTS_THRESHOLD:-0}" -gt 0 ]; then
+    # USB power cycle can change phy number; detect dynamically when enabled
+    if [ "${USB_HUB_POWER_CYCLE}" = "true" ]; then
+        MESH_PHY=$(iw dev wlan1 info | grep wiphy | awk '{print "phy"$2}')
+    else
+        MESH_PHY=phy0
+    fi
     iw phy $MESH_PHY set rts $MESH_RTS_THRESHOLD
     echo "RTS/CTS enabled on $MESH_PHY with threshold: ${MESH_RTS_THRESHOLD} bytes"
 fi
@@ -139,12 +118,9 @@ if [ "${MESH_MCAST_TTL:-0}" -gt 0 ]; then
     echo "Multicast TTL capped to ${MESH_MCAST_TTL} ($((MESH_MCAST_TTL / 2))-hop reach)"
 fi
 
-# Restart smcroute so it registers wlan1 as a multicast VIF
-# When smcroute.service starts at boot, wlan1 may still be in NO-CARRIER/DORMANT
-# state (especially after USB hub power cycle), causing the kernel to reject
-# wlan1 as a multicast virtual interface. Without this, ATAK multicast
-# (239.2.3.1 CoT, 224.10.10.1 discovery) cannot cross br-lan <-> wlan1.
-if systemctl is-active --quiet smcroute; then
+# Restart smcroute after USB hub power cycle so it registers wlan1 as a multicast VIF
+# (power cycle delays USB re-enumeration, so smcroute misses wlan1 at boot)
+if [ "${USB_HUB_POWER_CYCLE}" = "true" ] && systemctl is-active --quiet smcroute; then
     systemctl restart smcroute
     echo "Restarted smcroute — wlan1 registered as multicast VIF"
 fi
