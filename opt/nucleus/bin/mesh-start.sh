@@ -88,6 +88,18 @@ sleep 15
 ip addr add $MESH_IP/24 dev wlan1
 ip -6 addr add $MESH_IPV6_LL/64 dev wlan1
 
+# Set 802.11s mesh TTL for multi-hop multicast/broadcast forwarding
+# 802.11s handles multi-hop natively at Layer 2 with dedup (RMC in mac80211/rx.c).
+# mesh_ttl controls how many hops multicast frames are forwarded by mesh points.
+# mesh_element_ttl controls TTL for path selection elements (PREQ/PREP/PERR).
+# The kernel default is 31 — far too high. Configurable via MESH_802_TTL in mesh.conf.
+# See: docs/congestion_collision_tuning/mcast_storm_correction.md
+if [ "${MESH_802_TTL:-0}" -gt 0 ]; then
+    iw dev wlan1 set mesh_param mesh_ttl=$MESH_802_TTL
+    iw dev wlan1 set mesh_param mesh_element_ttl=$MESH_802_TTL
+    echo "802.11s mesh TTL set to ${MESH_802_TTL} (${MESH_802_TTL}-hop multicast reach)"
+fi
+
 # Enable RTS/CTS for collision avoidance (helps in congested/hidden node scenarios)
 # Configurable via MESH_RTS_THRESHOLD in mesh.conf (0=disabled, 500=recommended for 3+ nodes)
 # Detect correct phy dynamically (USB power cycle can change phy number)

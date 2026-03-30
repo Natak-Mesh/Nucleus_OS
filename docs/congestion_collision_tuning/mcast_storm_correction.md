@@ -102,6 +102,22 @@ The forwarding behavior at each mesh point:
 
 This is controlled flooding with dedup — exactly Meshtastic's model, implemented at the 802.11 MAC layer. A multicast frame propagates outward through the mesh. Each mesh point forwards it exactly once. The mesh TTL limits the maximum reach. No amplification, no storms, works with any number of nodes.
 
+### Confirmed in Linux Kernel Source (net/mac80211/rx.c)
+
+The following was verified in the actual kernel source code running on these nodes (kernel 6.12):
+
+**RMC deduplication:**
+The kernel checks every multicast mesh frame against a Recent Multicast Cache (RMC) keyed by (source address, mesh sequence number). Duplicates are dropped with `RX_DROP_U_MESH_RMC` before any forwarding occurs.
+
+**Mesh TTL decrement:**
+`mesh_hdr->ttl` is decremented on receive. When it reaches 0, multicast frames are delivered to the local stack (`rx_accept`) but NOT forwarded. This is the hop limit.
+
+**dot11MeshForwarding gate:**
+When `mesh_fwding=1` (our setting), multicast frames pass through and are forwarded. When disabled, they are accepted locally but not forwarded.
+
+**Multicast copy-and-forward:**
+For multicast, the kernel calls `skb_copy_expand` to create a copy of the frame. The original is delivered to the local network stack (where smcroute bridges it to br-lan). The copy is rebroadcast on the mesh with decremented TTL. Both operations happen — local delivery AND multi-hop forwarding.
+
 ### What Needs to Change
 
 **smcroute.conf:** Remove `wlan1` from the output interface list on routes that receive from wlan1. The echo is no longer needed because 802.11s handles multi-hop. Routes should be:
