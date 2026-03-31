@@ -5,114 +5,139 @@
 **Recommended Setting:** `udp://239.255.255.12:1024` (channel 1)
 
 ### Multicast Groups Used
+
 The ATAK voice plugin uses multiple multicast groups:
-- **239.255.255.1** - General voice traffic
-- **239.255.255.2** - Contact discovery/presence announcements
-- **239.255.255.12** - Voice channel 1 (239.255.255.11, .12, .13, etc. for multiple channels)
+
+- **239.255.255.1** — General voice traffic
+- **239.255.255.2** — Contact discovery / presence announcements
+- **239.255.255.12** — Voice channel 1 (channels use 239.255.255.11, .12, .13, etc.)
 - **UDP Port:** 1024
 
-### Required Configuration for Mesh Routing
+### Current Status
 
-#### 1. smcroute Configuration (`/etc/smcroute.conf`)
+Voice multicast routes are **disabled** in `/etc/smcroute.conf` as of 2025-12-23. The routes are present but commented out. To enable voice, three things are needed:
 
-**CRITICAL:** Voice routes must NOT echo back to the input interface to prevent audio loops.
+1. Uncomment the voice routes in `smcroute.conf`
+2. Add a TTL mangle rule for `239.255.255.0/24` in `mesh-start.sh` (using `MESH_MCAST_TTL`)
+3. Add UFW firewall allow rules for the voice multicast groups and port 1024/udp
 
-```bash
-# ATAK Voice
-mgroup from wlan1 group 239.255.255.1
-mgroup from br-lan group 239.255.255.1
-mroute from wlan1 group 239.255.255.1 to br-lan
-mroute from br-lan group 239.255.255.1 to wlan1
+The voice routes are already written in the correct format (no echo routing). Once the TTL mangle rule and firewall rules are in place, voice should work the same way CoT and Discovery already work across the mesh.
 
-# ATAK Voice - contact discovery
-mgroup from wlan1 group 239.255.255.2
-mgroup from br-lan group 239.255.255.2
-mroute from wlan1 group 239.255.255.2 to br-lan
-mroute from br-lan group 239.255.255.2 to wlan1
+---
 
-# ATAK Voice - channel_1
-mgroup from wlan1 group 239.255.255.12
-mgroup from br-lan group 239.255.255.12
-mroute from wlan1 group 239.255.255.12 to br-lan
-mroute from br-lan group 239.255.255.12 to wlan1
-```
+### How Voice Multicast Crosses the Mesh
 
-**Important:** Notice that `from wlan1` routes only output to `br-lan`, NOT `wlan1 br-lan`. Including wlan1 in the output creates an echo loop causing garbled, continuous audio.
+Voice multicast uses the same forwarding path as ATAK CoT and Discovery. Understanding this path is important because voice was previously broken by a misconfiguration that has since been corrected.
 
-#### 2. TTL Fix (iptables mangle rule)
+**smcroute's role is bridging, not multi-hop.** smcroute forwards multicast between two interfaces on the same node: wlan1 (the 802.11s mesh) and br-lan (the local LAN where ATAK devices connect). When a local ATAK device transmits voice on br-lan, smcroute forwards it to wlan1 to enter the mesh. When a voice packet arrives from the mesh on wlan1, smcroute forwards it to br-lan for local delivery. That is all smcroute does — one hop, local bridging.
 
-**Problem:** ATAK sends voice multicast traffic with TTL=1, which gets dropped when forwarded through mesh routing (TTL decrements to 0).
+**802.11s handles multi-hop at Layer 2.** Once a multicast frame is on wlan1, the 802.11s mesh networking layer propagates it to other mesh nodes using controlled flooding. Each mesh point that receives the frame checks it against a Recent Multicast Cache (RMC) keyed by source address and mesh sequence number. If the frame has already been seen, it is silently dropped. If it is new, the mesh point delivers it to the local network stack (where smcroute bridges it to br-lan) and then rebroadcasts it once with a decremented mesh TTL. When mesh TTL reaches zero, forwarding stops.
 
-**Solution:** Set TTL to allow multi-hop propagation for locally-originated voice traffic before routing.
+This is the same deduplication principle used by Meshtastic for multi-hop LoRa — every packet carries a unique ID, every node tracks what it has already forwarded, and each packet propagates outward like a wave with each node forwarding exactly once. No amplification, no storms, works with any number of nodes.
 
-**CRITICAL - DO NOT USE TTL=64:**
-```bash
-# WRONG - DO NOT USE - Causes multicast storms on 2+ node mesh
-sudo iptables -t mangle -A PREROUTING -i br-lan -d 239.255.255.0/24 -j TTL --ttl-set 64
-```
+The mesh TTL is controlled by `MESH_802_TTL` in `mesh.conf` (applied via `iw dev wlan1 set mesh_param mesh_ttl` in `mesh-start.sh`). The kernel default of 31 is far too high — the current setting of 8 supports 8-hop mesh networks.
 
-**CORRECT - Use TTL=4 to TTL=8:**
-```bash
-# CORRECT - Limits propagation to prevent storms
-sudo iptables -t mangle -A PREROUTING -i br-lan -d 239.255.255.0/24 -j TTL --ttl-set 4
-```
+**The critical detail: IP TTL is separate from mesh TTL.** The 802.11s Layer 2 forwarding does not touch the IP header at all. A voice packet that traverses 5 mesh hops arrives at every node's wlan1 interface with the same IP TTL it had when it first entered the mesh. IP TTL is only decremented at Layer 3 boundaries — specifically, when smcroute forwards between wlan1 and br-lan. This means a voice packet's IP TTL is decremented exactly twice in its lifetime regardless of hop count: once at the originating node (br-lan → wlan1) and once at each receiving node (wlan1 → br-lan).
 
-**Why TTL Matters:**
-- TTL=64 allows packets to loop 32+ times between nodes before dying
-- Combined with smcroute echo routing (`to wlan1 br-lan`), this creates catastrophic channel saturation
-- TTL=4 allows 2-3 mesh hops while limiting echo loops to 2 round trips
-- TTL=8 can support larger meshes (4-5 hops) with slightly higher loop risk
+---
 
-**Important:** The `-i br-lan` ensures this only applies to locally-originated traffic, not traffic already from the mesh (wlan1), preventing immediate routing loops.
+### TTL Mangle Rule
 
-To make this permanent, add to a startup script or save iptables rules.
+ATAK sends voice multicast with **TTL=1**. The kernel's multicast router will not forward a packet unless its TTL is strictly greater than the interface's TTL threshold (default 1). Since 1 is not greater than 1, a voice packet with TTL=1 is dropped by the kernel before smcroute can even forward it from br-lan to wlan1. Voice never enters the mesh.
 
-**Testing Recommendations:**
-- Start with TTL=4 for 2-3 node meshes
-- Increase to TTL=6-8 only if voice doesn't reach distant nodes
-- Monitor with `ip -s link show wlan1` for TX dropped packets
-- If drops exceed 1K/minute, reduce TTL
+The fix is an iptables mangle rule on `PREROUTING -i br-lan` that sets the IP TTL to `MESH_MCAST_TTL` (currently 8, defined in `mesh.conf`). This catches locally-originated voice traffic as it enters the routing stack from br-lan and bumps the TTL before the kernel makes its forwarding decision. The `-i br-lan` match ensures this only applies to traffic from local ATAK devices, not traffic arriving from the mesh on wlan1.
 
-#### 3. UFW Firewall Rules
+The packet lifecycle with the mangle rule:
 
-Add rules for all voice multicast groups:
+1. ATAK device sends voice on br-lan with TTL=1
+2. Mangle rule sets TTL=8
+3. Kernel multicast router forwards br-lan → wlan1 (TTL decrements to 7)
+4. 802.11s propagates the frame across the mesh at Layer 2 — **no IP TTL change** — all mesh nodes receive it with TTL=7
+5. At each receiving node, kernel multicast router forwards wlan1 → br-lan (TTL decrements to 6)
+6. ATAK on the remote node receives voice with TTL=6
 
-```bash
-sudo ufw allow in on wlan1 to 239.255.255.1
-sudo ufw allow in on br-lan to 239.255.255.1
-sudo ufw allow in on wlan1 to 239.255.255.2
-sudo ufw allow in on br-lan to 239.255.255.2
-sudo ufw allow in on wlan1 to 239.255.255.12
-sudo ufw allow in on br-lan to 239.255.255.12
-sudo ufw allow 1024/udp
-sudo ufw reload
-```
+TTL=8 is more than sufficient. Even with a worst-case chain of intermediate nodes that each do a local br-lan delivery (decrementing once per node), the packet survives many hops. There is no echo routing to amplify packets, so high TTL values do not create storms — but there is also no reason to set it higher than needed.
+
+The mangle rule for voice uses the same `MESH_MCAST_TTL` variable and the same mechanism as the existing CoT (239.2.3.1) and Discovery (224.10.10.1) rules in `mesh-start.sh`. It should be added alongside them, matching `239.255.255.0/24` to cover all voice groups in a single rule.
+
+---
+
+### UFW Firewall Rules
+
+The firewall must allow voice multicast on both interfaces and the voice UDP port. Rules for `239.255.255.0/24` on wlan1 and br-lan, plus port 1024/udp.
+
+---
+
+### smcroute Configuration
+
+The voice routes in `/etc/smcroute.conf` follow the same pattern as CoT and Discovery: join the multicast group on both interfaces, route from wlan1 to br-lan (mesh → local delivery), and route from br-lan to wlan1 (local → mesh injection). Three groups need routes: 239.255.255.1 (general voice), 239.255.255.2 (contact discovery), and 239.255.255.12 (channel 1).
+
+**The routes must NOT echo back to the input interface.** Routes that receive from wlan1 must only output to br-lan, not `wlan1 br-lan`. Including wlan1 in the output creates a new IP packet that bypasses 802.11s deduplication, causing exponential multicast amplification. This is what caused the original voice failure. See the history section below and `docs/congestion_collision_tuning/mcast_storm_correction.md` for the full analysis.
+
+---
+
+### History: Why Voice Was Disabled (2025-12-23)
+
+Voice multicast was enabled in December 2025 with smcroute "echo routing" — routes like `mroute from wlan1 group 239.255.255.1 to wlan1 br-lan`. The intent was multi-hop propagation: a voice packet arrives on wlan1, smcroute echoes it back onto wlan1 so nodes further away can pick it up. Combined with TTL=64 set by an iptables mangle rule, this was expected to support deep mesh networks.
+
+The result was catastrophic. With 2+ nodes on the mesh:
+
+- 646,000 dropped multicast packets on the wlan1 TX queue
+- Mesh latency increased from sub-1ms to 6–8 seconds
+- Video streaming (MediaMTX) completely broken
+- All services (web config, TAKServer) became unreachable
+
+The root cause was that each echo created a **new IP packet** with a **new 802.11s mesh sequence number**. The 802.11s RMC dedup, which keys on (source address, mesh sequence number), treated every echo as a never-before-seen frame and forwarded it again. With TTL=64, each packet could bounce between nodes up to 32 times before dying. A single voice PTT generated thousands of transmissions, saturating the wireless channel completely.
+
+This is the same amplification problem that was later identified and fixed for CoT and Discovery multicast (see `docs/congestion_collision_tuning/mcast_storm_correction.md`). The fix was removing the echo — letting smcroute only bridge between interfaces while 802.11s handles multi-hop natively with its built-in dedup. The voice routes in smcroute.conf have been updated to the correct no-echo format but remain commented out pending the TTL mangle rule addition and testing.
+
+---
+
+### Bandwidth Considerations
+
+Voice differs from CoT in that it produces a **continuous UDP stream** (~64kbps per active PTT) rather than small bursty updates. On an 802.11s HT20 link this is negligible bandwidth, but it means more sustained multicast frames on the channel. Since RTS/CTS does not protect multicast traffic (only unicast), voice frames can still collide with other transmissions. With RTS/CTS enabled for unicast (via `MESH_RTS_THRESHOLD` in `mesh.conf`) and the multicast storm fix in place, this should be manageable. Monitor wlan1 TX queue stats after enabling voice to verify.
+
+---
 
 ### Troubleshooting
 
 **Contacts don't appear in voice plugin:**
-- Verify discovery traffic (239.255.255.2) is being routed
-- Check UFW allows 239.255.255.2
-- Verify iptables TTL rule exists: `sudo iptables -t mangle -L PREROUTING -n`
-- Verify smcroute routes exist: `sudo smcroutectl show | grep 239.255.255`
+- Verify discovery traffic (239.255.255.2) is being routed: check `smcroutectl show` for the group
+- Check UFW allows 239.255.255.2 on both interfaces
+- Verify the TTL mangle rule exists: `sudo iptables -t mangle -L PREROUTING -n`
+- If no mangle rule for `239.255.255.0/24`, voice packets are dying at TTL=1 before entering the mesh
 
-**Garbled/continuous audio after pressing PTT:**
-- Check smcroute config - routes from wlan1 should only output to br-lan, not back to wlan1
-- Verify with: `cat /etc/smcroute.conf`
+**Garbled or continuous audio after pressing PTT:**
+- Check smcroute config — routes from wlan1 must only output to br-lan, not back to wlan1
+- If the echo is present, you will see exponential packet amplification on `ip -s link show wlan1`
 
 **Voice traffic not crossing mesh:**
-- Check TTL of outgoing packets: `sudo tcpdump -i wlan1 -n -v 'net 239.255.255.0/24' -c 1`
-- TTL should be 63 (64 minus 1 hop) after iptables mangle
-- If TTL=1, the iptables rule isn't working
+- Verify traffic leaves the local node: `sudo tcpdump -i wlan1 -n -c 5 'net 239.255.255.0/24'`
+- Check the TTL on captured packets — should be 7 (MESH_MCAST_TTL minus 1 for the br-lan → wlan1 forward)
+- If TTL=0 or no packets appear, the mangle rule is missing or not matching
 
-**Verify voice traffic flow:**
-```bash
-# Check local device sends voice traffic
-sudo tcpdump -i br-lan -n 'net 239.255.255.0/24' -c 5
+**Multicast TX drops accumulating on wlan1:**
+- Check with `iw dev wlan1 info` or `ip -s link show wlan1`
+- If drops are climbing rapidly, check for echo routing in smcroute.conf
+- Small numbers of drops under heavy load are normal; thousands per minute indicate amplification
 
-# Check traffic appears on mesh
-sudo tcpdump -i wlan1 -n 'net 239.255.255.0/24' -c 5
-```
+**Voice works locally but not across multiple hops:**
+- Verify `MESH_802_TTL` is set in `mesh.conf` and applied (check `iw dev wlan1 get mesh_param mesh_ttl`)
+- Verify `mesh_fwding=1` is active (required for 802.11s to forward frames between mesh points)
+- All nodes must have the voice routes in smcroute.conf — if even one node is missing them, voice from that node's local devices won't enter the mesh
+
+---
+
+### Files Involved
+
+| File | Role |
+|---|---|
+| `/etc/smcroute.conf` | Voice multicast routes (currently commented out) |
+| `/etc/nucleus/mesh.conf` | `MESH_MCAST_TTL` variable used for the TTL mangle rule |
+| `/opt/nucleus/bin/mesh-start.sh` | Applies TTL mangle rules at boot |
+| `/etc/ufw/` | Firewall rules for voice multicast groups |
+
+---
 
 ## Video Plugin (OpenTAK ICU)
 
