@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body {
+    font-family: monospace;
+    margin: 0;
+    padding: 40px;
+    background-color: #ffffff;
+    color: #000000;
+}
+.page {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 85vh;
+}
+.page img.logo {
+    max-width: 400px;
+}
+.page h1 {
+    margin-top: 40px;
+    font-size: 2.2em;
+}
+.page img.qr {
+    max-width: 220px;
+    margin-top: 30px;
+}
+.page p {
+    margin-top: 10px;
+    font-size: 1.1em;
+}
+.page p.url {
+    font-size: 0.9em;
+    color: #555;
+}
+@media print {
+    body {
+        background-color: #ffffff;
+    }
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+    <img class="logo" src="NatakMeshsecondary-overlay@2x.png" alt="Natak Mesh">
+    <h1>Manual and EUD Configuration</h1>
+    <img class="qr" src="manual_qr.png" alt="QR Code - Online Manual">
+    <p>Scan for online manual</p>
+    <p class="url">natakmesh.com/manual</p>
+</div>
+
+</body>
+</html>

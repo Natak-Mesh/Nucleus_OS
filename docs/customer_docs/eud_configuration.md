@@ -5,3 +5,9 @@
 </div>
 
 <div style="page-break-after: always;"></div>
+
+<div style="text-align: center; margin-top: 40px;">
+<img src="manual_qr.png" alt="QR Code - Online Manual" style="max-width: 250px;">
+<p style="margin-top: 10px; font-size: 1.1em;">Scan for online manual</p>
+<p style="font-size: 0.9em;">natakmesh.com/manual</p>
+</div>
