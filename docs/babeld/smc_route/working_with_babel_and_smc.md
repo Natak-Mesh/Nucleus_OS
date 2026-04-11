@@ -109,15 +109,17 @@ Each multicast group needs 4 lines:
 # Service Name - Multicast Address
 mgroup from wlan1 group <MULTICAST_IP>
 mgroup from br-lan group <MULTICAST_IP>
-mroute from wlan1 group <MULTICAST_IP> to wlan1 br-lan
+mroute from wlan1 group <MULTICAST_IP> to br-lan
 mroute from br-lan group <MULTICAST_IP> to wlan1
 ```
 
 **Line Breakdown:**
 1. `mgroup from wlan1` - Listen for this multicast on mesh interface
 2. `mgroup from br-lan` - Listen for this multicast on local bridge
-3. `mroute from wlan1 ... to wlan1 br-lan` - Forward mesh traffic to mesh+local (propagate to other nodes AND local devices)
-4. `mroute from br-lan ... to wlan1` - Forward local traffic to mesh only (don't loop back to source)
+3. `mroute from wlan1 ... to br-lan` - Forward mesh traffic to local bridge (deliver to local ATAK devices)
+4. `mroute from br-lan ... to wlan1` - Forward local traffic to mesh (inject into 802.11s)
+
+**Important:** Routes from wlan1 must only output to br-lan, NOT back to wlan1. Including wlan1 in the output creates echo routing that bypasses 802.11s deduplication, causing exponential multicast amplification at 3+ nodes. Multi-hop is handled natively by 802.11s at Layer 2. See: `docs/congestion_collision_tuning/mcast_storm_correction.md`
 
 ### Example: Adding Mumble Server
 
@@ -127,7 +129,7 @@ Mumble uses multicast for discovery (default: 239.255.0.1)
 # Mumble Server Discovery
 mgroup from wlan1 group 239.255.0.1
 mgroup from br-lan group 239.255.0.1
-mroute from wlan1 group 239.255.0.1 to wlan1 br-lan
+mroute from wlan1 group 239.255.0.1 to br-lan
 mroute from br-lan group 239.255.0.1 to wlan1
 ```
 
@@ -207,7 +209,7 @@ Application uses multicast group 239.100.1.1 on port 5000
    # Custom App
    mgroup from wlan1 group 239.100.1.1
    mgroup from br-lan group 239.100.1.1
-   mroute from wlan1 group 239.100.1.1 to wlan1 br-lan
+   mroute from wlan1 group 239.100.1.1 to br-lan
    mroute from br-lan group 239.100.1.1 to wlan1
    ```
 2. App's multicast traffic now bridges mesh and local network
@@ -264,9 +266,9 @@ redistribute deny
 
 ### SMCRoute Pattern:
 ```conf
-# For each multicast group:
-mgroup from <iface1> group <IP>
-mgroup from <iface2> group <IP>
-mroute from <iface1> group <IP> to <iface1> <iface2>
-mroute from <iface2> group <IP> to <iface1>
+# For each multicast group (no echo — 802.11s handles multi-hop):
+mgroup from wlan1 group <IP>
+mgroup from br-lan group <IP>
+mroute from wlan1 group <IP> to br-lan
+mroute from br-lan group <IP> to wlan1
 ```

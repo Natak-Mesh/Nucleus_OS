@@ -15,13 +15,11 @@ The ATAK voice plugin uses multiple multicast groups:
 
 ### Current Status
 
-Voice multicast routes are **disabled** in `/etc/smcroute.conf` as of 2025-12-23. The routes are present but commented out. To enable voice, three things are needed:
+Voice multicast routes are **enabled** in `/etc/smcroute.conf` as of 2026-10-04. The routes use the same no-echo bridging pattern as CoT and Discovery — smcroute bridges between wlan1 and br-lan, while 802.11s handles multi-hop natively at Layer 2.
 
-1. Uncomment the voice routes in `smcroute.conf`
-2. Add a TTL mangle rule for `239.255.255.0/24` in `mesh-start.sh` (using `MESH_MCAST_TTL`)
-3. Add UFW firewall allow rules for the voice multicast groups and port 1024/udp
+A TTL mangle rule in `mesh-start.sh` bumps ATAK's TTL=1 voice packets to `MESH_MCAST_TTL` (currently 8) on br-lan ingress, matching `239.255.255.0/24` to cover all voice groups in a single rule. This is the same mechanism used for CoT (239.2.3.1) and Discovery (224.10.10.1).
 
-The voice routes are already written in the correct format (no echo routing). Once the TTL mangle rule and firewall rules are in place, voice should work the same way CoT and Discovery already work across the mesh.
+UFW is currently inactive on the system. If UFW is enabled in the future, allow rules will be needed for `239.255.255.0/24` on wlan1 and br-lan, plus port 1024/udp.
 
 ---
 
@@ -89,7 +87,7 @@ The result was catastrophic. With 2+ nodes on the mesh:
 
 The root cause was that each echo created a **new IP packet** with a **new 802.11s mesh sequence number**. The 802.11s RMC dedup, which keys on (source address, mesh sequence number), treated every echo as a never-before-seen frame and forwarded it again. With TTL=64, each packet could bounce between nodes up to 32 times before dying. A single voice PTT generated thousands of transmissions, saturating the wireless channel completely.
 
-This is the same amplification problem that was later identified and fixed for CoT and Discovery multicast (see `docs/congestion_collision_tuning/mcast_storm_correction.md`). The fix was removing the echo — letting smcroute only bridge between interfaces while 802.11s handles multi-hop natively with its built-in dedup. The voice routes in smcroute.conf have been updated to the correct no-echo format but remain commented out pending the TTL mangle rule addition and testing.
+This is the same amplification problem that was later identified and fixed for CoT and Discovery multicast (see `docs/congestion_collision_tuning/mcast_storm_correction.md`). The fix was removing the echo — letting smcroute only bridge between interfaces while 802.11s handles multi-hop natively with its built-in dedup. The voice routes were rewritten in the correct no-echo format and re-enabled on 2026-10-04 alongside the TTL mangle rule for `239.255.255.0/24`.
 
 ---
 
@@ -132,7 +130,7 @@ Voice differs from CoT in that it produces a **continuous UDP stream** (~64kbps 
 
 | File | Role |
 |---|---|
-| `/etc/smcroute.conf` | Voice multicast routes (currently commented out) |
+| `/etc/smcroute.conf` | Voice multicast routes (enabled, no-echo bridging) |
 | `/etc/nucleus/mesh.conf` | `MESH_MCAST_TTL` variable used for the TTL mangle rule |
 | `/opt/nucleus/bin/mesh-start.sh` | Applies TTL mangle rules at boot |
 | `/etc/ufw/` | Firewall rules for voice multicast groups |

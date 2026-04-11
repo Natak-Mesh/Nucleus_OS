@@ -125,15 +125,23 @@ echo "nameserver 8.8.4.4" >> /etc/resolv.conf
 iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
     iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 
-# Cap multicast TTL to prevent echo storms with 3+ mesh nodes
-# Echo routing (wlan1 → wlan1 br-lan) enables multi-hop but each hop costs 2 TTL
-# (one for forward, one for echo). Configurable via MESH_MCAST_TTL in mesh.conf.
+# Bump multicast TTL on locally-originated traffic (br-lan ingress)
+# ATAK sends CoT/Discovery/Voice with low TTL (often TTL=1). The kernel won't
+# forward multicast unless TTL > threshold (default 1), so TTL=1 packets die
+# before smcroute can bridge them from br-lan to wlan1. This mangle rule sets
+# TTL to MESH_MCAST_TTL so packets survive the L3 forwards at each node.
+# Only applies to br-lan ingress — traffic arriving from the mesh on wlan1
+# already has adequate TTL and is not modified.
+# Configurable via MESH_MCAST_TTL in mesh.conf.
 if [ "${MESH_MCAST_TTL:-0}" -gt 0 ]; then
     iptables -t mangle -C PREROUTING -i br-lan -d 239.2.3.1/32 -j TTL --ttl-set $MESH_MCAST_TTL 2>/dev/null || \
         iptables -t mangle -A PREROUTING -i br-lan -d 239.2.3.1/32 -j TTL --ttl-set $MESH_MCAST_TTL
     iptables -t mangle -C PREROUTING -i br-lan -d 224.10.10.1/32 -j TTL --ttl-set $MESH_MCAST_TTL 2>/dev/null || \
         iptables -t mangle -A PREROUTING -i br-lan -d 224.10.10.1/32 -j TTL --ttl-set $MESH_MCAST_TTL
-    echo "Multicast TTL capped to ${MESH_MCAST_TTL} ($((MESH_MCAST_TTL / 2))-hop reach)"
+    # Voice multicast (239.255.255.0/24 covers all voice groups: general, discovery, channels)
+    iptables -t mangle -C PREROUTING -i br-lan -d 239.255.255.0/24 -j TTL --ttl-set $MESH_MCAST_TTL 2>/dev/null || \
+        iptables -t mangle -A PREROUTING -i br-lan -d 239.255.255.0/24 -j TTL --ttl-set $MESH_MCAST_TTL
+    echo "Multicast TTL set to ${MESH_MCAST_TTL} for CoT, Discovery, and Voice on br-lan"
 fi
 
 # Restart smcroute after USB hub power cycle so it registers wlan1 as a multicast VIF

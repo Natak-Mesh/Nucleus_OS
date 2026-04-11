@@ -20,15 +20,11 @@
 		},
 		{
 			"path": "../.reticulum"
-		},
-		{
-			"path": "../takserver_certs"
-		},
-		{
-			"path": "../tak_certs"
 		}
 	],
 	"settings": {
-		"liveServer.settings.multiRootWorkspaceName": "nucleus"
+		"liveServer.settings.multiRootWorkspaceName": "nucleus",
+		"git.scanRepositories": ["."],
+		"git.repositoryScanMaxDepth": 0
 	}
 }
