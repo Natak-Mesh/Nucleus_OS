@@ -92,13 +92,12 @@ for iface in wlan1 br-lan eth0 tailscale0; do
     else
         printf "  ${RED}▼${RESET} %-12s ${DIM}down${RESET}\n" "$iface"
     fi
+    # Show mesh peers count directly under wlan1
+    if [ "$iface" = "wlan1" ] && iface_up wlan1; then
+        peer_count=$(iw dev wlan1 station dump 2>/dev/null | grep -c "^Station" || echo 0)
+        printf "  ${DIM}  └─ %d mesh peer(s)${RESET}\n" "$peer_count"
+    fi
 done
-
-# Show mesh peers count if wlan1 is up
-if iface_up wlan1; then
-    peer_count=$(iw dev wlan1 station dump 2>/dev/null | grep -c "^Station" || echo 0)
-    printf "  ${DIM}  └─ %d mesh peer(s)${RESET}\n" "$peer_count"
-fi
 
 echo ""
 
