@@ -31,27 +31,6 @@ RESET='\033[0m'
 
 # --- Helper functions ---
 
-# Print a colored bar showing usage percentage
-usage_bar() {
-    local used=$1 total=$2 width=20
-    local pct=0
-    if [ "$total" -gt 0 ]; then
-        pct=$(( used * 100 / total ))
-    fi
-    local filled=$(( pct * width / 100 ))
-    local empty=$(( width - filled ))
-
-    local color="$GREEN"
-    [ "$pct" -ge 70 ] && color="$YELLOW"
-    [ "$pct" -ge 90 ] && color="$RED"
-
-    printf "${color}"
-    printf '█%.0s' $(seq 1 $filled 2>/dev/null)
-    printf "${DIM}"
-    printf '░%.0s' $(seq 1 $empty 2>/dev/null)
-    printf "${RESET} %3d%%" "$pct"
-}
-
 # Check if a systemd service is active
 service_status() {
     local svc=$1
@@ -86,18 +65,6 @@ printf "${BOLD}═════════════════════�
 echo ""
 printf "  ${DIM}Mesh IP:${RESET}  %-18s  ${DIM}Uptime:${RESET} %s\n" "$MESH_IP_VAL" "$UPTIME"
 echo ""
-
-# --- RAM ---
-read -r mem_total mem_used mem_avail <<< $(free -m | awk '/^Mem:/ {print $2, $3, $7}')
-printf "  ${BOLD}RAM${RESET}   "
-usage_bar "$mem_used" "$mem_total"
-printf "   %s / %s MB  ${DIM}(%s MB avail)${RESET}\n" "$mem_used" "$mem_total" "$mem_avail"
-
-# --- Disk ---
-read -r disk_total disk_used disk_avail disk_pct <<< $(df -BM / | awk 'NR==2 {gsub(/M/,""); print $2, $3, $4, $5}')
-printf "  ${BOLD}Disk${RESET}  "
-usage_bar "$disk_used" "$disk_total"
-printf "   %s / %s MB  ${DIM}(%s MB free)${RESET}\n" "$disk_used" "$disk_total" "$disk_avail"
 
 # --- CPU temp (Raspberry Pi) ---
 if [ -f /sys/class/thermal/thermal_zone0/temp ]; then
@@ -148,8 +115,8 @@ service_status "tailscaled"   "tailscale"
 service_status "mesh-web"     "web-ui"
 echo ""
 
-# Check OpenDHT container
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -q opendht; then
+# Check OpenDHT via proxy endpoint (avoids docker permission issues)
+if curl -s -o /dev/null -w '' --connect-timeout 1 http://127.0.0.1:8000/ 2>/dev/null; then
     printf "  ${GREEN}●${RESET} %-18s" "opendht"
 else
     printf "  ${RED}○${RESET} %-18s" "opendht"
@@ -158,8 +125,8 @@ echo ""
 
 echo ""
 
-# --- Top Memory Consumers (grouped by service) ---
-printf "  ${BOLD}Top Memory${RESET}\n"
+# --- Top RAM Usage (grouped by service) ---
+printf "  ${BOLD}Top RAM Usage${RESET}\n"
 
 # Group RSS by command basename, show top 5
 ps -eo rss,comm --no-headers 2>/dev/null | \
