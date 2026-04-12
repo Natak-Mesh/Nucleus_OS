@@ -33,6 +33,7 @@ sudo apt install -y \
   mosquitto \
   mosquitto-clients \
   uhubctl \
+  sshpass \
   btop \
   mtr-tiny \
   ncdu
