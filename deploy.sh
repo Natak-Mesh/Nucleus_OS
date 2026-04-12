@@ -90,6 +90,13 @@ if [ -d "$SOURCE_DIR/opt/nucleus/web" ]; then
     sudo cp -r "$SOURCE_DIR/opt/nucleus/web" /opt/nucleus/
 fi
 
+# Copy CLI tools
+if [ -d "$SOURCE_DIR/opt/nucleus/cli" ]; then
+    sudo mkdir -p /opt/nucleus/cli
+    sudo cp -r "$SOURCE_DIR/opt/nucleus/cli/"* /opt/nucleus/cli/
+    sudo chmod +x /opt/nucleus/cli/*.sh
+fi
+
 # Fix ownership for web interface to write config files
 sudo chown -R natak:natak /opt/nucleus/
 

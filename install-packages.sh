@@ -32,7 +32,10 @@ sudo apt install -y \
   tcpdump \
   mosquitto \
   mosquitto-clients \
-  uhubctl
+  uhubctl \
+  btop \
+  mtr-tiny \
+  ncdu
 
 # Install Python packages
 echo "[3/8] Installing Python packages..."
