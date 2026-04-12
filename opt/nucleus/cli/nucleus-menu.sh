@@ -29,6 +29,9 @@ source /etc/nucleus/mesh.conf 2>/dev/null
 NODE_USER="natak"
 NODE_PASS="52235223"
 
+# Ensure natak's pip-installed tools are in PATH (needed when running as root)
+export PATH="/home/${NODE_USER}/.local/bin:${PATH}"
+
 # Staging directory for file transfers (laptop ↔ Pi and Pi ↔ Pi)
 TRANSFER_DIR="/home/${NODE_USER}/transfer"
 mkdir -p "$TRANSFER_DIR" 2>/dev/null
@@ -167,6 +170,16 @@ show_menu() {
     clear
     HOSTNAME=$(hostname)
 
+    printf "${DIM}"
+    printf "       ..        .....        ...       \n"
+    printf "       ....     ......       ....       \n"
+    printf "       .......... ...       .....       \n"
+    printf "       ........    ..      ......       \n"
+    printf "       ......      ..     .......       \n"
+    printf "       .....       ...  .........       \n"
+    printf "       ....        .....     ....       \n"
+    printf "       ...         ....        ..       \n"
+    printf "${RESET}"
     printf "${BOLD}═══════════════════════════════════════════${RESET}\n"
     printf "${BOLD}   Nucleus OS — ${CYAN}${HOSTNAME}${RESET}\n"
     printf "${BOLD}═══════════════════════════════════════════${RESET}\n"
@@ -184,6 +197,9 @@ show_menu() {
     echo ""
     printf "  ${BOLD}File Transfer${RESET}\n"
     printf "   ${CYAN}8${RESET}  Transfer Files ${DIM}(scp)${RESET}\n"
+    echo ""
+    printf "  ${BOLD}Reticulum${RESET}\n"
+    printf "   ${CYAN}10${RESET} Reticulum / NomadNet\n"
     echo ""
     printf "   ${CYAN}9${RESET}  Shell Access ${DIM}(bash)${RESET}\n"
     printf "   ${CYAN}0${RESET}  Exit\n"
@@ -456,6 +472,33 @@ do_transfer() {
     esac
 }
 
+do_reticulum() {
+    echo ""
+    printf "  ${BOLD}Reticulum Network${RESET}\n"
+    echo ""
+
+    # rnsd runs as natak — Reticulum commands must run as natak to find
+    # the shared instance socket and config at /home/natak/.reticulum/
+    local run_as=""
+    if [ "$(id -u)" -eq 0 ]; then
+        run_as="sudo -u ${NODE_USER}"
+    fi
+
+    # Show rnstatus if available
+    if has_cmd rnstatus; then
+        $run_as rnstatus 2>/dev/null
+    else
+        printf "  ${RED}rnstatus not found.${RESET} Is RNS installed?\n"
+    fi
+
+    echo ""
+    # TODO: NomadNet TUI launch from menu not yet working — urwid's event
+    # loop conflicts with the menu's terminal state. Works fine standalone:
+    #   ssh natak@<host> then run: nomadnet
+    printf "  ${DIM}NomadNet installed — run 'nomadnet' from shell (option 9)${RESET}\n"
+    pause_after
+}
+
 do_shell() {
     echo ""
     printf "  ${DIM}Dropping to bash. Type 'exit' to return to menu.${RESET}\n"
@@ -479,6 +522,7 @@ while true; do
         6) do_iperf3 ;;
         7) do_mtr ;;
         8) do_transfer ;;
+        10) do_reticulum ;;
         9) do_shell ;;
         0) clear; exit 0 ;;
         *)

@@ -51,6 +51,9 @@ sudo pip3 install --break-system-packages flask
 pip3 install --upgrade --break-system-packages pytap2
 pip3 install --upgrade --break-system-packages --ignore-installed "meshtastic[cli]"
 
+# NomadNet - TUI mesh messenger/browser over Reticulum
+pip3 install --break-system-packages nomadnet
+
 # Configure environment
 echo "[4/8] Configuring environment..."
 # Add ~/.local/bin to PATH for Python packages
