@@ -125,6 +125,14 @@ echo "nameserver 8.8.4.4" >> /etc/resolv.conf
 iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
     iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 
+# Cellular NAT (Waveshare SIM7600G-H) — uncomment on nodes with cellular modem
+# Required for mesh nodes to route internet traffic through this node's cellular
+# connection (wwan0). Without this, outbound packets retain private 10.20.x.x
+# source IPs which the carrier will drop. Only enable on cellular-equipped nodes.
+# See: docs/cellular_waveshare/sim7600g_setup.md
+# iptables -t nat -C POSTROUTING -o wwan0 -j MASQUERADE 2>/dev/null || \
+#     iptables -t nat -A POSTROUTING -o wwan0 -j MASQUERADE
+
 # Bump multicast TTL on locally-originated traffic (br-lan ingress)
 # ATAK sends CoT/Discovery/Voice with low TTL (often TTL=1). The kernel won't
 # forward multicast unless TTL > threshold (default 1), so TTL=1 packets die
