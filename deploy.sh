@@ -28,6 +28,7 @@ sudo chown natak:natak /etc/systemd/network/20-brlan.netdev
 sudo chown natak:natak /etc/systemd/network/30-wlan0.network
 
 sudo mkdir -p /etc/NetworkManager/conf.d
+sudo cp "$SOURCE_DIR/etc/NetworkManager/NetworkManager.conf" /etc/NetworkManager/
 sudo cp "$SOURCE_DIR/etc/NetworkManager/conf.d/unmanaged-devices.conf" /etc/NetworkManager/conf.d/
 sudo cp "$SOURCE_DIR/etc/smcroute.conf" /etc/
 sudo cp "$SOURCE_DIR/etc/babeld.conf" /etc/
