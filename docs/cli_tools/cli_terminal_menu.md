@@ -175,15 +175,27 @@ Scripts live in `/opt/nucleus/cli/`.
 | 6 | **iperf3** | Bandwidth test — client or server mode | `apt install iperf3` |
 | 7 | **mtr** | Combined ping + traceroute TUI (prompts for target) | `apt install mtr-tiny` |
 
-### 3. Mesh / Radio — TBD (future)
-
-### 4. Reticulum — TBD (future)
-
-### 5. Shell Access
+### 3. File Transfer
 
 | # | Tool | Purpose |
 |---|------|---------|
-| 8 | **bash** | Drop to shell as natak user, `exit` returns to menu |
+| 8 | **Push/Pull files** (scp) | Push a file to another node or pull a file from another node |
+
+All file transfers use `~/transfer/` (`/home/natak/transfer/`) as the staging directory on every node. Push sends a local file to a remote node's `~/transfer/`. Pull fetches a file from a remote node's `~/transfer/` to the local one. Both use numbered file pickers and the `pick_node` mesh peer selector.
+
+### 4. Mesh / Radio — TBD (future)
+
+### 5. Reticulum
+
+| # | Tool | Purpose |
+|---|------|---------|
+| 10 | **rnstatus / NomadNet** | Reticulum network status and NomadNet TUI |
+
+### 6. Shell Access
+
+| # | Tool | Purpose |
+|---|------|---------|
+| 9 | **bash** | Drop to shell as natak user, `exit` returns to menu |
 
 ## Evaluated and Dropped
 

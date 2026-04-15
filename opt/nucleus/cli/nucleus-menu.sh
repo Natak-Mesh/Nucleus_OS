@@ -464,10 +464,11 @@ pick_remote_file() {
 
 do_transfer() {
     echo ""
-    printf "  ${BOLD}File Transfer${RESET}  ${DIM}(staging: ~/transfer/)${RESET}\n"
+    printf "  ${BOLD}File Transfer${RESET}\n"
+    printf "  ${DIM}Files are pushed to and pulled from ~/transfer/ on each node.${RESET}\n"
     echo ""
-    printf "  ${CYAN}1${RESET}) Send file to another node\n"
-    printf "  ${CYAN}2${RESET}) Receive file from another node\n"
+    printf "  ${CYAN}1${RESET}) Push file to another node\n"
+    printf "  ${CYAN}2${RESET}) Pull file from another node\n"
     printf "  ${CYAN}3${RESET}) Back to menu\n"
     echo ""
     printf "  Select [1]: "
@@ -477,7 +478,7 @@ do_transfer() {
     case "$xfer_mode" in
         1)
             echo ""
-            printf "  ${BOLD}Send file to another node${RESET}\n"
+            printf "  ${BOLD}Push file to another node${RESET}\n"
 
             # Numbered file picker
             pick_file "$TRANSFER_DIR" "File to send" || return
@@ -494,7 +495,7 @@ do_transfer() {
             pick_node "Target node" || return
             local target="$PICKED_NODE"
             echo ""
-            printf "  Sending ${CYAN}%s${RESET} → ${CYAN}%s${RESET}:~/transfer/\n" "$(basename "$send_file")" "$target"
+            printf "  Pushing ${CYAN}%s${RESET} → ${CYAN}%s${RESET}:~/transfer/\n" "$(basename "$send_file")" "$target"
             echo ""
             remote_scp_to "$send_file" "$target" "${TRANSFER_DIR}/"
             local rc=$?
@@ -508,7 +509,7 @@ do_transfer() {
             ;;
         2)
             echo ""
-            printf "  ${BOLD}Receive file from another node${RESET}\n"
+            printf "  ${BOLD}Pull file from another node${RESET}\n"
 
             # Pick source node first
             pick_node "Source node" || return
@@ -520,7 +521,7 @@ do_transfer() {
             local recv_file="$PICKED_FILE"
 
             echo ""
-            printf "  Receiving ${CYAN}%s${RESET} ← ${CYAN}%s${RESET}\n" "$recv_file" "$target"
+            printf "  Pulling ${CYAN}%s${RESET} ← ${CYAN}%s${RESET}\n" "$recv_file" "$target"
             echo ""
             remote_scp_from "$target" "${TRANSFER_DIR}/${recv_file}" "$TRANSFER_DIR/"
             local rc=$?
