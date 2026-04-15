@@ -35,6 +35,7 @@ export PATH="/home/${NODE_USER}/.local/bin:${PATH}"
 # Staging directory for file transfers (laptop ↔ Pi and Pi ↔ Pi)
 TRANSFER_DIR="/home/${NODE_USER}/transfer"
 mkdir -p "$TRANSFER_DIR" 2>/dev/null
+chown "${NODE_USER}:${NODE_USER}" "$TRANSFER_DIR" 2>/dev/null
 
 # --- Colors ---
 RED='\033[0;31m'
@@ -355,14 +356,119 @@ do_mtr() {
     mtr "$target"
 }
 
+# Show numbered list of files in a directory, let user pick by number or type a path.
+# Sets PICKED_FILE to the chosen file path. Returns 1 if cancelled.
+pick_file() {
+    local dir="$1"
+    local label=${2:-"Select file"}
+
+    local files=()
+    while IFS= read -r f; do
+        [ -n "$f" ] && files+=("$f")
+    done < <(ls -1A "$dir" 2>/dev/null)
+
+    echo ""
+    if [ ${#files[@]} -gt 0 ]; then
+        printf "  ${BOLD}Files in ~/transfer/:${RESET}\n"
+        for i in "${!files[@]}"; do
+            printf "   ${CYAN}%d${RESET}  %s\n" "$((i+1))" "${files[$i]}"
+        done
+    else
+        printf "  ${DIM}(no files in ~/transfer/)${RESET}\n"
+    fi
+    echo ""
+    printf "  ${label} ${DIM}(number, path, or q to cancel)${RESET}: "
+
+    read -r file_choice
+
+    # Cancel
+    if [ "$file_choice" = "q" ] || [ "$file_choice" = "Q" ]; then
+        return 1
+    fi
+
+    # Check if it's a number (picking from list)
+    if [[ "$file_choice" =~ ^[0-9]+$ ]] && [ ${#files[@]} -gt 0 ]; then
+        local idx=$((file_choice - 1))
+        if [ $idx -ge 0 ] && [ $idx -lt ${#files[@]} ]; then
+            PICKED_FILE="${dir}/${files[$idx]}"
+            return 0
+        fi
+    fi
+
+    # Otherwise treat as filename or path
+    if [ -n "$file_choice" ]; then
+        # If just a filename, check in TRANSFER_DIR
+        if [ ! -f "$file_choice" ] && [ -f "${dir}/${file_choice}" ]; then
+            PICKED_FILE="${dir}/${file_choice}"
+        else
+            PICKED_FILE="$file_choice"
+        fi
+        return 0
+    fi
+
+    printf "  ${RED}No file selected.${RESET}\n"
+    sleep 1
+    return 1
+}
+
+# Show numbered list of remote files, let user pick by number or type a name.
+# Sets PICKED_FILE to the chosen filename. Returns 1 if cancelled.
+pick_remote_file() {
+    local host="$1"
+    local dir="$2"
+    local label=${3:-"Select file"}
+
+    local files=()
+    while IFS= read -r f; do
+        [ -n "$f" ] && files+=("$f")
+    done < <(remote_ssh "$host" "ls -1A ${dir} 2>/dev/null" 2>/dev/null)
+
+    echo ""
+    if [ ${#files[@]} -gt 0 ]; then
+        printf "  ${BOLD}Files on %s:~/transfer/:${RESET}\n" "$host"
+        for i in "${!files[@]}"; do
+            printf "   ${CYAN}%d${RESET}  %s\n" "$((i+1))" "${files[$i]}"
+        done
+    else
+        printf "  ${DIM}(no files on %s:~/transfer/)${RESET}\n" "$host"
+    fi
+    echo ""
+    printf "  ${label} ${DIM}(number, name, or q to cancel)${RESET}: "
+
+    read -r file_choice
+
+    # Cancel
+    if [ "$file_choice" = "q" ] || [ "$file_choice" = "Q" ]; then
+        return 1
+    fi
+
+    # Check if it's a number (picking from list)
+    if [[ "$file_choice" =~ ^[0-9]+$ ]] && [ ${#files[@]} -gt 0 ]; then
+        local idx=$((file_choice - 1))
+        if [ $idx -ge 0 ] && [ $idx -lt ${#files[@]} ]; then
+            PICKED_FILE="${files[$idx]}"
+            return 0
+        fi
+    fi
+
+    # Otherwise treat as raw filename
+    if [ -n "$file_choice" ]; then
+        PICKED_FILE="$file_choice"
+        return 0
+    fi
+
+    printf "  ${RED}No file selected.${RESET}\n"
+    sleep 1
+    return 1
+}
+
 do_transfer() {
     echo ""
     printf "  ${BOLD}File Transfer${RESET}  ${DIM}(staging: ~/transfer/)${RESET}\n"
     echo ""
-    printf "  ${CYAN}1${RESET}) List files in transfer directory\n"
-    printf "  ${CYAN}2${RESET}) Send file to another node\n"
-    printf "  ${CYAN}3${RESET}) Receive file from another node\n"
-    printf "  ${CYAN}4${RESET}) Back to menu\n"
+    printf "  ${CYAN}1${RESET}) Send file to another node\n"
+    printf "  ${CYAN}2${RESET}) Receive file from another node\n"
+    printf "  ${CYAN}3${RESET}) Back to menu\n"
     echo ""
     printf "  Select [1]: "
     read -r xfer_mode
@@ -371,47 +477,20 @@ do_transfer() {
     case "$xfer_mode" in
         1)
             echo ""
-            printf "  ${BOLD}Files in ${TRANSFER_DIR}:${RESET}\n"
-            echo ""
-            local file_count
-            file_count=$(find "$TRANSFER_DIR" -maxdepth 1 -not -name '.' -not -path "$TRANSFER_DIR" | wc -l)
-            if [ "$file_count" -eq 0 ]; then
-                printf "  ${DIM}(empty)${RESET}\n"
-            else
-                ls -lhA "$TRANSFER_DIR" | tail -n +2 | while read -r line; do
-                    printf "  %s\n" "$line"
-                done
-            fi
-            pause_after
-            ;;
-        2)
-            echo ""
             printf "  ${BOLD}Send file to another node${RESET}\n"
-            echo ""
-            # List files for easy reference
-            printf "  ${DIM}Files in ~/transfer/:${RESET}\n"
-            ls -1A "$TRANSFER_DIR" 2>/dev/null | while read -r f; do
-                printf "    %s\n" "$f"
-            done
-            echo ""
-            printf "  File to send ${DIM}(name, full path, or q to cancel)${RESET}: "
-            read -r send_file
 
-            # Cancel
-            [ "$send_file" = "q" ] || [ "$send_file" = "Q" ] && return
+            # Numbered file picker
+            pick_file "$TRANSFER_DIR" "File to send" || return
 
-            # If just a filename, assume it's in TRANSFER_DIR
-            if [ -n "$send_file" ] && [ ! -f "$send_file" ] && [ -f "$TRANSFER_DIR/$send_file" ]; then
-                send_file="$TRANSFER_DIR/$send_file"
-            fi
+            local send_file="$PICKED_FILE"
 
-            if [ -z "$send_file" ] || [ ! -f "$send_file" ]; then
-                printf "  ${RED}File not found.${RESET}\n"
+            if [ ! -f "$send_file" ]; then
+                printf "  ${RED}File not found: %s${RESET}\n" "$send_file"
                 pause_after
                 return
             fi
 
-            # Pick target node inline
+            # Pick target node
             pick_node "Target node" || return
             local target="$PICKED_NODE"
             echo ""
@@ -427,33 +506,20 @@ do_transfer() {
             fi
             pause_after
             ;;
-        3)
+        2)
             echo ""
             printf "  ${BOLD}Receive file from another node${RESET}\n"
 
-            # Pick source node inline
+            # Pick source node first
             pick_node "Source node" || return
             local target="$PICKED_NODE"
+
+            # Numbered remote file picker
+            pick_remote_file "$target" "$TRANSFER_DIR" "File to receive" || return
+
+            local recv_file="$PICKED_FILE"
+
             echo ""
-
-            # List remote transfer directory
-            printf "  ${DIM}Files on %s:~/transfer/:${RESET}\n" "$target"
-            remote_ssh "$target" "ls -1A ${TRANSFER_DIR} 2>/dev/null" 2>/dev/null | while read -r f; do
-                printf "    %s\n" "$f"
-            done
-            echo ""
-            printf "  File to receive ${DIM}(q to cancel)${RESET}: "
-            read -r recv_file
-
-            # Cancel
-            [ "$recv_file" = "q" ] || [ "$recv_file" = "Q" ] && return
-
-            if [ -z "$recv_file" ]; then
-                printf "  ${RED}No file specified.${RESET}\n"
-                pause_after
-                return
-            fi
-
             printf "  Receiving ${CYAN}%s${RESET} ← ${CYAN}%s${RESET}\n" "$recv_file" "$target"
             echo ""
             remote_scp_from "$target" "${TRANSFER_DIR}/${recv_file}" "$TRANSFER_DIR/"
@@ -466,7 +532,7 @@ do_transfer() {
             fi
             pause_after
             ;;
-        4|"")
+        3|"")
             return
             ;;
     esac
