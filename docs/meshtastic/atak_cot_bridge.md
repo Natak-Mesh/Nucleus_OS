@@ -175,7 +175,7 @@ Combine TX + RX into a single `cot_bridge.py` daemon. Integrate with existing `m
 - [x] Stage 2: TX pipeline (offline) — Fed real 310B TAK Protocol V1 mesh bytes through full chain: `parse_proto()` → `takmessage_to_xml()` → `CotXmlParser.parse()` → `TakCompressor.compress()` → 183B compressed (fits 237B LoRa MTU). Decompressed and verified 7 fields (uid, callsign, lat, lon, team, role, battery). All passed.
 - [x] Stage 3: RX pipeline (offline) — Fed 183B compressed TAKPacketV2 through full inbound chain: `TakCompressor.decompress()` → `CotXmlBuilder.build()` → `xml2proto()` → 288B TAK Protocol V1 mesh bytes. Parsed back with `parse_proto()` and verified 10 fields (uid, type, callsign, lat, lon, group name/role, battery, takv platform/device). All passed.
 - [x] Stage 4: Multicast listener (live network) — Listened on `239.2.3.1:6969`, captured 10 real packets from 2 ATAK devices. Parsed PLIs (callsign=0023, team=Cyan; callsign=McCOY, team=Cyan; both type `a-f-G-U-C`) and shared objects (`a-n-G`, `a-h-G`). All parsed correctly with positions and callsigns via `parse_proto()`.
-- [ ] Stage 5: Meshtastic TX (live radio)
+- [x] Stage 5: Meshtastic TX (live radio) — Captured McCOY PLI from multicast (321B), compressed to 162B, sent via `sendData(portNum=257)` on `/dev/ttyACM0`. Packet_id=2483579162 received on second node via `meshtastic --listen`: portnum=ATAK_FORWARDER, transport=TRANSPORT_LORA, SNR=13.25dB, RSSI=-20dBm. Full TX chain over LoRa confirmed.
 - [ ] Stage 6: Meshtastic RX (live radio)
 - [ ] Stage 7: Bridge service
 
