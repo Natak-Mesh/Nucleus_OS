@@ -339,14 +339,14 @@ def _extract_uid_callsign(cot_xml):
         return "?", "?"
 
 
-def onConnection(interface_obj, topic=pub.AUTO_TOPIC):
+def onConnection(interface, topic=pub.AUTO_TOPIC):
     """Called when serial connection is established."""
     global my_node_num
-    my_node_num = interface_obj.myInfo.my_node_num
-    logger.info(f"Radio connected: {interface_obj.getLongName()} (node {my_node_num})")
+    my_node_num = interface.myInfo.my_node_num
+    logger.info(f"Radio connected: {interface.getLongName()} (node {my_node_num})")
 
 
-def onDisconnect(interface_obj, topic=pub.AUTO_TOPIC):
+def onDisconnect(interface, topic=pub.AUTO_TOPIC):
     """Called when serial connection is lost."""
     logger.warning("Radio connection lost!")
 
