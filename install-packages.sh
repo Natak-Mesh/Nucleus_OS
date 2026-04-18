@@ -54,6 +54,12 @@ pip3 install --upgrade --break-system-packages --ignore-installed "meshtastic[cl
 # NomadNet - TUI mesh messenger/browser over Reticulum
 pip3 install --break-system-packages nomadnet
 
+# TAK Protocol libraries for ATAK CoT ↔ Meshtastic bridge
+# takproto: TAK Protocol V1 (protobuf) encoding/decoding
+pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/takproto.git"
+# meshtastic-tak: TAKPacketV2 conversion + zstd dictionary compression
+pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/TAKPacket-SDK.git#subdirectory=python"
+
 # Configure environment
 echo "[4/8] Configuring environment..."
 # Add ~/.local/bin to PATH for Python packages

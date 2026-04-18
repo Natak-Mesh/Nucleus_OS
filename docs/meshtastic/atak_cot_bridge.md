@@ -86,3 +86,96 @@ Create a parallel long-range network by bridging CoT traffic to Meshtastic LoRa 
 4. **takproto** `xml2proto(xml)` → TAK Protocol V1 mesh bytes
 5. Inject as multicast CoT on **br-lan** for local ATAK devices
 
+## Staged Implementation Plan
+
+Each stage has a concrete verification step. Don't proceed until the current stage passes.
+
+### Stage 0: Install Dependencies
+
+**apt:** `python3-zstandard` (fallback; pip pulls it automatically)
+
+**pip (from Natak forks):**
+```bash
+pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/takproto.git"
+pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/TAKPacket-SDK.git#subdirectory=python"
+```
+
+**Verify:**
+```bash
+python3 -c "
+import takproto
+from meshtastic_tak.cot_xml_parser import CotXmlParser
+from meshtastic_tak.tak_compressor import TakCompressor
+from meshtastic_tak.cot_xml_builder import CotXmlBuilder
+print('all imports OK')
+"
+```
+
+### Stage 1: `takmessage_to_xml()` Glue Function
+
+Write the missing TakMessage → CoT XML converter (reverse of takproto's `xml2message()`). Small standalone module.
+
+**Verify:** Round-trip test — known CoT XML → `xml2message()` → `takmessage_to_xml()` → parse result XML, compare key fields (uid, type, lat, lon, callsign, group, etc.)
+
+### Stage 2: TX Pipeline (Offline)
+
+Full outbound conversion chain, no network:
+```
+TAK Protocol V1 bytes → parse_proto() → takmessage_to_xml()
+  → CotXmlParser.parse() → TakCompressor.compress() → wire bytes
+```
+
+**Verify:** Feed sample TAK Protocol V1 PLI packet, confirm compressed output ≤ 237 bytes. Decompress the output and verify it round-trips.
+
+### Stage 3: RX Pipeline (Offline)
+
+Full inbound conversion chain, no network:
+```
+compressed wire bytes → TakCompressor.decompress() → CotXmlBuilder.build()
+  → xml2proto() → TAK Protocol V1 mesh bytes
+```
+
+**Verify:** Feed the compressed bytes from Stage 2, get TAK Protocol V1 bytes back, parse them with `parse_proto()` and confirm fields match the original.
+
+### Stage 4: Multicast Listener (Live Network)
+
+Listen on `239.2.3.1:6969` (standard TAK SA) on br-lan. Capture and parse real TAK Protocol V1 packets from ATAK devices.
+
+**Verify:** Run with an ATAK device on the AP, see parsed PLI events with callsign, lat/lon, team color logged to console.
+
+### Stage 5: Meshtastic TX (Live Radio)
+
+Connect to meshtastic radio, send compressed TAKPacketV2 via `sendData(data, portNum=257)` (`ATAK_FORWARDER`).
+
+**Verify:** Send a synthetic PLI. Another meshtastic node with ATAK plugin (or TAK Forwarder app) receives and displays it.
+
+### Stage 6: Meshtastic RX (Live Radio)
+
+Subscribe to incoming `ATAK_FORWARDER` (portnum 257) packets from the radio, decompress, convert to TAK Protocol V1, inject as multicast on br-lan.
+
+**Verify:** Another node sends TAK data over LoRa, local ATAK device on our AP sees the position.
+
+### Stage 7: Bridge Service
+
+Combine TX + RX into a single `cot_bridge.py` daemon. Integrate with existing `meshtastic_manager.py`'s serial connection. Add rate limiting and dedup (avoid bridging packets that came FROM LoRa back TO LoRa).
+
+**Verify:** Two nodes, each with ATAK devices — positions flow bidirectionally over LoRa.
+
+## Key Technical Decisions
+
+- **Portnum:** `ATAK_FORWARDER` (257) — interoperable with stock meshtastic ATAK nodes.
+- **Multicast group:** `239.2.3.1:6969` — standard TAK SA, already routed by smcroute.
+- **CoT XML is the interchange format** between takproto and meshtastic_tak libraries.
+- **PLI is the priority** — validate with PLI first. Chat, markers, shapes flow naturally via the libraries.
+
+## Progress Tracker
+
+- [x] Stage 0: Dependencies installed — takproto 3.0.1, meshtastic-tak 0.1.0, zstandard 0.25.0. All imports verified.
+- [x] Stage 1: `takmessage_to_xml()` — Code at `opt/nucleus/meshtastic/takmessage_to_xml.py`. Verified with round-trip test: fed the "Eliopoli HQ" PLI from takproto's test suite through `xml2message()` → `takmessage_to_xml()`, then parsed the output XML and compared 17 fields (uid, type, how, lat, lon, callsign, endpoint, group name/role, battery, takv device/platform/version, track speed/course, xmlDetail fragments). All 17 checks passed.
+- [x] Stage 2: TX pipeline (offline) — Fed real 310B TAK Protocol V1 mesh bytes through full chain: `parse_proto()` → `takmessage_to_xml()` → `CotXmlParser.parse()` → `TakCompressor.compress()` → 183B compressed (fits 237B LoRa MTU). Decompressed and verified 7 fields (uid, callsign, lat, lon, team, role, battery). All passed.
+- [x] Stage 3: RX pipeline (offline) — Fed 183B compressed TAKPacketV2 through full inbound chain: `TakCompressor.decompress()` → `CotXmlBuilder.build()` → `xml2proto()` → 288B TAK Protocol V1 mesh bytes. Parsed back with `parse_proto()` and verified 10 fields (uid, type, callsign, lat, lon, group name/role, battery, takv platform/device). All passed.
+- [x] Stage 4: Multicast listener (live network) — Listened on `239.2.3.1:6969`, captured 10 real packets from 2 ATAK devices. Parsed PLIs (callsign=0023, team=Cyan; callsign=McCOY, team=Cyan; both type `a-f-G-U-C`) and shared objects (`a-n-G`, `a-h-G`). All parsed correctly with positions and callsigns via `parse_proto()`.
+- [ ] Stage 5: Meshtastic TX (live radio)
+- [ ] Stage 6: Meshtastic RX (live radio)
+- [ ] Stage 7: Bridge service
+
