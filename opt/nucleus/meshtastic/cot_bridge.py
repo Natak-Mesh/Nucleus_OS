@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import logging
+import signal
 import socket
 import struct
 import sys
@@ -428,6 +429,39 @@ def main():
     print("=" * 60)
     print()
 
+    # ── Shutdown handler (works for both SIGTERM and KeyboardInterrupt) ──
+    def _shutdown(signum=None, frame=None):
+        sig_name = signal.Signals(signum).name if signum else "KeyboardInterrupt"
+        logger.info(f"Shutting down ({sig_name})...")
+        logger.info(f"TX stats: mcast={stats['tx_mcast_received']} parsed={stats['tx_parsed']} "
+                     f"sent={stats['tx_sent']} rate_limited={stats['tx_rate_limited']} "
+                     f"too_large={stats['tx_too_large']} errors={stats['tx_errors']}")
+        logger.info(f"RX stats: total={stats['rx_total']} atak={stats['rx_atak']} "
+                     f"decompress={stats['rx_decompress_ok']} inject={stats['rx_inject_ok']} "
+                     f"errors={stats['rx_errors']}")
+        try:
+            iface.close()
+        except Exception:
+            pass
+        try:
+            mcast_send_sock.close()
+        except Exception:
+            pass
+        if sa_sock:
+            try:
+                sa_sock.close()
+            except Exception:
+                pass
+        if chat_sock:
+            try:
+                chat_sock.close()
+            except Exception:
+                pass
+        logger.info("Serial interface closed — radio released")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+
     # ── Keep alive ───────────────────────────────────────────
     try:
         while True:
@@ -443,20 +477,7 @@ def main():
                 for u in expired:
                     del _tx_last_sent[u]
     except KeyboardInterrupt:
-        print()
-        logger.info("Shutting down...")
-        logger.info(f"TX stats: mcast={stats['tx_mcast_received']} parsed={stats['tx_parsed']} "
-                     f"sent={stats['tx_sent']} rate_limited={stats['tx_rate_limited']} "
-                     f"too_large={stats['tx_too_large']} errors={stats['tx_errors']}")
-        logger.info(f"RX stats: total={stats['rx_total']} atak={stats['rx_atak']} "
-                     f"decompress={stats['rx_decompress_ok']} inject={stats['rx_inject_ok']} "
-                     f"errors={stats['rx_errors']}")
-        iface.close()
-        mcast_send_sock.close()
-        if sa_sock:
-            sa_sock.close()
-        if chat_sock:
-            chat_sock.close()
+        _shutdown()
 
 
 if __name__ == "__main__":

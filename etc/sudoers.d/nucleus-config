@@ -10,3 +10,6 @@ natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop cot-bridge.service
 natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable cot-bridge.service
 natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl disable cot-bridge.service
 natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active cot-bridge.service
+
+# Allow natak user to reboot (needed when disabling CoT bridge to release radio BT)
+natak ALL=(ALL) NOPASSWD: /usr/sbin/reboot

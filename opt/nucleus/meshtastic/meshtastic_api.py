@@ -148,4 +148,7 @@ def bridge_disable():
     if not _write_config_flag(False):
         return jsonify({'success': False, 'error': 'Failed to write config'}), 500
 
-    return jsonify({'success': True, 'message': 'CoT bridge stopped and disabled'})
+    # Reboot the node to fully release the radio back to Bluetooth
+    subprocess.Popen(['sudo', 'reboot'], close_fds=True)
+
+    return jsonify({'success': True, 'message': 'CoT bridge disabled — node rebooting'})
