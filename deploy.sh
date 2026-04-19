@@ -53,6 +53,7 @@ sudo cp "$SOURCE_DIR/etc/systemd/system/brlan-setup.service" /etc/systemd/system
 sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-start.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-web.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/rnsd.service" /etc/systemd/system/
+sudo cp "$SOURCE_DIR/etc/systemd/system/cot-bridge.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mediamtx.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
 sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/systemd/system/babeld.service.d/
@@ -89,6 +90,13 @@ fi
 # Copy web directory if exists
 if [ -d "$SOURCE_DIR/opt/nucleus/web" ]; then
     sudo cp -r "$SOURCE_DIR/opt/nucleus/web" /opt/nucleus/
+fi
+
+# Copy CLI tools
+if [ -d "$SOURCE_DIR/opt/nucleus/cli" ]; then
+    sudo mkdir -p /opt/nucleus/cli
+    sudo cp -r "$SOURCE_DIR/opt/nucleus/cli/"* /opt/nucleus/cli/
+    sudo chmod +x /opt/nucleus/cli/*.sh
 fi
 
 # Fix ownership for web interface to write config files

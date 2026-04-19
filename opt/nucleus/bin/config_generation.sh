@@ -183,4 +183,13 @@ redistribute local deny
 redistribute deny
 EOF
 
+# Enable/disable CoT bridge service based on config
+if [ "${COT_BRIDGE_ENABLED,,}" = "true" ]; then
+    systemctl enable cot-bridge.service 2>/dev/null || true
+    echo "CoT bridge service enabled (will start on boot)"
+else
+    systemctl disable cot-bridge.service 2>/dev/null || true
+    echo "CoT bridge service disabled"
+fi
+
 echo "Configuration files generated successfully."

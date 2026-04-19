@@ -32,7 +32,11 @@ sudo apt install -y \
   tcpdump \
   mosquitto \
   mosquitto-clients \
-  uhubctl
+  uhubctl \
+  sshpass \
+  btop \
+  mtr-tiny \
+  ncdu
 
 # Install Python packages
 echo "[3/8] Installing Python packages..."
@@ -46,6 +50,15 @@ sudo pip3 install --break-system-packages flask
 # Meshtastic CLI - Tools for Meshtastic devices
 pip3 install --upgrade --break-system-packages pytap2
 pip3 install --upgrade --break-system-packages --ignore-installed "meshtastic[cli]"
+
+# NomadNet - TUI mesh messenger/browser over Reticulum
+pip3 install --break-system-packages nomadnet
+
+# TAK Protocol libraries for ATAK CoT ↔ Meshtastic bridge
+# takproto: TAK Protocol V1 (protobuf) encoding/decoding
+pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/takproto.git"
+# meshtastic-tak: TAKPacketV2 conversion + zstd dictionary compression
+pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/TAKPacket-SDK.git#subdirectory=python"
 
 # Configure environment
 echo "[4/8] Configuring environment..."

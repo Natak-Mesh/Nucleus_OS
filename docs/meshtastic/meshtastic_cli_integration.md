@@ -87,6 +87,50 @@ python3 /opt/nucleus/meshtastic/meshtastic_manager.py disconnect
 
 ## Planned Features
 
+### Phase 12: CLI Menu — Meshtastic Section
+
+Add a full **Meshtastic** section to the CLI terminal menu (`nucleus-menu.sh`) providing power-user access to all meshtastic operations without the web UI: radio status, send/receive messages, node list, live listener, traceroute.
+
+**Implementation:** Calls the existing Flask API via curl (avoids serial contention). Falls back to meshtastic CLI with serial release/reacquire for operations like traceroute.
+
+**Effort:** Low. All backend infrastructure exists. Pure bash menu integration.
+
+See: `docs/cli_tools/meshtastic_full_integration.md` — Workstream 1
+
+---
+
+### Phase 13: Config Sharing via CLI
+
+Eliminate the meshtastic phone app for radio configuration. Export, apply, and push radio config between nodes using the meshtastic CLI's `--export-config` and `--configure` commands, combined with the existing file transfer infrastructure (scp between nodes via `~/transfer/`).
+
+Menu items: Export config, apply config, push to node, push to ALL nodes, show channel URL/QR.
+
+**Effort:** Medium. Bash scripting + serial port coordination.
+
+See: `docs/cli_tools/meshtastic_config_sharing.md` and `docs/cli_tools/meshtastic_full_integration.md` — Workstream 2
+
+---
+
+### Phase 14: ATAK CoT ↔ Meshtastic LoRa Bridge
+
+Bridge ATAK Cursor-on-Target (CoT) data between the WiFi mesh and the LoRa mesh. ATAK EUDs connected to a Pi's br-lan exchange positions, markers, and chat with remote Pis — via LoRa — without needing the meshtastic phone app or Android ATAK plugin.
+
+Uses **takproto** (v3.0.1) for CoT XML ↔ TAKPacket protobuf conversion, and sends via `sendData(portNum=ATAK_PLUGIN)` (portnum 72) — the same format as the official meshtastic ATAK plugin.
+
+Key features:
+- CoT multicast listener on br-lan (239.2.3.1:6969)
+- takproto.xml2proto() / proto2xml() conversion
+- Rate-limited PLI forwarding (1 per callsign per 60s over LoRa)
+- WiFi UDP dual-transport (same pattern as text messages)
+- CoT multicast reconstruction on receiving end
+- Full interop with Android meshtastic ATAK plugin users
+
+**Effort:** High. New module with multicast networking, protobuf conversion, rate limiting.
+
+See: `docs/cli_tools/meshtastic_full_integration.md` — Workstream 3
+
+---
+
 ### Phase 10: Canned Messages / Quick Send
 
 Pre-defined quick-tap message buttons in the web UI for common field communications. Saves typing on mobile browsers in field conditions.
@@ -203,6 +247,9 @@ High. Requires: Codec2 integration, browser audio recording, new send/receive pi
 | 9 | Configuration (mesh.conf settings for UDP relay) | ✅ Complete |
 | 10 | Canned messages / quick send buttons | 🔲 Planned |
 | 11 | Codec2 voice notes (push-to-talk, LoRa + WiFi) | 🔲 Planned |
+| 12 | CLI menu — Meshtastic section | 🔲 Planned |
+| 13 | Config sharing via CLI (export/apply/push/fleet) | 🔲 Planned |
+| 14 | ATAK CoT ↔ Meshtastic LoRa bridge (takproto) | 🔲 Planned |
 
 ---
 
