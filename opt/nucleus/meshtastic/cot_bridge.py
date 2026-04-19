@@ -234,15 +234,16 @@ def _setup_mcast_send_socket():
     return sock
 
 
-def _inject_multicast(tak_v1_bytes, cot_xml):
-    """Send TAK Protocol V1 bytes to the appropriate multicast group."""
+def _inject_multicast(cot_xml):
+    """Send CoT XML to the appropriate multicast group."""
     if _is_chat_event(cot_xml):
         group, port = CHAT_MCAST_GROUP, CHAT_MCAST_PORT
     else:
         group, port = SA_MCAST_GROUP, SA_MCAST_PORT
 
+    xml_bytes = cot_xml.encode("utf-8") if isinstance(cot_xml, str) else cot_xml
     try:
-        mcast_send_sock.sendto(tak_v1_bytes, (group, port))
+        mcast_send_sock.sendto(xml_bytes, (group, port))
         stats["rx_inject_ok"] += 1
         return group, port
     except Exception as e:
@@ -284,23 +285,17 @@ def onReceive(packet, interface):
         # Step 2: Build CoT XML
         cot_xml = builder.build(tak_packet)
 
-        # Step 3: Convert to TAK Protocol V1
-        import takproto
-        tak_v1_bytes = takproto.xml2proto(cot_xml)
-        if not tak_v1_bytes:
-            logger.error("xml2proto returned empty")
-            return
-
         # Track UID to prevent re-TX loop
         _track_rx_uid(cot_xml)
 
-        # Step 4: Inject multicast
-        group, port = _inject_multicast(tak_v1_bytes, cot_xml)
+        # Step 3: Inject CoT XML as multicast
+        group, port = _inject_multicast(cot_xml)
         if group:
             uid, callsign = _extract_uid_callsign(cot_xml)
+            xml_len = len(cot_xml.encode("utf-8") if isinstance(cot_xml, str) else cot_xml)
             logger.info(
                 f"RX ← LoRa | {from_id} | {uid} | {callsign} | "
-                f"{len(payload)}B→{len(tak_v1_bytes)}B | "
+                f"{len(payload)}B→{xml_len}B | "
                 f"SNR={rx_snr} | → {group}:{port}"
             )
 

@@ -4,123 +4,107 @@
 
 The ATAK CoT Bridge (`cot_bridge.py`) is a bidirectional daemon that bridges Cursor on Target (CoT) traffic between the local ATAK multicast network and Meshtastic LoRa. It creates a parallel long-range data path alongside the existing 802.11s IP mesh.
 
-This document covers how to integrate the bridge into the Nucleus OS system — service management, serial port coordination with the existing meshtastic text module, web UI, and configuration.
+This document covers how the bridge is integrated into Nucleus OS — service management, configuration, and web UI.
 
-## What Exists Today
+## Operating Modes
 
-### CoT Bridge (`cot_bridge.py`)
+The meshtastic radio has two modes, controlled by a single config flag:
 
-Standalone bidirectional daemon. All 7 development stages complete and verified between two nodes.
-
-**TX path:** Listens on ATAK multicast groups (SA `239.2.3.1:6969` + Chat `224.10.10.1:17012`) on br-lan → parses TAK Protocol V1 → converts to CoT XML → compresses to TAKPacketV2 → sends as `ATAK_FORWARDER` (portnum 257) over LoRa.
-
-**RX path:** Receives `ATAK_FORWARDER` packets from LoRa → decompresses TAKPacketV2 → builds CoT XML → converts to TAK Protocol V1 → injects as multicast on br-lan for local ATAK devices.
-
-**Features:**
-- 30s per-UID rate limiting (TX)
-- Loop prevention (RX UID tracking — won't re-TX packets received from LoRa)
-- Self-packet filtering (ignores own node number)
-- SA + Chat multicast support
-- Stats tracking and clean shutdown
-
-**Owns the serial port exclusively** — opens `SerialInterface` directly.
-
-### Text Messaging Module (`meshtastic_manager.py` + `meshtastic_api.py`)
-
-Flask-integrated module for text messaging over LoRa. Controlled via web UI (meshtastic.html).
-
-**Capabilities:**
-- Connect/disconnect serial control via web UI buttons
-- Send/receive text messages (LoRa + WiFi UDP dual-transport)
-- Node database display
-- Message log with transport badges (LoRa/WiFi/local)
-- UDP relay for instant Pi-to-Pi delivery over 802.11s
-
-**Also owns the serial port exclusively** when connected.
-
-### Web UI (`meshtastic.html`)
-
-Single page with:
-- Status display (connected/disconnected, node info)
-- Radio control buttons (Take Control / Release to BLE / Clear Node DB)
-- Send message form (visible when connected)
-- Known nodes table (visible when connected)
-- Message log (always visible — UDP messages arrive even when disconnected)
-
-## The Serial Port Problem
-
-Both `cot_bridge.py` and `meshtastic_manager.py` use `meshtastic.serial_interface.SerialInterface` which opens the serial port with `exclusive=True`. **They cannot run simultaneously.**
-
-Current state:
-- `meshtastic_manager.py` is instantiated by the Flask web app (`app.py`) and holds the serial connection when "Take Control" is clicked
-- `cot_bridge.py` is a standalone script run manually from the command line
-- No systemd service for either — the web app manages the text module lifecycle, the bridge is manual
-
-## Integration Architecture
-
-### Operating Modes
-
-The meshtastic radio can be in one of these states:
-
-| Mode | Serial Owner | What Works |
+| Mode | Config Value | What Happens |
 |---|---|---|
-| **BLE (default)** | Nobody | Phone app via Bluetooth. No Pi serial features. |
-| **Text mode** | `meshtastic_manager.py` | Text messaging, node DB, web UI. No CoT bridge. |
-| **Bridge mode** | `cot_bridge.py` | Bidirectional ATAK CoT ↔ LoRa. No text messaging. |
+| **BLE** (default) | `COT_BRIDGE_ENABLED=false` | Radio left alone. Phone app works via Bluetooth. Nothing touches serial. |
+| **Bridge** | `COT_BRIDGE_ENABLED=true` | `cot-bridge.service` runs. ATAK CoT bridges to/from LoRa. |
 
-Only one mode can be active at a time. Switching requires releasing the serial port.
+Only one mode at a time. The toggle takes effect immediately (no reboot required) and persists across reboots.
 
-### Service Design
+## Architecture
 
-`cot_bridge.py` runs as a systemd service (`cot-bridge.service`) that can be started/stopped independently.
+### Service
 
-**Key constraint:** The bridge service and the text module's serial connection are mutually exclusive. Starting the bridge while text mode is connected (or vice versa) will fail with a serial port lock error.
+`cot-bridge.service` — systemd unit that runs `cot_bridge.py` as a daemon.
+
+- Starts after `mesh-start.service` (needs br-lan + multicast routing)
+- Runs as `natak` user
+- `Restart=on-failure` with 10s backoff
+- Logs to journald (`journalctl -u cot-bridge -f`)
 
 ### Configuration
 
-Add to `/etc/nucleus/mesh.conf`:
+`/etc/nucleus/mesh.conf`:
 ```bash
-# ATAK CoT Bridge Configuration
-# Bridges ATAK multicast CoT to/from Meshtastic LoRa
 COT_BRIDGE_ENABLED=false
 ```
 
-When `COT_BRIDGE_ENABLED=true`, the bridge service starts at boot and runs continuously. The text module's "Take Control" button should be disabled or warn that the bridge is active.
+### Web UI Toggle
 
-When `COT_BRIDGE_ENABLED=false` (default), the bridge doesn't run. The radio is available for BLE or text mode as before.
+The meshtastic page (`meshtastic.html`) provides:
+- Radio detection status (USB serial present)
+- Bridge mode toggle switch (BLE ↔ Bridge)
+- Service status indicator (Running/Stopped)
 
-## Current Progress
+The toggle calls the API which:
+1. Writes `COT_BRIDGE_ENABLED` to mesh.conf
+2. Runs `systemctl enable/disable --now cot-bridge.service`
 
-- [x] Bridge daemon complete and verified (`cot_bridge.py`)
-- [x] All 7 stages passed (see `atak_cot_bridge.md`)
-- [x] Dependencies installed (takproto, meshtastic-tak, zstandard)
-- [ ] Systemd service file (`cot-bridge.service`)
-- [ ] `mesh.conf` config knob (`COT_BRIDGE_ENABLED`)
-- [ ] `config_generation.sh` integration (enable/disable service based on config)
-- [ ] Web UI awareness (show bridge status, prevent conflicts)
-- [ ] `mesh-start.sh` or boot integration
-- [ ] Deploy script updates
+No reboot needed — the service starts/stops immediately and the enable/disable persists for future boots. `config_generation.sh` also reads this flag, so a full config-gen + reboot flow stays consistent.
 
-## Open Questions
+### API Endpoints
 
-These are the items to discuss before implementing:
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/meshtastic/status` | GET | Bridge enabled (config), service running, radio detected |
+| `/api/meshtastic/bridge/enable` | POST | Enable + start bridge service, write config |
+| `/api/meshtastic/bridge/disable` | POST | Stop + disable bridge service, write config |
 
-1. **Service lifecycle** — Should the bridge auto-start at boot when enabled, or be manually triggered? (Leaning: auto-start via systemd, controlled by config flag.)
+### Sudoers
 
-2. **Web UI integration** — How much bridge visibility in the web UI?
-   - Minimal: Just a status indicator ("CoT Bridge: Running/Stopped") on the meshtastic page
-   - Medium: Status + start/stop buttons + bridge stats (TX/RX counts)
-   - Full: Dedicated page or section with rate limit config, log tail, etc.
+`/etc/sudoers.d/nucleus-config` grants the `natak` user passwordless access to:
+- `systemctl start/stop/enable/disable/is-active cot-bridge.service`
 
-3. **Mode switching** — If bridge is running and user clicks "Take Control" for text mode:
-   - Option A: Block it — show "CoT Bridge is active, stop it first"
-   - Option B: Auto-stop bridge, connect text mode, auto-restart bridge on disconnect
-   - Option C: Don't worry about it — if they click Take Control while bridge runs, it fails with a clear error
+## File Layout
 
-4. **Text messaging during bridge mode** — The bridge doesn't handle text messages. If someone sends a meshtastic text while the bridge owns the serial port, it won't be received/logged. Is this acceptable, or do we want the bridge to also subscribe to text messages?
+### Active files
 
-5. **Rate limit tuning** — Currently hardcoded at 30s. Should this be configurable via `mesh.conf`?
+```
+opt/nucleus/meshtastic/
+├── cot_bridge.py           # Bridge daemon (Stage 7)
+├── takmessage_to_xml.py    # TakMessage → CoT XML glue function
+└── meshtastic_api.py       # Flask API (bridge status/toggle)
 
-6. **Logging** — Bridge currently logs to stdout. As a systemd service it would go to journald. Any need for a dedicated log file?
+etc/systemd/system/
+└── cot-bridge.service      # Systemd unit for bridge daemon
 
-7. **Deploy script** — `deploy.sh` needs to know about the new service file and config entries.
+etc/nucleus/
+└── mesh.conf               # COT_BRIDGE_ENABLED flag
+```
+
+### Archived files
+
+```
+opt/nucleus/meshtastic/archive/
+├── meshtastic_manager.py       # Text messaging manager (shelved)
+├── meshtastic_module_planning.md  # Text messaging planning doc
+├── cot_bridge_rx.py            # Stage 6 RX-only test
+├── rx_diag.py                  # RX diagnostic test
+└── tx_test.py                  # TX test script
+```
+
+The text messaging + UDP relay feature (`meshtastic_manager.py`) is preserved in the archive for potential future use. It provided LoRa text messaging with WiFi UDP dual-transport and a web UI for send/receive/node management.
+
+## Bridge Details
+
+See `atak_cot_bridge.md` for the full development history and technical details.
+
+**TX:** Multicast CoT (SA `239.2.3.1:6969` + Chat `224.10.10.1:17012`) → TAK Protocol V1 → CoT XML → TAKPacketV2 → compressed → LoRa (portnum 257 ATAK_FORWARDER)
+
+**RX:** LoRa (portnum 257) → decompress → CoT XML → TAK Protocol V1 → multicast inject on br-lan
+
+**Features:** 30s per-UID rate limiting, loop prevention, self-packet filtering, SA + Chat multicast support.
+
+## Dependencies
+
+Installed via pip (from Natak forks):
+- `takproto` — TAK Protocol V1 encoding/decoding
+- `meshtastic-tak` (TAKPacket SDK) — TAKPacketV2 compression/decompression
+- `zstandard` — compression backend
+- `meshtastic` — radio serial interface
