@@ -152,3 +152,66 @@ def bridge_disable():
     subprocess.Popen(['sudo', 'reboot'], close_fds=True)
 
     return jsonify({'success': True, 'message': 'CoT bridge disabled — node rebooting'})
+
+
+@meshtastic_bp.route('/api/meshtastic/bridge/logs', methods=['GET'])
+def bridge_logs():
+    """Return last 50 cot-bridge journal lines + health summary."""
+    try:
+        result = subprocess.run(
+            ['journalctl', '-u', 'cot-bridge.service', '-n', '50',
+             '--no-pager', '-o', 'short'],
+            capture_output=True, text=True, timeout=5
+        )
+        lines = result.stdout.strip().split('\n') if result.stdout.strip() else []
+    except Exception:
+        lines = []
+
+    # Parse health from the lines
+    health = 'unknown'
+    last_activity = None
+    error_msg = None
+
+    import time as _time
+    from datetime import datetime as _dt
+
+    now = _time.time()
+    for line in reversed(lines):
+        # Find last TX or RX line for activity timestamp
+        if last_activity is None and ('[INFO]' in line and ('TX →' in line or 'RX ←' in line)):
+            try:
+                # Parse timestamp from journal line: "Apr 24 05:25:53 hostname ..."
+                parts = line.split()
+                ts_str = f"{parts[0]} {parts[1]} {parts[2]}"
+                ts = _dt.strptime(ts_str, "%b %d %H:%M:%S").replace(year=_dt.now().year)
+                last_activity = int(now - ts.timestamp())
+            except Exception:
+                pass
+
+        # Find errors/warnings
+        if error_msg is None and ('[WARNING]' in line or '[ERROR]' in line):
+            try:
+                error_msg = line.split(']', 2)[-1].strip()
+            except Exception:
+                error_msg = line
+
+    if last_activity is not None:
+        if last_activity < 120:
+            health = 'healthy'
+        else:
+            health = 'stale'
+    elif lines:
+        health = 'no_traffic'
+    else:
+        health = 'no_logs'
+
+    # Override to error if recent warning/error found and no activity since
+    if error_msg and (last_activity is None or last_activity > 60):
+        health = 'error'
+
+    return jsonify({
+        'lines': lines,
+        'health': health,
+        'last_activity_secs': last_activity,
+        'last_error': error_msg,
+    })
