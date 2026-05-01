@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import ipaddress
 import logging
 import signal
 import socket
@@ -63,6 +64,7 @@ cot_parser = None
 mcast_send_sock = None
 iface = None
 my_node_num = None
+local_subnet = None  # br-lan subnet — only bridge multicast from local ATAK devices
 
 # Track last TX time per CoT UID for rate limiting
 _tx_last_sent = defaultdict(float)  # uid → timestamp
@@ -94,6 +96,32 @@ stats = {
 # ═══════════════════════════════════════════════════════════════
 #  TX SIDE: Multicast → LoRa
 # ═══════════════════════════════════════════════════════════════
+
+def _get_local_subnet():
+    """Get br-lan's IP network (e.g., 10.20.22.0/24) for source filtering."""
+    import fcntl
+    try:
+        ifname = MCAST_IF.encode()
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Get IP address
+        ip_bytes = fcntl.ioctl(
+            s.fileno(), 0x8915,  # SIOCGIFADDR
+            struct.pack("256s", ifname[:15])
+        )[20:24]
+        # Get netmask
+        mask_bytes = fcntl.ioctl(
+            s.fileno(), 0x891b,  # SIOCGIFNETMASK
+            struct.pack("256s", ifname[:15])
+        )[20:24]
+        s.close()
+        ip_str = socket.inet_ntoa(ip_bytes)
+        mask_str = socket.inet_ntoa(mask_bytes)
+        network = ipaddress.ip_network(f"{ip_str}/{mask_str}", strict=False)
+        return network
+    except Exception as e:
+        logger.warning(f"Could not determine {MCAST_IF} subnet: {e}")
+        return None
+
 
 def _create_mcast_listener(group, port):
     """Create a UDP socket that joins a multicast group on br-lan."""
@@ -190,8 +218,11 @@ def _tx_process_packet(data):
         iface.sendData(wire_bytes, portNum=ATAK_FORWARDER_PORTNUM, wantAck=False)
         stats["tx_sent"] += 1
 
-        cot_type = tak_msg.cotEvent.type
-        logger.info(f"TX → LoRa | {uid} | {cot_type} | {len(wire_bytes)}B")
+        if uid:
+            cot_type = tak_msg.cotEvent.type
+            logger.info(f"TX → LoRa | {uid} | {cot_type} | {len(wire_bytes)}B")
+        else:
+            logger.info(f"TX → LoRa | [discovery] | {len(wire_bytes)}B")
 
     except Exception as e:
         stats["tx_errors"] += 1
@@ -208,6 +239,13 @@ def _mcast_listener_loop(sock, name):
             continue
         except OSError:
             break
+
+        # Only bridge multicast from local ATAK devices (not WiFi mesh traffic)
+        if local_subnet is not None:
+            src_ip = addr[0]
+            if ipaddress.ip_address(src_ip) not in local_subnet:
+                logger.debug(f"TX skip (non-local src {src_ip}): {name}")
+                continue
 
         try:
             _tx_process_packet(data)
@@ -276,7 +314,15 @@ def onReceive(packet, interface):
 
     stats["rx_atak"] += 1
     rx_snr = packet.get("rxSnr", "?")
-    rx_rssi = packet.get("rxRssi", "?")
+
+    # Look up sender's short name from node database
+    sender_name = from_id
+    try:
+        node_info = iface.nodes.get(f"{from_id}")
+        if node_info:
+            sender_name = node_info.get("user", {}).get("shortName", from_id)
+    except Exception:
+        pass
 
     try:
         # Step 1: Decompress
@@ -292,13 +338,17 @@ def onReceive(packet, interface):
         # Step 3: Inject CoT XML as multicast
         group, port = _inject_multicast(cot_xml)
         if group:
-            uid, callsign = _extract_uid_callsign(cot_xml)
-            xml_len = len(cot_xml.encode("utf-8") if isinstance(cot_xml, str) else cot_xml)
-            logger.info(
-                f"RX ← LoRa | {from_id} | {uid} | {callsign} | "
-                f"{len(payload)}B→{xml_len}B | "
-                f"SNR={rx_snr} | → {group}:{port}"
-            )
+            uid, _ = _extract_uid_callsign(cot_xml)
+            if uid and uid != "unknown" and uid != "?":
+                logger.info(
+                    f"RX ← LoRa | {sender_name} | {uid} | "
+                    f"{len(payload)}B | SNR={rx_snr}"
+                )
+            else:
+                logger.info(
+                    f"RX ← LoRa | {sender_name} | [discovery] | "
+                    f"{len(payload)}B | SNR={rx_snr}"
+                )
 
     except Exception as e:
         stats["rx_errors"] += 1
@@ -352,7 +402,7 @@ def onDisconnect(interface, topic=pub.AUTO_TOPIC):
 # ═══════════════════════════════════════════════════════════════
 
 def main():
-    global compressor, builder, cot_parser, mcast_send_sock, iface
+    global compressor, builder, cot_parser, mcast_send_sock, iface, local_subnet
 
     parser = argparse.ArgumentParser(description="ATAK CoT Bridge (Stage 7)")
     parser.add_argument("--port", default=None, help="Serial port (default: auto-detect)")
@@ -374,6 +424,13 @@ def main():
     builder = CotXmlBuilder()
     cot_parser = CotXmlParser()
     logger.info("Pipeline initialized (TakCompressor + CotXmlBuilder + CotXmlParser)")
+
+    # ── Detect local subnet for TX source filtering ──────────
+    local_subnet = _get_local_subnet()
+    if local_subnet:
+        logger.info(f"TX source filter: only bridging multicast from {local_subnet}")
+    else:
+        logger.warning("TX source filter DISABLED — could not detect br-lan subnet")
 
     # ── Setup multicast sockets ──────────────────────────────
     mcast_send_sock = _setup_mcast_send_socket()

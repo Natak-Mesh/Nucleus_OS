@@ -160,7 +160,7 @@ def bridge_logs():
     try:
         result = subprocess.run(
             ['journalctl', '-u', 'cot-bridge.service', '-n', '50',
-             '--no-pager', '-o', 'short'],
+             '--no-pager', '-o', 'cat'],
             capture_output=True, text=True, timeout=5
         )
         lines = result.stdout.strip().split('\n') if result.stdout.strip() else []
@@ -180,10 +180,11 @@ def bridge_logs():
         # Find last TX or RX line for activity timestamp
         if last_activity is None and ('[INFO]' in line and ('TX →' in line or 'RX ←' in line)):
             try:
-                # Parse timestamp from journal line: "Apr 24 05:25:53 hostname ..."
-                parts = line.split()
-                ts_str = f"{parts[0]} {parts[1]} {parts[2]}"
-                ts = _dt.strptime(ts_str, "%b %d %H:%M:%S").replace(year=_dt.now().year)
+                # Parse timestamp from -o cat line: "19:16:34 [INFO] ..."
+                ts_str = line.split()[0]
+                today = _dt.now()
+                ts = _dt.strptime(ts_str, "%H:%M:%S").replace(
+                    year=today.year, month=today.month, day=today.day)
                 last_activity = int(now - ts.timestamp())
             except Exception:
                 pass

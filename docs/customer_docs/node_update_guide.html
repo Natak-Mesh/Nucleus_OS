@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nucleus Node Update Guide</title>
+<style>
+body {
+    font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    margin: 0;
+    padding: 30px;
+    background-color: #ffffff;
+    color: #1a1a1a;
+    line-height: 1.6;
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 30px 40px;
+}
+h1 {
+    font-size: 1.8em;
+    border-bottom: 2px solid #333;
+    padding-bottom: 10px;
+    margin-top: 0;
+}
+h2 {
+    font-size: 1.3em;
+    margin-top: 40px;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 6px;
+}
+h3 {
+    font-size: 1.1em;
+    margin-top: 25px;
+}
+code {
+    font-family: 'SF Mono', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+    background-color: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.92em;
+}
+pre {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    padding: 14px 18px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: 'SF Mono', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+    font-size: 0.88em;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+}
+.cmd-comment {
+    color: #6a9955;
+}
+blockquote {
+    border-left: 4px solid #e0c040;
+    margin: 15px 0;
+    padding: 8px 16px;
+    background-color: #fffbe6;
+    color: #5a5000;
+}
+blockquote p {
+    margin: 4px 0;
+}
+.important {
+    border-left: 4px solid #d04040;
+    background-color: #fff0f0;
+    color: #6a0000;
+}
+ol, ul {
+    padding-left: 24px;
+}
+li {
+    margin-bottom: 6px;
+}
+hr {
+    border: none;
+    border-top: 1px solid #ddd;
+    margin: 35px 0;
+}
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 15px 0;
+}
+th, td {
+    border: 1px solid #ccc;
+    padding: 10px 14px;
+    text-align: left;
+    vertical-align: top;
+}
+th {
+    background-color: #f5f5f5;
+    font-weight: 600;
+}
+.step-num {
+    display: inline-block;
+    background: #333;
+    color: #fff;
+    width: 28px;
+    height: 28px;
+    line-height: 28px;
+    text-align: center;
+    border-radius: 50%;
+    font-size: 0.85em;
+    font-weight: bold;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+</style>
+</head>
+<body>
+
+<h1>Nucleus Node Update Guide</h1>
+
+<p><strong>Purpose:</strong> Update a deployed Nucleus node to the latest software from the Git repository while keeping your existing mesh configuration intact.</p>
+
+<p>This update will also add two new configuration variables that weren't in older versions:</p>
+<ul>
+    <li><code>USB_HUB_POWER_CYCLE</code> &mdash; fixes Meshtastic radio lockups on boot</li>
+    <li><code>COT_BRIDGE_ENABLED</code> &mdash; enables ATAK CoT bridging over Meshtastic LoRa</li>
+</ul>
+
+<p>Additionally, we'll disable the <code>mosquitto</code> service which has been interfering with OpenTAK Server nodes.</p>
+
+<hr>
+
+<h2>Prerequisites</h2>
+<ul>
+    <li>A computer on the same network as the node (Wi-Fi AP or Ethernet)</li>
+    <li>A terminal application (Terminal on Mac/Linux, PowerShell or PuTTY on Windows)</li>
+</ul>
+
+<hr>
+
+<h2><span class="step-num">1</span> SSH Into the Node</h2>
+
+<p>Open your terminal and connect to the node:</p>
+
+<pre><code>ssh natak@0021-nucleus.local</code></pre>
+
+<p>When prompted for a password, type:</p>
+
+<pre><code>52235223</code></pre>
+
+<blockquote><p><strong>Note:</strong> You won't see the password as you type &mdash; that's normal. Just type it and press Enter.</p></blockquote>
+
+<blockquote class="important"><p><strong>Important:</strong> This is also the <code>sudo</code> password. Any time a command in this guide starts with <code>sudo</code> and asks for a password, enter <code>52235223</code>.</p></blockquote>
+
+<p>If it asks "Are you sure you want to continue connecting?" type <code>yes</code> and press Enter.</p>
+
+<p>You should now see a command prompt like <code>natak@nucleus:~$</code>. You're in.</p>
+
+<hr>
+
+<h2><span class="step-num">2</span> Pull the Latest Code</h2>
+
+<p>Navigate to the Nucleus OS directory and download the latest version:</p>
+
+<pre><code>cd ~/Nucleus_OS</code></pre>
+
+<pre><code>git pull</code></pre>
+
+<p>You should see output showing files being updated. If it says "Already up to date" then the node is already on the latest version (but continue anyway to pick up the new config variables).</p>
+
+<hr>
+
+<h2><span class="step-num">3</span> Back Up Your Mesh Config</h2>
+
+<p>Your <code>mesh.conf</code> has all of your node's unique settings (IP addresses, mesh name, passwords, etc). We need to protect it before the deploy overwrites it.</p>
+
+<pre><code>sudo mv /etc/nucleus/mesh.conf /etc/nucleus/mesh.bak.conf</code></pre>
+
+<blockquote><p>This renames your config to <code>mesh.bak.conf</code> so deploy.sh won't overwrite it.</p></blockquote>
+
+<hr>
+
+<h2><span class="step-num">4</span> Install New Packages</h2>
+
+<p>Run the package installer to pick up any new dependencies:</p>
+
+<pre><code>cd ~/Nucleus_OS</code></pre>
+
+<pre><code>sudo ./install-packages.sh</code></pre>
+
+<p>This may take a few minutes. Wait for it to finish completely.</p>
+
+<hr>
+
+<h2><span class="step-num">5</span> Run the Deploy Script</h2>
+
+<p>This copies all the updated files (scripts, services, web interface, etc.) to the right system locations:</p>
+
+<pre><code>sudo ./deploy.sh</code></pre>
+
+<p>Wait for it to finish. You'll see "Deployment complete." when it's done.</p>
+
+<hr>
+
+<h2><span class="step-num">6</span> Restore Your Mesh Config</h2>
+
+<p>The deploy script just copied a fresh template mesh.conf (with default values). We need to remove that and put your real config back:</p>
+
+<pre><code>sudo rm /etc/nucleus/mesh.conf</code></pre>
+
+<pre><code>sudo mv /etc/nucleus/mesh.bak.conf /etc/nucleus/mesh.conf</code></pre>
+
+<p>Your original config is now back in place.</p>
+
+<hr>
+
+<h2><span class="step-num">7</span> Add the New Config Variables</h2>
+
+<p>Your restored mesh.conf is from an older version and is missing two new variables. We need to add them to the bottom of the file.</p>
+
+<p>Open the file in nano:</p>
+
+<pre><code>sudo nano /etc/nucleus/mesh.conf</code></pre>
+
+<p><strong>How to navigate in nano:</strong></p>
+<ul>
+    <li>Use the <strong>arrow keys</strong> to move around</li>
+    <li>Scroll all the way to the <strong>bottom</strong> of the file (hold the down arrow, or press <code>Ctrl+End</code>)</li>
+</ul>
+
+<p>At the very bottom of the file, <strong>after the last line</strong>, add these two blocks. You can copy-paste them one at a time:</p>
+
+<pre><code><span class="cmd-comment"># USB Hub Power Cycle — Meshtastic radio lockup workaround
+# Power-cycles all USB devices on hub 1-1 at boot to recover a crashed
+# RAK4631 Meshtastic radio. Only enable on nodes that experience
+# Meshtastic radio lockups on boot.</span>
+USB_HUB_POWER_CYCLE=false
+
+<span class="cmd-comment"># ATAK CoT Bridge Configuration
+# Bridges ATAK multicast CoT to/from Meshtastic LoRa
+# When true, cot-bridge.service runs and the radio is in bridge mode
+# When false (default), the radio is left in BLE mode for phone app</span>
+COT_BRIDGE_ENABLED=false</code></pre>
+
+<p><strong>How to save and exit nano:</strong></p>
+<ol>
+    <li>Press <code>Ctrl+O</code> (that's the letter O, not zero) to save &mdash; it will ask for a filename, just press <strong>Enter</strong> to confirm</li>
+    <li>Press <code>Ctrl+X</code> to exit</li>
+</ol>
+
+<hr>
+
+<h2><span class="step-num">8</span> Disable Mosquitto</h2>
+
+<p>Mosquitto has been interfering with OpenTAK Server nodes. Disable and stop it:</p>
+
+<pre><code>sudo systemctl disable --now mosquitto</code></pre>
+
+<blockquote><p>If you get a message like "Unit mosquitto.service not found" &mdash; that's fine, it just means it wasn't installed on this node. Move on.</p></blockquote>
+
+<hr>
+
+<h2><span class="step-num">9</span> Regenerate System Configs</h2>
+
+<p>This reads your mesh.conf and generates all the system configuration files (network, hostapd, babeld, etc.):</p>
+
+<pre><code>sudo /opt/nucleus/bin/config_generation.sh</code></pre>
+
+<p>You should see "Configuration files generated successfully." when it's done.</p>
+
+<hr>
+
+<h2><span class="step-num">10</span> Reboot</h2>
+
+<pre><code>sudo reboot</code></pre>
+
+<p>Your SSH session will disconnect &mdash; that's expected. Wait about 60&ndash;90 seconds for the node to come back up.</p>
+
+<hr>
+
+<h2><span class="step-num">11</span> Reconnect and Verify the CoT Bridge</h2>
+
+<p>SSH back into the node:</p>
+
+<pre><code>ssh natak@0021-nucleus.local</code></pre>
+
+<p>Password: <code>52235223</code></p>
+
+<h3>Watch the CoT Bridge log live:</h3>
+
+<p>Run this command to stream the CoT bridge log output in real time:</p>
+
+<pre><code>sudo journalctl -u cot-bridge -f</code></pre>
+
+<p>This will show a live, scrolling log. <strong>Leave this running</strong> and do the following:</p>
+
+<ol>
+    <li><strong>Connect an ATAK device</strong> (phone/tablet) to the node's Wi-Fi access point</li>
+    <li><strong>Open ATAK</strong> on the device</li>
+    <li><strong>Watch the terminal</strong> &mdash; you should start seeing CoT packets arriving in the log output (position reports, etc.)</li>
+</ol>
+
+<p>If you see packets flowing, <strong>the CoT bridge is working correctly</strong>. Press <code>Ctrl+C</code> to stop watching the log.</p>
+
+<h3>If the CoT bridge is NOT running or no packets appear:</h3>
+
+<p>The Meshtastic radio may have locked up during boot. Enable the USB hub power cycle to fix this.</p>
+
+<p>Open the mesh config:</p>
+
+<pre><code>sudo nano /etc/nucleus/mesh.conf</code></pre>
+
+<p>Use the arrow keys to find this line:</p>
+
+<pre><code>USB_HUB_POWER_CYCLE=false</code></pre>
+
+<p>Change it to:</p>
+
+<pre><code>USB_HUB_POWER_CYCLE=true</code></pre>
+
+<p>Save and exit: <code>Ctrl+O</code>, press <strong>Enter</strong>, then <code>Ctrl+X</code>.</p>
+
+<p>Then regenerate configs and reboot:</p>
+
+<pre><code>sudo /opt/nucleus/bin/config_generation.sh</code></pre>
+
+<pre><code>sudo reboot</code></pre>
+
+<p>Wait 60&ndash;90 seconds, SSH back in, and run the live log again:</p>
+
+<pre><code>ssh natak@0021-nucleus.local</code></pre>
+
+<p>Password: <code>52235223</code></p>
+
+<pre><code>sudo journalctl -u cot-bridge -f</code></pre>
+
+<p>Connect your ATAK device again and confirm packets are now flowing.</p>
+
+<h3>Confirm mosquitto is disabled:</h3>
+
+<p>After you're done verifying the CoT bridge (press <code>Ctrl+C</code> to stop the log), run:</p>
+
+<pre><code>sudo systemctl status mosquitto --no-pager</code></pre>
+
+<p>It should show <strong>inactive (dead)</strong> or <strong>not found</strong>. Either is fine.</p>
+
+<hr>
+
+<h2>Quick Reference &mdash; All Commands in Order</h2>
+
+<pre><code><span class="cmd-comment"># Step 1: SSH in</span>
+ssh natak@0021-nucleus.local
+<span class="cmd-comment"># password: 52235223</span>
+
+<span class="cmd-comment"># Step 2: Pull latest</span>
+cd ~/Nucleus_OS
+git pull
+
+<span class="cmd-comment"># Step 3: Back up config</span>
+sudo mv /etc/nucleus/mesh.conf /etc/nucleus/mesh.bak.conf
+
+<span class="cmd-comment"># Step 4: Install packages</span>
+cd ~/Nucleus_OS
+sudo ./install-packages.sh
+
+<span class="cmd-comment"># Step 5: Deploy</span>
+sudo ./deploy.sh
+
+<span class="cmd-comment"># Step 6: Restore config</span>
+sudo rm /etc/nucleus/mesh.conf
+sudo mv /etc/nucleus/mesh.bak.conf /etc/nucleus/mesh.conf
+
+<span class="cmd-comment"># Step 7: Add new variables (open in nano, add to bottom, Ctrl+O to save, Ctrl+X to exit)</span>
+sudo nano /etc/nucleus/mesh.conf
+
+<span class="cmd-comment"># Step 8: Disable mosquitto</span>
+sudo systemctl disable --now mosquitto
+
+<span class="cmd-comment"># Step 9: Regenerate configs</span>
+sudo /opt/nucleus/bin/config_generation.sh
+
+<span class="cmd-comment"># Step 10: Reboot</span>
+sudo reboot
+
+<span class="cmd-comment"># Step 11: Reconnect and verify CoT bridge</span>
+ssh natak@0021-nucleus.local
+<span class="cmd-comment"># password: 52235223 (also the sudo password)</span>
+sudo journalctl -u cot-bridge -f
+<span class="cmd-comment"># Connect ATAK device to node AP, open ATAK, watch for packets in the log</span>
+<span class="cmd-comment"># Ctrl+C to stop watching</span>
+sudo systemctl status mosquitto --no-pager</code></pre>
+
+<hr>
+
+<h2>Troubleshooting</h2>
+
+<table>
+    <tr>
+        <th>Problem</th>
+        <th>Solution</th>
+    </tr>
+    <tr>
+        <td>Can't SSH to the node</td>
+        <td>Make sure you're on the node's Wi-Fi AP or connected via Ethernet. Try the IP address directly if <code>.local</code> doesn't resolve.</td>
+    </tr>
+    <tr>
+        <td><code>git pull</code> fails</td>
+        <td>Check internet connection on the node. The node needs WAN access (Ethernet to router) to reach GitHub.</td>
+    </tr>
+    <tr>
+        <td>CoT bridge won't start</td>
+        <td>Check if Meshtastic radio is detected: <code>ls /dev/ttyACM*</code>. If no device found, enable <code>USB_HUB_POWER_CYCLE=true</code> and reboot.</td>
+    </tr>
+    <tr>
+        <td>Services look wrong after reboot</td>
+        <td>Re-run <code>sudo /opt/nucleus/bin/config_generation.sh</code> and reboot again.</td>
+    </tr>
+</table>
+
+</body>
+</html>
