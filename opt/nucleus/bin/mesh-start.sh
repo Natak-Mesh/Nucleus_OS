@@ -167,7 +167,8 @@ fi
 # Restart cot-bridge so it detects br-lan subnet for TX source filtering.
 # cot-bridge may start before br-lan has an IP (race condition), which disables
 # the source filter and causes WiFi→LoRa rebroadcast of other nodes' traffic.
+# Backgrounded (&) so it doesn't block mesh-start from completing.
 if systemctl is-enabled --quiet cot-bridge 2>/dev/null; then
-    systemctl restart cot-bridge
-    echo "Restarted cot-bridge — br-lan subnet filter will initialize correctly"
+    ( sleep 5 && systemctl restart cot-bridge ) &
+    echo "Scheduled cot-bridge restart in background"
 fi
