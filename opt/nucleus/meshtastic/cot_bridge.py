@@ -98,29 +98,41 @@ stats = {
 # ═══════════════════════════════════════════════════════════════
 
 def _get_local_subnet():
-    """Get br-lan's IP network (e.g., 10.20.22.0/24) for source filtering."""
+    """Get br-lan's IP network (e.g., 10.20.22.0/24) for source filtering.
+
+    Retries every 2s for up to 30s to handle boot race conditions where
+    br-lan may not have an IP assigned yet when the service starts.
+    """
     import fcntl
-    try:
-        ifname = MCAST_IF.encode()
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # Get IP address
-        ip_bytes = fcntl.ioctl(
-            s.fileno(), 0x8915,  # SIOCGIFADDR
-            struct.pack("256s", ifname[:15])
-        )[20:24]
-        # Get netmask
-        mask_bytes = fcntl.ioctl(
-            s.fileno(), 0x891b,  # SIOCGIFNETMASK
-            struct.pack("256s", ifname[:15])
-        )[20:24]
-        s.close()
-        ip_str = socket.inet_ntoa(ip_bytes)
-        mask_str = socket.inet_ntoa(mask_bytes)
-        network = ipaddress.ip_network(f"{ip_str}/{mask_str}", strict=False)
-        return network
-    except Exception as e:
-        logger.warning(f"Could not determine {MCAST_IF} subnet: {e}")
-        return None
+    max_attempts = 15
+    for attempt in range(1, max_attempts + 1):
+        try:
+            ifname = MCAST_IF.encode()
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Get IP address
+            ip_bytes = fcntl.ioctl(
+                s.fileno(), 0x8915,  # SIOCGIFADDR
+                struct.pack("256s", ifname[:15])
+            )[20:24]
+            # Get netmask
+            mask_bytes = fcntl.ioctl(
+                s.fileno(), 0x891b,  # SIOCGIFNETMASK
+                struct.pack("256s", ifname[:15])
+            )[20:24]
+            s.close()
+            ip_str = socket.inet_ntoa(ip_bytes)
+            mask_str = socket.inet_ntoa(mask_bytes)
+            network = ipaddress.ip_network(f"{ip_str}/{mask_str}", strict=False)
+            if attempt > 1:
+                logger.info(f"{MCAST_IF} subnet detected on attempt {attempt}/{max_attempts}")
+            return network
+        except Exception as e:
+            if attempt < max_attempts:
+                logger.info(f"Waiting for {MCAST_IF} IP (attempt {attempt}/{max_attempts}): {e}")
+                time.sleep(2)
+            else:
+                logger.warning(f"Could not determine {MCAST_IF} subnet after {max_attempts} attempts: {e}")
+                return None
 
 
 def _create_mcast_listener(group, port):
