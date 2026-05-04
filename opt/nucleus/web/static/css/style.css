@@ -320,6 +320,7 @@ main {
     .nav-btn {
         flex: 1;
         min-width: 120px;
+        min-height: 44px;
     }
     
     .node-grid {
@@ -327,7 +328,7 @@ main {
     }
     
     main {
-        padding: 16px;
+        padding: 12px;
     }
 }
 
@@ -339,9 +340,14 @@ main {
     .nav-btn {
         padding: 8px 12px;
         font-size: 0.85rem;
+        min-height: 44px;
     }
     
     .dashboard h1 {
         font-size: 1.5rem;
+    }
+    
+    main {
+        padding: 8px;
     }
 }

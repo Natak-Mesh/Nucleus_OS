@@ -754,6 +754,19 @@ def monitor():
                          refresh_interval=REFRESH_INTERVAL)
 
 
+def get_meshtastic_nodes():
+    """Read meshtastic node data from JSON file dumped by cot_bridge."""
+    import json as _json
+    try:
+        with open('/tmp/meshtastic_nodes.json', 'r') as f:
+            data = _json.load(f)
+        return data.get('nodes', [])
+    except (FileNotFoundError, ValueError):
+        return []
+    except Exception:
+        return []
+
+
 @app.route('/api/dashboard')
 def api_dashboard():
     """Dashboard API - single endpoint for front page status data"""
@@ -781,14 +794,38 @@ def api_dashboard():
             'cost': node['cost'],
             'cost_quality': node.get('cost_quality', 'unknown'),
             'status': node['status'],
-            'duration': node['duration'],
         })
+
+    # Get meshtastic data
+    meshtastic_nodes = get_meshtastic_nodes()
+    radio_detected = bool(glob.glob('/dev/ttyACM*'))
+
+    # Check bridge config flag
+    bridge_enabled = False
+    try:
+        with open('/etc/nucleus/mesh.conf', 'r') as f:
+            for line in f:
+                if line.strip().startswith('COT_BRIDGE_ENABLED='):
+                    val = line.strip().split('=', 1)[1].strip('"').lower()
+                    bridge_enabled = val in ('true', '1', 'yes')
+                    break
+    except Exception:
+        pass
+
+    # Get channel utilization
+    channel_util = get_channel_utilization()
 
     return jsonify({
         'mesh_ip': mesh_ip,
         'wlan1': wlan1,
         'ap': ap,
         'neighbors': neighbors,
+        'channel_utilization': channel_util,
+        'meshtastic': {
+            'radio_detected': radio_detected,
+            'bridge_enabled': bridge_enabled,
+            'nodes': meshtastic_nodes,
+        },
         'timestamp': datetime.now().isoformat()
     })
 

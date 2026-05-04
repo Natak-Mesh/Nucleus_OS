@@ -2,128 +2,151 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Natak Mesh - Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Natak Mesh</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
         .dash {
-            max-width: 700px;
+            max-width: 480px;
             margin: 0 auto;
-            padding: 24px 16px;
+            padding: 12px;
+            font-family: monospace;
         }
 
-        /* -- This Node -- */
-        .node-info {
-            text-align: center;
-            margin-bottom: 28px;
-        }
-        .node-info .logo {
-            height: 80px;
-            width: auto;
+        /* ── Header: logo + IP ── */
+        .top-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
             margin-bottom: 12px;
         }
+        .top-bar .logo {
+            height: 48px;
+            width: auto;
+        }
         .mesh-ip {
-            font-size: 44px;
+            font-size: 32px;
             font-weight: bold;
             color: #1A09f1;
             font-family: monospace;
-            margin: 4px 0 12px 0;
         }
-        .status-row {
+
+        /* ── Status line ── */
+        .status-line {
             display: flex;
-            justify-content: center;
-            gap: 20px;
-            flex-wrap: wrap;
-            font-size: 14px;
+            gap: 24px;
+            font-size: 15px;
+            margin-bottom: 16px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-color);
         }
-        .status-item {
+        .st-up { color: var(--color-connected); }
+        .st-down { color: var(--color-disconnected); }
+
+        /* ── Section headers ── */
+        .section-hdr {
+            font-size: 13px;
+            color: var(--text-primary);
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 16px 0 8px 0;
+            padding: 6px 8px;
+            background: rgba(255,255,255,0.05);
+            border-left: 3px solid var(--accent-primary);
+            border-radius: 2px;
+        }
+
+        /* ── Compact list rows ── */
+        .conn-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 6px 0;
+            font-size: 15px;
+            font-family: monospace;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .conn-row .node-id {
+            color: var(--text-primary);
+        }
+        .conn-row .q-good { color: var(--color-connected); }
+        .conn-row .q-fair { color: var(--color-warning); }
+        .conn-row .q-poor { color: var(--color-disconnected); }
+        .conn-row .q-lost {
             color: var(--text-secondary);
+            opacity: 0.5;
+        }
+
+        /* Meshtastic freshness colors */
+        .conn-row .fresh { color: var(--color-connected); }
+        .conn-row .stale { color: var(--color-warning); }
+        .conn-row .old { color: var(--text-secondary); opacity: 0.5; }
+
+        .mesh-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            margin-bottom: 8px;
+        }
+
+        .empty-msg {
+            color: var(--text-secondary);
+            font-size: 14px;
+            padding: 6px 0;
+        }
+
+        /* ── Collapsible nav ── */
+        .tools-toggle {
             display: flex;
             align-items: center;
             gap: 6px;
-        }
-        .dot {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-        .dot-green { background: var(--color-connected); }
-        .dot-red { background: var(--color-disconnected); }
-
-        /* -- Neighbors -- */
-        .neighbors {
-            margin-bottom: 28px;
-        }
-        .neighbors h2 {
-            font-size: 13px;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
-            text-align: center;
-        }
-        .nb-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .nb-table th {
-            text-align: left;
-            color: var(--text-secondary);
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding: 6px 10px;
-            border-bottom: 1px solid var(--border-color);
-        }
-        .nb-table td {
-            padding: 8px 10px;
+            padding: 12px 0 8px 0;
+            margin-top: 12px;
+            border-top: 1px solid var(--border-color);
+            cursor: pointer;
             font-size: 14px;
-            font-family: monospace;
-            border-bottom: 1px solid var(--border-color);
-        }
-        .nb-table tr.lost td {
-            opacity: 0.45;
-        }
-        .nb-empty {
-            text-align: center;
             color: var(--text-secondary);
-            padding: 20px;
-            font-size: 14px;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
         }
-        .q-good { color: var(--color-connected); }
-        .q-fair { color: var(--color-warning); }
-        .q-poor { color: var(--color-disconnected); }
-
-        /* -- Nav pills -- */
-        .nav-pills {
+        .tools-toggle:hover { color: var(--text-primary); }
+        .tools-toggle .arrow {
+            transition: transform 0.2s;
+            font-size: 12px;
+        }
+        .tools-toggle.open .arrow {
+            transform: rotate(90deg);
+        }
+        .tools-body {
+            display: none;
+            padding: 4px 0 8px 0;
+        }
+        .tools-body.open { display: block; }
+        .tools-grid {
             display: flex;
             flex-wrap: wrap;
-            justify-content: center;
             gap: 8px;
-            padding-top: 20px;
-            border-top: 1px solid var(--border-color);
+            margin-bottom: 16px;
         }
         .pill {
-            padding: 8px 16px;
+            padding: 10px 16px;
             background: rgba(255,255,255,0.05);
             border: 1px solid var(--border-color);
             border-radius: 20px;
             color: var(--text-secondary);
             text-decoration: none;
             font-size: 13px;
+            font-family: monospace;
             transition: all 0.2s;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
         }
         .pill:hover {
             background: rgba(26, 9, 241, 0.2);
             border-color: #1A09f1;
             color: var(--text-primary);
-        }
-
-        .shutdown-area {
-            text-align: center;
-            padding-top: 20px;
-            margin-top: 12px;
         }
         .btn-shutdown {
             padding: 10px 28px;
@@ -136,6 +159,7 @@
             font-weight: bold;
             cursor: pointer;
             transition: opacity 0.2s;
+            min-height: 44px;
         }
         .btn-shutdown:hover { opacity: 0.8; }
         .btn-shutdown:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -143,8 +167,8 @@
         #last-update {
             text-align: center;
             color: var(--text-secondary);
-            font-size: 12px;
-            margin-top: 16px;
+            font-size: 11px;
+            margin-top: 12px;
         }
     </style>
 </head>
@@ -152,40 +176,53 @@
     <main>
         <div class="dash">
 
-            <!-- This Node -->
-            <div class="node-info">
+            <!-- Logo + IP -->
+            <div class="top-bar">
                 <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
                 <div class="mesh-ip" id="mesh-ip">--</div>
-                <div class="status-row">
-                    <span class="status-item" id="wlan1-status"><span class="dot"></span>Mesh: --</span>
-                    <span class="status-item" id="ap-status"><span class="dot"></span>AP: --</span>
+            </div>
+
+            <!-- Mesh status -->
+            <div class="status-line">
+                <span id="wlan1-status" class="st-down">Mesh: --</span>
+            </div>
+
+            <!-- WiFi Mesh Neighbors -->
+            <div class="section-hdr" id="wifi-hdr">WiFi Mesh</div>
+            <div id="nb-container">
+                <div class="empty-msg">Loading...</div>
+            </div>
+
+            <!-- Meshtastic Nodes -->
+            <div class="section-hdr">Meshtastic</div>
+            <div id="mesh-radio-container">
+                <div class="empty-msg">Loading...</div>
+            </div>
+
+            <!-- Collapsible Tools & Settings -->
+            <div class="tools-toggle" id="tools-toggle" onclick="toggleTools()">
+                <span class="arrow">▶</span> Tools &amp; Settings
+            </div>
+            <div class="tools-body" id="tools-body">
+                <div class="tools-grid">
+                    <a href="/monitor" class="pill">Monitor</a>
+                    <a href="/config" class="pill">Config</a>
+                    <a href="/scan" class="pill">Wi-Fi Scan</a>
+                    <a href="/remote" class="pill">Remote</a>
+                    <a href="/ethernet" class="pill">Ethernet</a>
+                    <a href="/opendht" class="pill">OpenDHT</a>
+                    <a href="/meshtastic" class="pill">Meshtastic</a>
+                    <a href="/reticulum" class="pill">Reticulum</a>
+                    <a href="/opentakserver" class="pill">OpenTAKServer</a>
+                </div>
+                <div style="text-align: center;">
+                    <button class="btn-shutdown" id="btn-shutdown" onclick="shutdownNode()">Shutdown Node</button>
                 </div>
             </div>
 
-            <!-- Mesh Neighbors -->
-            <div class="neighbors">
-                <h2>Mesh Neighbors</h2>
-                <div id="nb-container">
-                    <div class="nb-empty">Loading...</div>
-                </div>
-            </div>
-
-            <!-- Navigation -->
-            <div class="nav-pills">
-                <a href="/monitor" class="pill">Monitor</a>
-                <a href="/config" class="pill">Config</a>
-                <a href="/scan" class="pill">Wi-Fi Scan</a>
-                <a href="/remote" class="pill">Remote</a>
-                <a href="/ethernet" class="pill">Ethernet</a>
-                <a href="/opendht" class="pill">OpenDHT</a>
-                <a href="/meshtastic" class="pill">Meshtastic</a>
-                <a href="/reticulum" class="pill">Reticulum</a>
-                <a href="/opentakserver" class="pill">OpenTAKServer</a>
-            </div>
-
-            <!-- Shutdown -->
-            <div class="shutdown-area">
-                <button class="btn-shutdown" id="btn-shutdown" onclick="shutdownNode()">Shutdown Node</button>
+            <!-- Shutdown (always visible) -->
+            <div style="text-align: center; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+                <button class="btn-shutdown" id="btn-shutdown2" onclick="shutdownNode()">Shutdown Node</button>
             </div>
 
             <div id="last-update"></div>
@@ -193,7 +230,30 @@
     </main>
 
     <script>
-        const QUALITY = {good: 'Good', fair: 'Fair', poor: 'Poor'};
+        function toggleTools() {
+            const toggle = document.getElementById('tools-toggle');
+            const body = document.getElementById('tools-body');
+            toggle.classList.toggle('open');
+            body.classList.toggle('open');
+        }
+
+        function formatAge(lastHeard) {
+            if (!lastHeard) return '?';
+            const secs = Math.floor(Date.now() / 1000) - lastHeard;
+            if (secs < 0) return 'now';
+            if (secs < 60) return secs + 's ago';
+            if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+            if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+            return Math.floor(secs / 86400) + 'd ago';
+        }
+
+        function freshnessClass(lastHeard) {
+            if (!lastHeard) return 'old';
+            const secs = Math.floor(Date.now() / 1000) - lastHeard;
+            if (secs < 300) return 'fresh';   // < 5 min
+            if (secs < 1800) return 'stale';  // < 30 min
+            return 'old';
+        }
 
         async function refresh() {
             try {
@@ -203,47 +263,81 @@
                 // Mesh IP
                 document.getElementById('mesh-ip').textContent = d.mesh_ip || 'N/A';
 
-                // wlan1
+                // wlan1 status
                 const w = document.getElementById('wlan1-status');
                 if (d.wlan1.active) {
-                    w.innerHTML = '<span class="dot dot-green"></span>Mesh: Ch ' + (d.wlan1.channel || '?');
+                    w.textContent = 'Mesh Ch' + (d.wlan1.channel || '?');
+                    w.className = 'st-up';
                 } else {
-                    w.innerHTML = '<span class="dot dot-red"></span>Mesh: Down';
+                    w.textContent = 'Mesh: Down';
+                    w.className = 'st-down';
                 }
 
-                // AP
-                const a = document.getElementById('ap-status');
-                if (d.ap.active) {
-                    const c = d.ap.clients;
-                    a.innerHTML = '<span class="dot dot-green"></span>' + (d.ap.ssid || 'AP') + ' &mdash; ' + c + ' client' + (c !== 1 ? 's' : '');
+                // WiFi section header with channel utilization
+                const wifiHdr = document.getElementById('wifi-hdr');
+                const cu = d.channel_utilization;
+                if (cu) {
+                    var busyColor = cu.busy_pct < 30 ? 'var(--color-connected)' :
+                                    cu.busy_pct < 50 ? '#66ff66' :
+                                    cu.busy_pct < 70 ? 'var(--color-warning)' :
+                                    'var(--color-disconnected)';
+                    wifiHdr.innerHTML = 'WiFi Mesh <span style="float:right;font-size:14px;color:' + busyColor + ';text-transform:none;letter-spacing:0">' + cu.busy_pct + '% busy</span>';
                 } else {
-                    a.innerHTML = '<span class="dot dot-red"></span>AP: Down';
+                    wifiHdr.textContent = 'WiFi Mesh';
                 }
 
-                // Neighbors
-                const box = document.getElementById('nb-container');
+                // WiFi Mesh Neighbors
+                const nb = document.getElementById('nb-container');
                 if (!d.neighbors || d.neighbors.length === 0) {
-                    box.innerHTML = '<div class="nb-empty">No mesh neighbors</div>';
+                    nb.innerHTML = '<div class="empty-msg">No mesh neighbors</div>';
                 } else {
-                    let h = '<table class="nb-table"><thead><tr><th>Node</th><th>Link</th><th>Status</th></tr></thead><tbody>';
-                    d.neighbors.forEach(n => {
-                        const cls = n.status === 'disconnected' ? ' class="lost"' : '';
-                        let link, status;
-
+                    let h = '';
+                    d.neighbors.forEach(function(n) {
                         if (n.status === 'connected') {
                             const q = n.cost_quality || 'unknown';
-                            link = '<span class="q-' + q + '">' + (QUALITY[q] || q) + ' (' + n.cost + ')</span>';
-                            status = '<span class="q-good">● ' + n.duration + '</span>';
+                            const label = q.charAt(0).toUpperCase() + q.slice(1);
+                            h += '<div class="conn-row">'
+                               + '<span class="node-id">' + n.ip + '</span>'
+                               + '<span class="q-' + q + '">' + label + ' (' + n.cost + ')</span>'
+                               + '</div>';
                         } else {
-                            link = '--';
-                            status = '<span class="q-poor">○ lost ' + n.duration + '</span>';
+                            h += '<div class="conn-row">'
+                               + '<span class="node-id">' + n.ip + '</span>'
+                               + '<span class="q-lost">lost</span>'
+                               + '</div>';
                         }
-
-                        h += '<tr' + cls + '><td>' + n.ip + '</td><td>' + link + '</td><td>' + status + '</td></tr>';
                     });
-                    h += '</tbody></table>';
-                    box.innerHTML = h;
+                    nb.innerHTML = h;
                 }
+
+                // Meshtastic
+                const mc = document.getElementById('mesh-radio-container');
+                const m = d.meshtastic || {};
+                let mh = '';
+
+                if (m.nodes && m.nodes.length > 0) {
+                    m.nodes.forEach(function(node) {
+                        const cls = freshnessClass(node.last_heard);
+                        const age = formatAge(node.last_heard);
+                        mh += '<div class="conn-row">'
+                            + '<span class="node-id">' + node.short_name + '</span>'
+                            + '<span class="' + cls + '">' + age + '</span>'
+                            + '</div>';
+                    });
+                } else {
+                    mh += '<div class="empty-msg">No nodes heard</div>';
+                }
+
+                // Radio / bridge status line
+                const radioTxt = m.radio_detected ? 'Radio ✓' : 'No radio';
+                const bridgeTxt = m.bridge_enabled ? 'Bridge ON' : 'BLE mode';
+                const radioClass = m.radio_detected ? 'st-up' : 'st-down';
+                mh += '<div class="mesh-meta">'
+                    + '<span class="' + radioClass + '">' + radioTxt + '</span>'
+                    + ' · ' + bridgeTxt
+                    + '</div>';
+
+                mc.innerHTML = mh;
 
                 // Timestamp
                 const t = new Date(d.timestamp);
@@ -256,7 +350,7 @@
 
         async function shutdownNode() {
             if (!confirm('Shut down this node?\nYou will need to unplug and replug power to restart.')) return;
-            const btn = document.getElementById('btn-shutdown');
+            var btn = document.getElementById('btn-shutdown');
             btn.disabled = true;
             btn.textContent = 'Shutting down...';
             try {
@@ -266,7 +360,7 @@
 
         refresh();
         setInterval(refresh, 5000);
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+        document.addEventListener('visibilitychange', function() { if (!document.hidden) refresh(); });
     </script>
 </body>
 </html>

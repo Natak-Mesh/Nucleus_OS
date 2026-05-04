@@ -16,7 +16,9 @@ Usage:
 
 import argparse
 import ipaddress
+import json
 import logging
+import os
 import signal
 import socket
 import struct
@@ -74,6 +76,9 @@ _tx_lock = threading.Lock()
 _rx_recent_uids = {}  # uid → timestamp
 _rx_lock = threading.Lock()
 RX_UID_EXPIRY = 60  # seconds
+
+# Track last-seen time per node for web dashboard (updated on every RX)
+_node_last_seen = {}  # node_num → timestamp
 
 # ── Stats ────────────────────────────────────────────────────────
 
@@ -320,6 +325,9 @@ def onReceive(packet, interface):
     if sender == my_node_num:
         return
 
+    # Track last-seen time for web dashboard (updates on every RX)
+    _node_last_seen[sender] = int(time.time())
+
     payload = decoded.get("payload")
     if not payload:
         return
@@ -395,6 +403,68 @@ def _extract_uid_callsign(cot_xml):
         return uid, callsign
     except Exception:
         return "?", "?"
+
+
+# ═══════════════════════════════════════════════════════════════
+#  NODE DUMP: Periodically write iface.nodes to JSON for web UI
+# ═══════════════════════════════════════════════════════════════
+
+NODE_DUMP_PATH = "/tmp/meshtastic_nodes.json"
+NODE_DUMP_INTERVAL = 30  # seconds
+NODE_MAX_AGE = 3600  # seconds — exclude nodes not heard in this long
+
+
+def _dump_nodes():
+    """Write iface.nodes to a JSON file for the web dashboard.
+
+    Writes atomically (tmp file + rename) to avoid partial reads.
+    Excludes the local node (my_node_num) from the list.
+    """
+    if iface is None or not hasattr(iface, 'nodes') or iface.nodes is None:
+        return
+
+    try:
+        now = int(time.time())
+        nodes_list = []
+        for node_id, node in iface.nodes.items():
+            # Skip our own node
+            num = node.get("num")
+            if num == my_node_num:
+                continue
+
+            user = node.get("user", {})
+            last_heard = node.get("lastHeard", 0)
+            # Use our own tracking if more recent than firmware's lastHeard
+            our_seen = _node_last_seen.get(num, 0)
+            last_heard = max(last_heard, our_seen)
+            # Skip nodes never heard or too old
+            if not last_heard or (now - last_heard) > NODE_MAX_AGE:
+                continue
+
+            nodes_list.append({
+                "id": user.get("id", node_id),
+                "short_name": user.get("shortName", "?"),
+                "long_name": user.get("longName", ""),
+                "last_heard": last_heard,
+                "snr": node.get("snr"),
+                "hops_away": node.get("hopsAway"),
+            })
+
+        # Sort by most recently heard
+        nodes_list.sort(key=lambda n: n["last_heard"], reverse=True)
+
+        dump = {
+            "timestamp": int(time.time()),
+            "nodes": nodes_list,
+        }
+
+        tmp_path = NODE_DUMP_PATH + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(dump, f)
+        os.replace(tmp_path, NODE_DUMP_PATH)
+
+    except Exception as e:
+        logger.debug(f"Node dump error: {e}")
 
 
 def onConnection(interface, topic=pub.AUTO_TOPIC):
@@ -532,11 +602,18 @@ def main():
     signal.signal(signal.SIGTERM, _shutdown)
 
     # ── Keep alive ───────────────────────────────────────────
+    last_node_dump = 0
     try:
         while True:
             time.sleep(10)
-            # Periodic cleanup of expired RX UIDs
             now = time.time()
+
+            # Dump node database for web dashboard
+            if now - last_node_dump >= NODE_DUMP_INTERVAL:
+                _dump_nodes()
+                last_node_dump = now
+
+            # Periodic cleanup of expired RX UIDs
             with _rx_lock:
                 expired = [u for u, t in _rx_recent_uids.items() if now - t > RX_UID_EXPIRY]
                 for u in expired:
