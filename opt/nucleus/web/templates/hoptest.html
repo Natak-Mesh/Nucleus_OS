@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Natak Mesh - Hop Test</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .hop-dash {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 12px;
+            font-family: monospace;
+        }
+        .top-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .top-bar .logo { height: 40px; width: auto; }
+        .top-bar h1 {
+            font-size: 18px;
+            color: var(--text-primary);
+            margin: 0;
+        }
+        .back-btn {
+            margin-left: auto;
+            padding: 8px 14px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            font-family: monospace;
+        }
+        .back-btn:hover {
+            background: rgba(26, 9, 241, 0.2);
+            border-color: #1A09f1;
+            color: var(--text-primary);
+        }
+
+        /* Summary bar */
+        .summary-bar {
+            display: flex;
+            gap: 16px;
+            font-size: 14px;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .summary-bar .s-label { color: var(--text-secondary); }
+        .summary-bar .s-val { color: var(--text-primary); font-weight: bold; }
+        .summary-bar .s-val.has-relay { color: var(--color-warning); }
+
+        /* Panel sections */
+        .panel {
+            margin-bottom: 16px;
+        }
+        .panel-hdr {
+            font-size: 13px;
+            color: var(--text-primary);
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            padding: 6px 8px;
+            background: rgba(255,255,255,0.05);
+            border-left: 3px solid var(--accent-primary);
+            border-radius: 2px;
+        }
+        .panel-body {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 10px;
+            font-size: 13px;
+            line-height: 1.7;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: var(--text-primary);
+        }
+        .panel-body .empty {
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        /* Route highlighting */
+        .route-line { margin: 2px 0; }
+        .route-direct { color: var(--color-connected); }
+        .route-relayed { color: var(--color-warning); }
+        .route-via { color: #1A09f1; font-weight: bold; }
+
+        /* Peer rows */
+        .peer-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .peer-ip { color: var(--text-primary); }
+        .sig-good { color: var(--color-connected); }
+        .sig-fair { color: var(--color-warning); }
+        .sig-poor { color: var(--color-disconnected); }
+
+        #last-update {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 11px;
+            margin-top: 12px;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <div class="hop-dash">
+
+            <!-- Header -->
+            <div class="top-bar">
+                <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
+                <h1>Hop Test</h1>
+                <a href="/" class="back-btn">← Back</a>
+            </div>
+
+            <!-- Summary -->
+            <div class="summary-bar">
+                <span><span class="s-label">Node:</span> <span class="s-val" id="s-ip">--</span></span>
+                <span><span class="s-label">Peers:</span> <span class="s-val" id="s-peers">--</span></span>
+                <span><span class="s-label">Routes:</span> <span class="s-val" id="s-routes">--</span></span>
+                <span><span class="s-label">Relayed:</span> <span class="s-val" id="s-relayed">--</span></span>
+            </div>
+
+            <!-- Panel 1: Babel Routes -->
+            <div class="panel">
+                <div class="panel-hdr">Babel Routes <span style="float:right;font-size:11px;font-weight:normal;text-transform:none;letter-spacing:0;color:var(--text-secondary)">ip route show proto babel</span></div>
+                <div class="panel-body" id="babel-routes"><span class="empty">Loading...</span></div>
+            </div>
+
+            <!-- Panel 2: Direct WiFi Peers -->
+            <div class="panel">
+                <div class="panel-hdr">Direct WiFi Peers <span style="float:right;font-size:11px;font-weight:normal;text-transform:none;letter-spacing:0;color:var(--text-secondary)">iw station dump</span></div>
+                <div class="panel-body" id="wifi-peers"><span class="empty">Loading...</span></div>
+            </div>
+
+            <div id="last-update"></div>
+        </div>
+    </main>
+
+    <script>
+        async function refresh() {
+            try {
+                const r = await fetch('/api/hoptest');
+                const d = await r.json();
+
+                // Summary
+                document.getElementById('s-ip').textContent = d.mesh_ip || '?';
+                document.getElementById('s-peers').textContent = d.summary.direct_peers;
+                document.getElementById('s-routes').textContent = d.summary.total_routes;
+
+                const relayEl = document.getElementById('s-relayed');
+                relayEl.textContent = d.summary.relayed_routes;
+                relayEl.className = d.summary.relayed_routes > 0 ? 's-val has-relay' : 's-val';
+
+                // Babel routes — highlight "via" keyword
+                const routesEl = document.getElementById('babel-routes');
+                if (!d.babel_routes || d.babel_routes.trim() === '') {
+                    routesEl.innerHTML = '<span class="empty">No babel routes</span>';
+                } else {
+                    let html = '';
+                    d.babel_routes.split('\n').forEach(function(line) {
+                        if (!line.trim()) return;
+                        // Check if route is relayed (via node != destination node)
+                        const viaMatch = line.match(/via\s+(\S+)/);
+                        const prefixMatch = line.match(/^(\S+)/);
+                        let isRelayed = false;
+                        if (viaMatch && prefixMatch) {
+                            const viaIp = viaMatch[1];
+                            const destIp = prefixMatch[1].split('/')[0];
+                            if (viaIp !== destIp) {
+                                const viaParts = viaIp.split('.');
+                                const destParts = destIp.split('.');
+                                if (viaParts.length === 4 && destParts.length === 4) {
+                                    const viaNode = viaParts[3];
+                                    const destNode = destParts[2] === '1' ? destParts[3] : destParts[2];
+                                    isRelayed = (viaNode !== destNode);
+                                } else {
+                                    isRelayed = true;
+                                }
+                            }
+                        }
+                        // Highlight the via portion
+                        const colored = escapeHtml(line).replace(/(via\s+\S+)/g, '<span class="route-via">$1</span>');
+                        const cls = isRelayed ? 'route-relayed' : 'route-direct';
+                        html += '<div class="route-line ' + cls + '">' + colored + '</div>';
+                    });
+                    routesEl.innerHTML = html;
+                }
+
+                // WiFi peers — show IP + signal
+                const peersEl = document.getElementById('wifi-peers');
+                if (!d.wifi_peers || d.wifi_peers.length === 0) {
+                    peersEl.innerHTML = '<span class="empty">No direct WiFi peers</span>';
+                } else {
+                    let html = '';
+                    d.wifi_peers.forEach(function(p) {
+                        let sigClass = 'sig-fair';
+                        let sigLabel = '';
+                        if (p.signal_avg !== null) {
+                            if (p.signal_avg >= -60) { sigClass = 'sig-good'; sigLabel = 'Good'; }
+                            else if (p.signal_avg >= -70) { sigClass = 'sig-fair'; sigLabel = 'Fair'; }
+                            else { sigClass = 'sig-poor'; sigLabel = 'Poor'; }
+                        }
+                        const sigText = p.signal_avg !== null ? (p.signal_avg + ' dBm · ' + sigLabel) : '?';
+                        html += '<div class="peer-row">'
+                            + '<span class="peer-ip">' + escapeHtml(p.ip) + '</span>'
+                            + '<span class="' + sigClass + '">' + sigText + '</span>'
+                            + '</div>';
+                    });
+                    peersEl.innerHTML = html;
+                }
+
+                // Timestamp
+                const t = new Date(d.timestamp);
+                document.getElementById('last-update').textContent = 'Updated ' + t.toLocaleTimeString();
+
+            } catch (e) {
+                console.error('Hop test fetch error:', e);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+
+        refresh();
+        setInterval(refresh, 5000);
+        document.addEventListener('visibilitychange', function() { if (!document.hidden) refresh(); });
+    </script>
+</body>
+</html>

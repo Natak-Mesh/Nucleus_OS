@@ -954,6 +954,136 @@ def reticulum_page():
     return render_template('reticulum.html')
 
 
+@app.route('/hoptest')
+def hoptest_page():
+    """Mesh hop test — raw data view for proving multi-hop relay"""
+    return render_template('hoptest.html')
+
+
+@app.route('/api/hoptest')
+def api_hoptest():
+    """API endpoint returning mesh hop data for the hop test page.
+
+    Returns two data blocks:
+    1. Babel routes (ip route show proto babel dev wlan1)
+    2. Direct WiFi peers with resolved IPs (iw station dump + ARP cache)
+    Plus a summary line and the node's own mesh IP.
+    """
+    import re as _re
+
+    result = {
+        'mesh_ip': None,
+        'babel_routes': '',
+        'wifi_peers': [],
+        'summary': {},
+        'timestamp': datetime.now().isoformat(),
+    }
+
+    # Read this node's mesh IP
+    try:
+        with open('/etc/nucleus/mesh.conf', 'r') as f:
+            for line in f:
+                if line.strip().startswith('MESH_IP='):
+                    result['mesh_ip'] = line.strip().split('=', 1)[1].strip('"')
+                    break
+    except Exception:
+        pass
+
+    # 1. Babel routes
+    try:
+        r = subprocess.run(['ip', 'route', 'show', 'proto', 'babel', 'dev', 'wlan1'],
+                           capture_output=True, text=True, timeout=5)
+        result['babel_routes'] = r.stdout.strip()
+    except Exception as e:
+        result['babel_routes'] = f'Error: {e}'
+
+    # 2. Direct WiFi peers (station dump — resolve MAC to IP via ARP cache)
+    try:
+        # Build MAC→IPv4 lookup from ARP neighbor cache
+        arp_r = subprocess.run(['ip', 'neigh', 'show', 'dev', 'wlan1'],
+                               capture_output=True, text=True, timeout=5)
+        mac_to_ip = {}
+        for arp_line in arp_r.stdout.strip().split('\n'):
+            if not arp_line:
+                continue
+            m = _re.match(r'(\S+)\s+lladdr\s+(\S+)', arp_line)
+            if m:
+                addr, mac_addr = m.groups()
+                if ':' not in addr:  # skip IPv6
+                    mac_to_ip[mac_addr.lower()] = addr
+
+        r = subprocess.run(['iw', 'dev', 'wlan1', 'station', 'dump'],
+                           capture_output=True, text=True, timeout=5)
+        peers = []
+        current_mac = None
+        signal_avg = None
+        for line in r.stdout.split('\n'):
+            line = line.strip()
+            if line.startswith('Station '):
+                if current_mac:
+                    ip = mac_to_ip.get(current_mac.lower(), 'unknown')
+                    peers.append({'ip': ip, 'signal_avg': signal_avg})
+                match = _re.match(r'Station\s+(\S+)', line)
+                current_mac = match.group(1) if match else None
+                signal_avg = None
+            elif 'signal avg:' in line and current_mac:
+                match = _re.search(r'signal avg:\s+([-\d]+)', line)
+                if match:
+                    signal_avg = int(match.group(1))
+        if current_mac:
+            ip = mac_to_ip.get(current_mac.lower(), 'unknown')
+            peers.append({'ip': ip, 'signal_avg': signal_avg})
+        result['wifi_peers'] = peers
+    except Exception as e:
+        result['wifi_peers'] = []
+
+    # Summary counts
+    direct_peer_count = len(result['wifi_peers'])
+    # Count routes that go via a different node (relayed)
+    # In Natak mesh: 10.20.X.0/24 is node X's br-lan, 10.20.1.X is node X's mesh IP
+    # A route is relayed when the via node differs from the destination node
+    relay_count = 0
+    total_routes = 0
+    for line in result['babel_routes'].split('\n'):
+        if not line.strip():
+            continue
+        total_routes += 1
+        via_match = _re.search(r'via\s+(\S+)', line)
+        prefix_match = _re.match(r'(\S+)', line)
+        if via_match and prefix_match:
+            via_ip = via_match.group(1)
+            prefix = prefix_match.group(1)
+            dest_ip = prefix.split('/')[0]
+
+            # Extract node identity from each address
+            via_parts = via_ip.split('.')
+            dest_parts = dest_ip.split('.')
+
+            # For host routes (10.20.1.X/32 via 10.20.1.Y) — relayed if X != Y
+            if dest_ip == via_ip:
+                pass  # direct
+            elif len(via_parts) == 4 and len(dest_parts) == 4:
+                via_node = via_parts[3]  # last octet of 10.20.1.Y
+                # br-lan subnet: 10.20.X.0/24 → node number is 3rd octet
+                # mesh host: 10.20.1.X/32 → node number is 4th octet
+                if dest_parts[2] == '1':
+                    dest_node = dest_parts[3]  # mesh IP
+                else:
+                    dest_node = dest_parts[2]  # br-lan subnet
+                if via_node != dest_node:
+                    relay_count += 1
+            elif via_ip != dest_ip:
+                relay_count += 1  # fallback for non-standard prefixes
+
+    result['summary'] = {
+        'direct_peers': direct_peer_count,
+        'total_routes': total_routes,
+        'relayed_routes': relay_count,
+    }
+
+    return jsonify(result)
+
+
 @app.route('/api/reticulum/status', methods=['GET'])
 def get_reticulum_status():
     """Get Reticulum network status from rnstatus and rnpath CLI tools"""
