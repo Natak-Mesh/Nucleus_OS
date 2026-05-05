@@ -312,12 +312,6 @@ def onReceive(packet, interface):
     """pypubsub callback: handle all received mesh packets."""
     stats["rx_total"] += 1
 
-    decoded = packet.get("decoded", {})
-    portnum = decoded.get("portnum", "")
-
-    if portnum != "ATAK_FORWARDER":
-        return
-
     sender = packet.get("from", "?")
     from_id = packet.get("fromId", "?")
 
@@ -325,8 +319,15 @@ def onReceive(packet, interface):
     if sender == my_node_num:
         return
 
-    # Track last-seen time for web dashboard (updates on every RX)
-    _node_last_seen[sender] = int(time.time())
+    # Track last-seen time for web dashboard (updates on ALL packet types)
+    if isinstance(sender, int):
+        _node_last_seen[sender] = int(time.time())
+
+    decoded = packet.get("decoded", {})
+    portnum = decoded.get("portnum", "")
+
+    if portnum != "ATAK_FORWARDER":
+        return
 
     payload = decoded.get("payload")
     if not payload:
@@ -410,7 +411,7 @@ def _extract_uid_callsign(cot_xml):
 # ═══════════════════════════════════════════════════════════════
 
 NODE_DUMP_PATH = "/tmp/meshtastic_nodes.json"
-NODE_DUMP_INTERVAL = 30  # seconds
+NODE_DUMP_INTERVAL = 15  # seconds
 NODE_MAX_AGE = 3600  # seconds — exclude nodes not heard in this long
 
 
@@ -425,15 +426,18 @@ def _dump_nodes():
 
     try:
         now = int(time.time())
+        # Snapshot the dict to avoid RuntimeError from concurrent modification
+        # (meshtastic library updates iface.nodes from its own thread)
+        nodes_snapshot = dict(iface.nodes)
         nodes_list = []
-        for node_id, node in iface.nodes.items():
+        for node_id, node in nodes_snapshot.items():
             # Skip our own node
             num = node.get("num")
             if num == my_node_num:
                 continue
 
             user = node.get("user", {})
-            last_heard = node.get("lastHeard", 0)
+            last_heard = node.get("lastHeard") or 0
             # Use our own tracking if more recent than firmware's lastHeard
             our_seen = _node_last_seen.get(num, 0)
             last_heard = max(last_heard, our_seen)
@@ -464,7 +468,7 @@ def _dump_nodes():
         os.replace(tmp_path, NODE_DUMP_PATH)
 
     except Exception as e:
-        logger.debug(f"Node dump error: {e}")
+        logger.warning(f"Node dump error: {e}")
 
 
 def onConnection(interface, topic=pub.AUTO_TOPIC):
@@ -606,22 +610,25 @@ def main():
     try:
         while True:
             time.sleep(10)
-            now = time.time()
+            try:
+                now = time.time()
 
-            # Dump node database for web dashboard
-            if now - last_node_dump >= NODE_DUMP_INTERVAL:
-                _dump_nodes()
-                last_node_dump = now
+                # Dump node database for web dashboard
+                if now - last_node_dump >= NODE_DUMP_INTERVAL:
+                    _dump_nodes()
+                    last_node_dump = now
 
-            # Periodic cleanup of expired RX UIDs
-            with _rx_lock:
-                expired = [u for u, t in _rx_recent_uids.items() if now - t > RX_UID_EXPIRY]
-                for u in expired:
-                    del _rx_recent_uids[u]
-            with _tx_lock:
-                expired = [u for u, t in _tx_last_sent.items() if now - t > TX_MIN_INTERVAL * 2]
-                for u in expired:
-                    del _tx_last_sent[u]
+                # Periodic cleanup of expired RX UIDs
+                with _rx_lock:
+                    expired = [u for u, t in _rx_recent_uids.items() if now - t > RX_UID_EXPIRY]
+                    for u in expired:
+                        del _rx_recent_uids[u]
+                with _tx_lock:
+                    expired = [u for u, t in _tx_last_sent.items() if now - t > TX_MIN_INTERVAL * 2]
+                    for u in expired:
+                        del _tx_last_sent[u]
+            except Exception as e:
+                logger.warning(f"Main loop error (continuing): {e}")
     except KeyboardInterrupt:
         _shutdown()
 
