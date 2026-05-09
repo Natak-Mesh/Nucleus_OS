@@ -159,7 +159,7 @@ local-port 33123
 
 # Wireless mesh interface (wlan1)
 # RTT tuning (RFC 9616): enables congestion-aware routing via latency measurement
-interface wlan1 type wireless link-quality true split-horizon false rxcost 256 hello-interval 4 update-interval 16 enable-timestamps true rtt-decay 125 rtt-min 10 rtt-max 150 max-rtt-penalty 150
+interface wlan1 type wireless link-quality true split-horizon false rxcost 256 hello-interval 4 update-interval 16 enable-timestamps true rtt-decay 125 rtt-min 10 rtt-max 150 max-rtt-penalty ${BABEL_MAX_RTT_PENALTY:-512}
 
 # Wired bridge interface (br-lan)
 interface br-lan type wired rxcost 96 hello-interval 4
