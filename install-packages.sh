@@ -30,8 +30,6 @@ sudo apt install -y \
   smcroute \
   nftables \
   tcpdump \
-  mosquitto \
-  mosquitto-clients \
   uhubctl \
   sshpass \
   btop \
@@ -122,17 +120,12 @@ echo ""
 echo "2. First-run configuration required:"
 echo "   - Start rns/rnsd at least once to generate Reticulum config"
 echo ""
-echo "3. Mosquitto MQTT broker is installed but NOT enabled."
-echo "   - Enable: sudo systemctl enable --now mosquitto"
-echo "   - Configure bridging for federation in /etc/mosquitto/conf.d/"
-echo "   - Test with: mosquitto_sub -t 'test/#' and mosquitto_pub -t 'test/hello' -m 'hi'"
-echo ""
-echo "4. Yggdrasil overlay network is installed but NOT enabled."
+echo "3. Yggdrasil overlay network is installed but NOT enabled."
 echo "   - Enable: sudo systemctl enable --now yggdrasil"
 echo "   - Configure peers in /etc/yggdrasil/yggdrasil.conf"
 echo "   - Check status: yggdrasilctl getSelf"
 echo ""
-echo "5. MANUAL INSTALLATION REQUIRED:"
+echo "4. MANUAL INSTALLATION REQUIRED:"
 echo ""
 echo "   TAKserver (arm64):"
 echo "   - Download from https://tak.gov"
@@ -142,7 +135,7 @@ echo "   MediaMTX (arm64):"
 echo "   - Download: wget https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_linux_arm64.tar.gz"
 echo "   - Extract: tar -xvzf mediamtx_linux_arm64.tar.gz"
 echo ""
-echo "6. Reload your shell or run: source ~/.bashrc"
+echo "5. Reload your shell or run: source ~/.bashrc"
 echo ""
 echo "Next step: Run ./deploy.sh to deploy Nucleus configuration files"
 echo ""
