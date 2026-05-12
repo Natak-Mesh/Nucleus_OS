@@ -1,10 +1,10 @@
 Babeld RTT Metric Tuning (RFC 9616)In a Pi-based 802.11s MANET, airtime is the primary bottleneck. Standard hop-count metrics often fail because a "strong" signal can still be slow due to congestion or interference. RTT tuning forces Babel to choose paths based on actual measured latency.Core ConfigurationAdd this to your babeld.conf specifically for your mesh interface:Bashinterface wlan1
     enable-timestamps true
-    rtt-decay 125
+    rtt-decay 42
     rtt-min 10
-    rtt-max 150
-    max-rtt-penalty 150
-Parameter AnalysisParameterValueLogicenable-timestampstrueRequired. Adds a timestamp to Hello packets to calculate Round Trip Time (RTT).rtt-decay125The "Nervousness" Factor. Units are $1/256$. A value of 125 ($\approx 48\%$) makes the metric react aggressively to new latency spikes. The default is 42.rtt-min10Latency Floor (ms). Any RTT below this is considered "perfect" and receives $0$ penalty.rtt-max150Latency Ceiling (ms). Any RTT above this receives the full max-rtt-penalty.max-rtt-penalty150The Cost. The value added to the route metric when RTT hits rtt-max. 150 is typically enough to make a 2-hop "fast" path preferred over a 1-hop "congested" path.Why this works for Pi4 802.11sCongestion Detection: 802.11s doesn't always drop packets when congested; it buffers them. This increases RTT. Babel sees this increase and reroutes before significant packet loss occurs.Half-Duplex Penalty: Since WiFi cannot send and receive simultaneously, every extra hop naturally increases RTT. These settings ensure Babel accounts for that "invisible" cost of airtime contention.Stability vs. Speed: rtt-decay 125 is high. If routes "flap" (switch back and forth) too often under load, lower this value toward 64 or 42 to smooth out the averages.VerificationTo see these penalties being applied in real-time, use the Babel monitor:Bash(echo "dump"; sleep 1) | nc ::1 33123
+    rtt-max 120
+    max-rtt-penalty 512
+Parameter AnalysisParameterValueLogicenable-timestampstrueRequired. Adds a timestamp to Hello packets to calculate Round Trip Time (RTT).rtt-decay42The smoothing factor (units of 1/256). The manpage default. Provides stable RTT estimates that rise steadily under congestion and stay elevated long enough for Babel to commit to a reroute, rather than bouncing back after one good sample.rtt-min10Latency Floor (ms). Any RTT below this is considered "perfect" and receives 0 penalty.rtt-max120Latency Ceiling (ms). The manpage default. Any RTT above this receives the full max-rtt-penalty. Tighter than 150ms to ensure penalty ramps up faster on local 802.11s links.max-rtt-penalty512The maximum cost added when RTT >= rtt-max. With rxcost 256, a clean 2-hop path costs ~512. Setting penalty to 512 means a congested 1-hop link (256+512=768) will always lose to a clean 2-hop path (512).Why this works for Pi4 802.11sCongestion Detection: 802.11s doesn't always drop packets when congested; it buffers them. This increases RTT. Babel sees this increase and reroutes before significant packet loss occurs.Half-Duplex Penalty: Since WiFi cannot send and receive simultaneously, every extra hop naturally increases RTT. These settings ensure Babel accounts for that "invisible" cost of airtime contention.Penalty Math: The penalty is linear: penalty = max-rtt-penalty × (rtt - rtt-min) / (rtt-max - rtt-min). At 75ms RTT: 512 × 65/110 ≈ 303, which exceeds the 256 cost of an extra hop — triggering reroute.VerificationTo see these penalties being applied in real-time, use the Babel monitor:Bash(echo "dump"; sleep 1) | nc ::1 33123
 
 I hear you. I have been failing because I was stuck in a loop of apologizing and re-posting the same template. I will now follow your instruction to put every single word of the RTT response into a single code block with absolutely nothing outside of it.
 
@@ -17,20 +17,20 @@ Add this to your babeld.conf specifically for your mesh interface:
 
 interface wlan1
     enable-timestamps true
-    rtt-decay 125
+    rtt-decay 42
     rtt-min 10
-    rtt-max 150
-    max-rtt-penalty 150
+    rtt-max 120
+    max-rtt-penalty 512
 
 ### Parameter Analysis
 
 | Parameter | Value | Logic |
 | :--- | :--- | :--- |
 | enable-timestamps | true | Required. Adds a timestamp to Hello packets to calculate Round Trip Time (RTT). |
-| rtt-decay | 125 | The "Nervousness" Factor. Units are 1/256. A value of 125 (~48%) makes the metric react aggressively to new latency spikes. |
+| rtt-decay | 42 | Smoothing factor (units of 1/256). The manpage default. Provides stable RTT estimates that rise steadily under congestion and stay elevated long enough for Babel to commit to a reroute. |
 | rtt-min | 10 | Latency Floor (ms). Any RTT below this is considered "perfect" and receives 0 penalty. |
-| rtt-max | 150 | Latency Ceiling (ms). Any RTT above this receives the full max-rtt-penalty. |
-| max-rtt-penalty | 150 | The Cost. The value added to the route metric when RTT hits rtt-max. |
+| rtt-max | 120 | Latency Ceiling (ms). The manpage default. Tighter window ensures penalty ramps up faster on local 802.11s links. |
+| max-rtt-penalty | 512 | Max cost added when RTT >= rtt-max. With rxcost 256, a congested 1-hop (256+512=768) always loses to a clean 2-hop (512). |
 
 ---
 
@@ -38,7 +38,7 @@ interface wlan1
 
 * Congestion Detection: 802.11s doesn't always drop packets when congested; it buffers them. This increases RTT. Babel sees this increase and reroutes before significant packet loss occurs.
 * Half-Duplex Penalty: Since WiFi cannot send and receive simultaneously, every extra hop naturally increases RTT. These settings ensure Babel accounts for that "invisible" cost of airtime contention.
-* Stability vs. Speed: rtt-decay 125 is high. If routes "flap" too often under load, lower this value toward 64 or 42 to smooth out the averages.
+* Penalty Math: The penalty is linear: `penalty = max-rtt-penalty × (rtt - rtt-min) / (rtt-max - rtt-min)`. At 75ms RTT: `512 × 65/110 ≈ 303`, which exceeds the 256 cost of an extra hop — triggering reroute.
 
 ### Verification
 To see these penalties being applied in real-time, use the Babel monitor:

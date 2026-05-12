@@ -24,6 +24,7 @@ import sys
 import glob
 from collections import defaultdict
 import time
+import ipaddress
 import urllib.request as _urlreq
 import urllib.error as _urlerr
 
@@ -229,7 +230,11 @@ def probe_ipv6_neighbors(ipv6_addresses):
 
 
 def get_ipv4_neighbors():
-    """Get IPv4 neighbor cache on wlan1 interface - returns dict {mac: ipv4}"""
+    """Get IPv4 neighbor cache on wlan1 interface - returns dict {mac: ipv4}
+    
+    When a MAC has multiple IPv4 entries (e.g. mesh IP + WAN IP from a switch),
+    prefer the mesh subnet address (10.20.1.x) for display purposes.
+    """
     try:
         result = subprocess.run(['ip', 'neigh', 'show', 'dev', 'wlan1'],
                               capture_output=True, text=True)
@@ -243,7 +248,12 @@ def get_ipv4_neighbors():
                 addr, mac = match.groups()
                 # Skip IPv6 addresses (they contain colons)
                 if ':' not in addr:
-                    neighbors[mac.lower()] = addr
+                    mac_lower = mac.lower()
+                    existing = neighbors.get(mac_lower)
+                    # Prefer mesh subnet (10.20.1.x) over any other IP for same MAC
+                    if existing and existing.startswith('10.20.1.'):
+                        continue  # keep the mesh IP we already have
+                    neighbors[mac_lower] = addr
         return neighbors
     except Exception as e:
         print(f"Error getting IPv4 neighbors: {e}")
@@ -311,22 +321,11 @@ def get_wifi_station_stats():
                 if match:
                     current_stats['expected_throughput'] = float(match.group(1))
             
-            # Parse tx packets for retry rate calculation
-            elif 'tx packets:' in line and current_mac:
-                match = re.search(r'tx packets:\s+(\d+)', line)
+            # Parse mesh airtime link metric (kernel-computed, real-time)
+            elif 'mesh airtime link metric:' in line and current_mac:
+                match = re.search(r'mesh airtime link metric:\s+(\d+)', line)
                 if match:
-                    current_stats['tx_packets'] = int(match.group(1))
-            
-            # Parse tx retries/failed for link quality
-            elif 'tx retries:' in line and current_mac:
-                match = re.search(r'tx retries:\s+(\d+)', line)
-                if match:
-                    current_stats['tx_retries'] = int(match.group(1))
-            
-            elif 'tx failed:' in line and current_mac:
-                match = re.search(r'tx failed:\s+(\d+)', line)
-                if match:
-                    current_stats['tx_failed'] = int(match.group(1))
+                    current_stats['airtime_metric'] = int(match.group(1))
         
         # Don't forget the last station
         if current_mac and current_stats:
@@ -417,78 +416,136 @@ def filter_routes(routes):
     return filtered
 
 
+def mac_from_eui64(ipv6_addr):
+    """Derive MAC address from an IPv6 link-local EUI-64 address.
+
+    Example: fe80::2c0:caff:feb7:afbe → 00:c0:ca:b7:af:be
+
+    EUI-64 embeds the MAC with ff:fe inserted in the middle and bit 7
+    of the first octet flipped.  Returns None if not a valid EUI-64.
+    """
+    try:
+        addr = ipaddress.IPv6Address(ipv6_addr)
+        iid = addr.packed[8:]  # interface identifier (last 8 bytes)
+        # EUI-64 marker: bytes 3-4 must be ff:fe
+        if iid[3] != 0xff or iid[4] != 0xfe:
+            return None
+        mac = bytearray(6)
+        mac[0] = iid[0] ^ 0x02  # flip universal/local bit
+        mac[1] = iid[1]
+        mac[2] = iid[2]
+        mac[3] = iid[5]
+        mac[4] = iid[6]
+        mac[5] = iid[7]
+        return ':'.join(f'{b:02x}' for b in mac)
+    except Exception:
+        return None
+
+
+def _get_kernel_babel_routes():
+    """Parse kernel routing table for babel routes grouped by next-hop IPv4.
+
+    Returns: {via_ipv4: [{'prefix': '10.20.23.0/24'}, ...]}
+    """
+    try:
+        result = subprocess.run(['ip', 'route', 'show', 'proto', 'babel', 'dev', 'wlan1'],
+                              capture_output=True, text=True)
+        routes = {}
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            via_match = re.search(r'via\s+(\S+)', line)
+            prefix_match = re.match(r'(\S+)', line)
+            if via_match and prefix_match:
+                via_ip = via_match.group(1)
+                prefix = prefix_match.group(1)
+                routes.setdefault(via_ip, []).append({'prefix': prefix})
+        return routes
+    except Exception as e:
+        print(f"Error getting kernel babel routes: {e}")
+        return {}
+
+
 def get_mesh_nodes():
-    """Get current mesh node status"""
-    # Query babeld
-    dump_data = query_babeld()
-    print(f"DEBUG: Babeld dump data length: {len(dump_data)} bytes")
-    
-    babel_neighbors = parse_babeld_dump(dump_data)
-    print(f"DEBUG: Found {len(babel_neighbors)} babel neighbors: {babel_neighbors}")
-    
-    babel_routes = parse_babeld_routes(dump_data)
-    print(f"DEBUG: Found {len(babel_routes)} babel routes: {babel_routes}")
-    
-    # Probe IPv6 neighbors from Babel to populate IPv6 neighbor cache
-    if babel_neighbors:
-        ipv6_list = [n['ipv6'] for n in babel_neighbors]
-        print(f"DEBUG: Probing IPv6 neighbors: {ipv6_list}")
-        probe_ipv6_neighbors(ipv6_list)
-        time.sleep(0.5)  # Allow neighbor cache to populate
-    
-    # Probe Babel next-hops to populate IPv4 neighbor cache
-    nexthops = get_babel_nexthops()
-    if nexthops:
-        print(f"DEBUG: Probing IPv4 nexthops: {nexthops}")
-        probe_nexthops(nexthops)
-        time.sleep(0.5)  # Allow neighbor cache to populate
-    
-    # Get all data sources
-    ipv6_neighbors = get_ipv6_neighbors()  # {ipv6: mac}
-    ipv4_neighbors = get_ipv4_neighbors()  # {mac: ipv4}
-    wifi_stats = get_wifi_station_stats()  # {mac: stats}
-    
-    print(f"DEBUG: IPv6 neighbors: {ipv6_neighbors}")
-    print(f"DEBUG: IPv4 neighbors: {ipv4_neighbors}")
-    print(f"DEBUG: WiFi stats: {wifi_stats}")
-    
-    # Group routes by their next-hop IPv6 address
-    routes_by_nexthop = {}
-    for route in babel_routes:
-        nexthop = route['via']
-        if nexthop not in routes_by_nexthop:
-            routes_by_nexthop[nexthop] = []
-        routes_by_nexthop[nexthop].append({
-            'prefix': route['prefix'],
-            'metric': route['metric'],
-            'installed': route.get('installed', False)
-        })
-    
-    # Correlate data using MAC address as the key
+    """Get current mesh node status.
+
+    Uses 'ip route show proto babel' as the source of truth for node discovery.
+    Babel dump (cost/reach) and WiFi stats (signal) are best-effort enrichment.
+    A node is NEVER dropped from the list because an enrichment lookup failed.
+
+    Data pipeline:
+      1. ip route show proto babel dev wlan1  → unique via IPs = node list  (reliable)
+      2. babeld dump on port 33123            → cost/reach per neighbor     (best-effort)
+      3. iw dev wlan1 station dump            → signal/bitrate per peer    (best-effort)
+
+    Babel cost enrichment matches kernel routes to babel routes by shared prefix
+    (no MAC/ARP/IPv6 correlation needed).  WiFi signal enrichment uses ARP
+    (best-effort).  Neither can cause a node to vanish from the list.
+    """
     current_time = datetime.now()
+
+    # ── Step 1: Node discovery from kernel routing table (reliable) ────────
+    # ip route show proto babel dev wlan1 → unique via IPv4 addresses
+    nexthop_ips = get_babel_nexthops()
+    kernel_routes = _get_kernel_babel_routes()  # {via_ipv4: [{prefix}]}
+
+    # Probe nexthops to keep ARP cache warm for enrichment lookups
+    if nexthop_ips:
+        probe_nexthops(nexthop_ips)
+        time.sleep(0.3)
+
+    # ── Step 2: Babel enrichment — cost & reach (best-effort) ──────────────
+    dump_data = query_babeld()
+    babel_neighbors = parse_babeld_dump(dump_data)
+    babel_routes = parse_babeld_routes(dump_data)
+
+    # Index babel routes by prefix for metric lookup
+    babel_route_metrics = {}
+    for r in babel_routes:
+        p = r['prefix']
+        # Prefer the installed route when multiple exist for same prefix
+        if p not in babel_route_metrics or r.get('installed'):
+            babel_route_metrics[p] = r
+
+    # Map babel neighbor data → IPv4 via shared route prefixes (no MAC/ARP needed)
+    # Kernel route: prefix X via 10.20.1.23
+    # Babel route:  prefix X via fe80::xxx (installed)
+    # Babel neighbor: address fe80::xxx cost 256 reach ffff
+    # Match on prefix → 10.20.1.23 has cost 256
+    babel_nb_by_ipv6 = {bn['ipv6']: bn for bn in babel_neighbors}
+    babel_installed_routes = {}  # {prefix: babel_route}
+    for r in babel_routes:
+        if r.get('installed'):
+            babel_installed_routes[r['prefix']] = r
+
+    ipv4_to_babel = {}  # {ipv4: {cost, reach, ipv6}}
+    for ipv4, kroutes in kernel_routes.items():
+        if ipv4 in ipv4_to_babel:
+            continue
+        for kr in kroutes:
+            babel_r = babel_installed_routes.get(kr['prefix'])
+            if babel_r:
+                babel_nb = babel_nb_by_ipv6.get(babel_r['via'])
+                if babel_nb:
+                    ipv4_to_babel[ipv4] = babel_nb
+                    break
+
+    # ── Step 3: WiFi enrichment — signal & bitrate (best-effort) ──────────
+    ipv4_neighbors = get_ipv4_neighbors()  # {mac_lower: ipv4}
+    wifi_stats = get_wifi_station_stats()  # {mac_lower: stats}
+    ipv4_to_wifi = {}
+    for mac, stats in wifi_stats.items():
+        ipv4 = ipv4_neighbors.get(mac.lower())
+        if ipv4:
+            ipv4_to_wifi[ipv4] = stats
+
+    # ── Step 4: Build node list ────────────────────────────────────────────
     active_nodes = set()
     nodes = []
-    
-    for babel_neighbor in babel_neighbors:
-        babel_ipv6 = babel_neighbor['ipv6']
-        
-        # Get MAC address from IPv6 neighbor cache
-        mac = ipv6_neighbors.get(babel_ipv6)
-        if not mac:
-            print(f"DEBUG: No MAC found for IPv6 {babel_ipv6}")
-            continue
-        
-        mac = mac.lower()
-        
-        # Get IPv4 address from IPv4 neighbor cache
-        ipv4 = ipv4_neighbors.get(mac)
-        print(f"DEBUG: MAC {mac} → IPv4 {ipv4}, babel_ipv6 was {babel_ipv6}")
-        if not ipv4:
-            print(f"DEBUG: No IPv4 found for MAC {mac}")
-            continue
-        
+
+    for ipv4 in nexthop_ips:
         active_nodes.add(ipv4)
-        
+
         # Track connection time
         if ipv4 not in node_history:
             node_history[ipv4] = {
@@ -499,110 +556,119 @@ def get_mesh_nodes():
         else:
             node_history[ipv4]['last_seen'] = current_time
             node_history[ipv4]['status'] = 'connected'
-        
-        # Calculate duration
+
         duration = current_time - node_history[ipv4]['first_seen']
         duration_str = format_duration(duration)
-        
-        # Classify cost quality
-        cost_val = int(babel_neighbor['cost'])
-        if cost_val < 400:
-            cost_quality = 'good'
-        elif cost_val < 700:
-            cost_quality = 'fair'
-        else:
-            cost_quality = 'poor'
-        
-        # Get routes via this neighbor and apply filtering
-        neighbor_routes = routes_by_nexthop.get(babel_ipv6, [])
-        neighbor_routes = filter_routes(neighbor_routes)
-        
-        # Get WiFi stats for this MAC
-        wifi = wifi_stats.get(mac, {})
-        
-        # Classify signal strength
-        signal_quality = None
-        if 'signal_avg' in wifi:
-            sig = wifi['signal_avg']
-            if sig >= -50:
-                signal_quality = 'excellent'
-            elif sig >= -60:
-                signal_quality = 'good'
-            elif sig >= -70:
-                signal_quality = 'fair'
+
+        # Babel cost/reach (best-effort — show N/A if enrichment failed)
+        babel_info = ipv4_to_babel.get(ipv4)
+        if babel_info:
+            cost = babel_info['cost']
+            try:
+                cost_val = int(cost)
+            except (ValueError, TypeError):
+                cost_val = 9999
+            if cost_val < 400:
+                cost_quality = 'good'
+            elif cost_val < 700:
+                cost_quality = 'fair'
             else:
-                signal_quality = 'poor'
-        
+                cost_quality = 'poor'
+        else:
+            cost = 'N/A'
+            cost_quality = 'unknown'
+
+        # Routes via this node (from kernel table, enriched with babel metrics)
+        node_routes = []
+        for kr in kernel_routes.get(ipv4, []):
+            prefix = kr['prefix']
+            babel_r = babel_route_metrics.get(prefix)
+            node_routes.append({
+                'prefix': prefix,
+                'metric': babel_r['metric'] if babel_r else 'N/A',
+                'installed': True  # present in kernel routing table = installed
+            })
+        node_routes = filter_routes(node_routes)
+
         node = {
             'ipv4': ipv4,
-            'cost': babel_neighbor['cost'],
+            'cost': cost,
             'cost_quality': cost_quality,
             'status': 'connected',
             'duration': duration_str,
             'duration_label': 'Connected for',
-            'routes': neighbor_routes
+            'routes': node_routes,
         }
-        
-        # Add WiFi metrics if available
+
+        # WiFi enrichment (best-effort — never drop node if missing)
+        wifi = ipv4_to_wifi.get(ipv4, {})
         if wifi:
-            # Calculate retry rate and link quality
-            tx_packets = wifi.get('tx_packets', 0)
-            tx_retries = wifi.get('tx_retries', 0)
-            retry_rate = None
+            # Link quality from kernel mesh airtime metric (real-time, lower=better)
+            airtime = wifi.get('airtime_metric')
             link_quality = None
             link_quality_status = None
-            
-            if tx_packets > 0:
-                retry_rate = (tx_retries / tx_packets) * 100
-                link_quality = 100 - retry_rate  # Inverse of retry rate
-                
-                # Classify link quality
-                if retry_rate < 10:
+            if airtime is not None:
+                link_quality = airtime
+                if airtime < 300:
                     link_quality_status = 'excellent'
-                elif retry_rate < 30:
+                elif airtime < 500:
                     link_quality_status = 'good'
-                elif retry_rate < 50:
+                elif airtime < 700:
                     link_quality_status = 'fair'
                 else:
                     link_quality_status = 'poor'
-            
+
+            # Signal — filter bogus values (>= -10 dBm is physically impossible)
+            signal_quality = None
+            sig = wifi.get('signal_avg')
+            raw_signal = wifi.get('signal')
+            if sig is not None and sig >= -10:
+                sig = None          # bogus driver value
+            if raw_signal is not None and raw_signal >= -10:
+                raw_signal = None   # bogus driver value
+            if sig is not None:
+                if sig >= -50:
+                    signal_quality = 'excellent'
+                elif sig >= -60:
+                    signal_quality = 'good'
+                elif sig >= -70:
+                    signal_quality = 'fair'
+                else:
+                    signal_quality = 'poor'
+
             node['wifi'] = {
-                'signal': wifi.get('signal'),
-                'signal_avg': wifi.get('signal_avg'),
+                'signal': raw_signal,
+                'signal_avg': sig,
                 'signal_quality': signal_quality,
                 'tx_bitrate': wifi.get('tx_bitrate'),
                 'tx_mcs': wifi.get('tx_mcs'),
                 'rx_bitrate': wifi.get('rx_bitrate'),
                 'rx_mcs': wifi.get('rx_mcs'),
                 'expected_throughput': wifi.get('expected_throughput'),
-                'tx_retries': wifi.get('tx_retries'),
-                'tx_failed': wifi.get('tx_failed'),
-                'tx_packets': tx_packets,
-                'retry_rate': retry_rate,
+                'airtime_metric': airtime,
                 'link_quality': link_quality,
-                'link_quality_status': link_quality_status
+                'link_quality_status': link_quality_status,
             }
-        
+
         nodes.append(node)
-    
-    # Check for recently disconnected nodes
+
+    # ── Step 5: Recently disconnected nodes ────────────────────────────────
     for ipv4, info in list(node_history.items()):
         if ipv4 not in active_nodes:
-            time_since_disconnect = current_time - info['last_seen']
-            if time_since_disconnect.total_seconds() <= DISCONNECTED_DISPLAY_TIME:
-                duration_str = format_duration(time_since_disconnect)
+            time_since = current_time - info['last_seen']
+            if time_since.total_seconds() <= DISCONNECTED_DISPLAY_TIME:
                 nodes.append({
                     'ipv4': ipv4,
                     'cost': 'N/A',
+                    'cost_quality': 'unknown',
                     'status': 'disconnected',
-                    'duration': duration_str,
+                    'duration': format_duration(time_since),
                     'duration_label': 'Disconnected',
                     'routes': []
                 })
             else:
-                # Remove from history if too old
                 del node_history[ipv4]
-    
+
     return nodes
 
 
@@ -1010,7 +1076,12 @@ def api_hoptest():
             if m:
                 addr, mac_addr = m.groups()
                 if ':' not in addr:  # skip IPv6
-                    mac_to_ip[mac_addr.lower()] = addr
+                    mac_lower = mac_addr.lower()
+                    existing = mac_to_ip.get(mac_lower)
+                    # Prefer mesh subnet (10.20.1.x) over other IPs for same MAC
+                    if existing and existing.startswith('10.20.1.'):
+                        continue
+                    mac_to_ip[mac_lower] = addr
 
         r = subprocess.run(['iw', 'dev', 'wlan1', 'station', 'dump'],
                            capture_output=True, text=True, timeout=5)

@@ -218,6 +218,11 @@ main {
     color: var(--color-disconnected);
 }
 
+.value.cost-unknown {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
 /* WiFi Performance Section */
 .node-wifi {
     margin-top: 12px;
