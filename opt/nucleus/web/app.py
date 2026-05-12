@@ -1104,7 +1104,7 @@ def api_hoptest():
         if current_mac:
             ip = mac_to_ip.get(current_mac.lower(), 'unknown')
             peers.append({'ip': ip, 'signal_avg': signal_avg})
-        result['wifi_peers'] = peers
+        result['wifi_peers'] = [p for p in peers if p['ip'] != 'unknown']
     except Exception as e:
         result['wifi_peers'] = []
 
