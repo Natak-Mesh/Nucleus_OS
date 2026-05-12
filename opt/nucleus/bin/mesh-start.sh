@@ -77,6 +77,11 @@ wpa_supplicant -B -i wlan1 -c /etc/wpa_supplicant/wpa_supplicant-wlan1-encrypt.c
 # Wait for encryption to be established
 sleep 15
 
+# Disable HWMP L2 forwarding — babeld handles all routing at L3
+# wpa_supplicant mesh_fwding=0 is set in the config but some drivers ignore it,
+# so we force it here after the mesh is joined.
+iw dev wlan1 set mesh_param mesh_fwding=0
+
 # Apply IP address manually (systemd-networkd would reset mesh mode)
 ip addr add $MESH_IP/24 dev wlan1
 ip -6 addr add $MESH_IPV6_LL/64 dev wlan1
