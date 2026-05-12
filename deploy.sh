@@ -9,6 +9,14 @@
 
 set -e
 
+# Parse flags
+FORCE_CONFIG=false
+for arg in "$@"; do
+    case "$arg" in
+        --force-config) FORCE_CONFIG=true ;;
+    esac
+done
+
 SOURCE_DIR="$(pwd)"
 
 echo "Deploying from $SOURCE_DIR..."
@@ -18,8 +26,12 @@ sudo rfkill unblock bluetooth
 
 # Copy etc files (only static configs - generated ones are created by config_generation.sh)
 sudo mkdir -p /etc/nucleus
-sudo cp "$SOURCE_DIR/etc/nucleus/mesh.conf" /etc/nucleus/
-sudo chown natak:natak /etc/nucleus/mesh.conf
+if [ -f /etc/nucleus/mesh.conf ] && [ "$FORCE_CONFIG" != "true" ]; then
+    echo "mesh.conf already exists — skipping (use --force-config to overwrite)"
+else
+    sudo cp "$SOURCE_DIR/etc/nucleus/mesh.conf" /etc/nucleus/
+    sudo chown natak:natak /etc/nucleus/mesh.conf
+fi
 
 sudo mkdir -p /etc/systemd/network
 sudo cp "$SOURCE_DIR/etc/systemd/network/20-brlan.netdev" /etc/systemd/network/
