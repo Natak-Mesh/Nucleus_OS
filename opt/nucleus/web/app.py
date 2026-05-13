@@ -866,27 +866,43 @@ def api_dashboard():
     meshtastic_nodes = get_meshtastic_nodes()
     radio_detected = bool(glob.glob('/dev/ttyACM*'))
 
-    # Check bridge config flag
+    # Check bridge config flag and OTS enabled flag
     bridge_enabled = False
+    ots_enabled = True  # default to showing the button
     try:
         with open('/etc/nucleus/mesh.conf', 'r') as f:
             for line in f:
-                if line.strip().startswith('COT_BRIDGE_ENABLED='):
-                    val = line.strip().split('=', 1)[1].strip('"').lower()
+                stripped = line.strip()
+                if stripped.startswith('COT_BRIDGE_ENABLED='):
+                    val = stripped.split('=', 1)[1].strip('"').lower()
                     bridge_enabled = val in ('true', '1', 'yes')
-                    break
+                elif stripped.startswith('OTS_ENABLED='):
+                    val = stripped.split('=', 1)[1].strip('"').lower()
+                    ots_enabled = val in ('true', '1', 'yes')
     except Exception:
         pass
 
     # Get channel utilization
     channel_util = get_channel_utilization()
 
+    # Get version from Nucleus_OS git repo
+    version = 'unknown'
+    for vpath in ['/home/natak/Nucleus_OS/VERSION', os.path.join(os.path.dirname(__file__), '..', '..', '..', 'VERSION')]:
+        try:
+            with open(vpath, 'r') as f:
+                version = f.read().strip()
+            break
+        except Exception:
+            continue
+
     return jsonify({
+        'version': version,
         'mesh_ip': mesh_ip,
         'wlan1': wlan1,
         'ap': ap,
         'neighbors': neighbors,
         'channel_utilization': channel_util,
+        'ots_enabled': ots_enabled,
         'meshtastic': {
             'radio_detected': radio_detected,
             'bridge_enabled': bridge_enabled,

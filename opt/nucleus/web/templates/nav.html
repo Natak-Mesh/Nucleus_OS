@@ -217,7 +217,7 @@
                     <a href="/opendht" class="pill">OpenDHT</a>
                     <a href="/meshtastic" class="pill">Meshtastic</a>
                     <a href="/reticulum" class="pill">Reticulum</a>
-                    <a href="/opentakserver" class="pill">OpenTAKServer</a>
+                    <a href="/opentakserver" class="pill" id="pill-ots">OpenTAKServer</a>
                     <a href="/hoptest" class="pill">Hop Test</a>
                 </div>
                 <div style="text-align: center;">
@@ -344,9 +344,14 @@
 
                 mc.innerHTML = mh;
 
-                // Timestamp
+                // Show/hide OpenTAKServer pill based on OTS_ENABLED
+                const otsPill = document.getElementById('pill-ots');
+                if (otsPill) otsPill.style.display = d.ots_enabled ? '' : 'none';
+
+                // Timestamp + version
                 const t = new Date(d.timestamp);
-                document.getElementById('last-update').textContent = 'Updated ' + t.toLocaleTimeString();
+                const ver = d.version ? d.version + ' · ' : '';
+                document.getElementById('last-update').textContent = ver + 'Updated ' + t.toLocaleTimeString();
 
             } catch (e) {
                 console.error('Dashboard fetch error:', e);
