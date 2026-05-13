@@ -220,9 +220,6 @@
                     <a href="/opentakserver" class="pill" id="pill-ots">OpenTAKServer</a>
                     <a href="/hoptest" class="pill">Hop Test</a>
                 </div>
-                <div style="text-align: center;">
-                    <button class="btn-shutdown" id="btn-shutdown" onclick="shutdownNode()">Shutdown Node</button>
-                </div>
             </div>
 
             <!-- Shutdown (always visible) -->
@@ -360,7 +357,7 @@
 
         async function shutdownNode() {
             if (!confirm('Shut down this node?\nYou will need to unplug and replug power to restart.')) return;
-            var btn = document.getElementById('btn-shutdown');
+            var btn = document.getElementById('btn-shutdown2');
             btn.disabled = true;
             btn.textContent = 'Shutting down...';
             try {
