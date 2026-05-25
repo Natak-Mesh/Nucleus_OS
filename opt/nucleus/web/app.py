@@ -1012,9 +1012,35 @@ def remote():
     return render_template('remote.html')
 
 
+def get_interface_ips(interfaces=('eth0', 'br-lan', 'tailscale0')):
+    """Get IPv4 addresses for a list of network interfaces.
+
+    Returns: {iface: [ip1, ip2, ...]} — empty list if interface is down or missing.
+    """
+    result = {}
+    for iface in interfaces:
+        try:
+            r = subprocess.run(
+                ['ip', '-4', 'addr', 'show', 'dev', iface],
+                capture_output=True, text=True, timeout=5
+            )
+            addrs = re.findall(r'inet\s+(\d+\.\d+\.\d+\.\d+)', r.stdout)
+            result[iface] = addrs
+        except Exception:
+            result[iface] = []
+    return result
+
+
+@app.route('/api/network/addresses')
+def api_network_addresses():
+    """Return IPv4 addresses for key interfaces (eth0, br-lan, tailscale0)."""
+    return jsonify(get_interface_ips())
+
+
+@app.route('/network')
 @app.route('/ethernet')
 def ethernet():
-    """Ethernet mode control page"""
+    """Network / Ethernet mode control page"""
     return render_template('ethernet.html')
 
 

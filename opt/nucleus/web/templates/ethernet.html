@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Natak Mesh - Ethernet Mode</title>
+    <title>Natak Mesh - Network</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
@@ -16,10 +16,19 @@
 
     <main>
         <div class="dashboard">
-            <h1>Ethernet Port Mode</h1>
-            
+            <h1>Network</h1>
+
+            <!-- Node Addresses -->
             <div class="status-section">
-                <h2>Current Status</h2>
+                <h2>Node Addresses</h2>
+                <div class="addr-table" id="addr-container">
+                    <span class="loading">Loading...</span>
+                </div>
+            </div>
+
+            <!-- Ethernet Port Mode -->
+            <div class="status-section">
+                <h2>Ethernet Port Mode</h2>
                 <div id="status-display" class="status-box">
                     <span class="loading">Loading...</span>
                 </div>
@@ -56,6 +65,48 @@
             padding: 20px;
             background: rgba(255, 255, 255, 0.05);
             border-radius: 8px;
+        }
+
+        /* ── Node Addresses table ── */
+        .addr-table {
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 5px;
+            font-family: monospace;
+        }
+
+        .addr-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 8px 4px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .addr-row:last-child {
+            border-bottom: none;
+        }
+
+        .addr-iface {
+            font-weight: bold;
+            color: #a0a0a0;
+            min-width: 110px;
+        }
+
+        .addr-ips {
+            text-align: right;
+            color: #e0e0e0;
+        }
+
+        .addr-ip {
+            display: block;
+            font-size: 1.05em;
+        }
+
+        .addr-none {
+            color: #666;
+            font-style: italic;
+            font-size: 0.9em;
         }
 
         .status-box {
@@ -149,6 +200,42 @@
     <script>
         let currentMode = null;
 
+        const IFACE_LABELS = {
+            'eth0': 'eth0',
+            'br-lan': 'br-lan',
+            'tailscale0': 'tailscale0'
+        };
+
+        async function loadAddresses() {
+            try {
+                const r = await fetch('/api/network/addresses');
+                const data = await r.json();
+                const container = document.getElementById('addr-container');
+                let html = '';
+
+                for (const iface of ['eth0', 'br-lan', 'tailscale0']) {
+                    const ips = data[iface] || [];
+                    html += '<div class="addr-row">';
+                    html += '<span class="addr-iface">' + (IFACE_LABELS[iface] || iface) + '</span>';
+                    html += '<span class="addr-ips">';
+                    if (ips.length > 0) {
+                        ips.forEach(function(ip) {
+                            html += '<span class="addr-ip">' + ip + '</span>';
+                        });
+                    } else {
+                        html += '<span class="addr-none">—</span>';
+                    }
+                    html += '</span></div>';
+                }
+
+                container.innerHTML = html;
+            } catch (e) {
+                console.error('Error loading addresses:', e);
+                document.getElementById('addr-container').innerHTML =
+                    '<span class="error">Error loading addresses</span>';
+            }
+        }
+
         async function loadStatus() {
             try {
                 const response = await fetch('/api/eth0-mode/status');
@@ -214,6 +301,7 @@
                     // Reload status after a short delay
                     setTimeout(() => {
                         loadStatus();
+                        loadAddresses();
                         messageDiv.textContent = '';
                         messageDiv.className = 'message';
                     }, 3000);
@@ -232,10 +320,12 @@
             }
         }
 
-        // Load initial status
+        // Load initial data
+        loadAddresses();
         loadStatus();
 
-        // Refresh status every 30 seconds
+        // Refresh every 30 seconds
+        setInterval(loadAddresses, 30000);
         setInterval(loadStatus, 30000);
     </script>
 </body>

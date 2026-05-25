@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nucleus Node — Private Communications</title>
+<style>
+:root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --orange: #db6d28;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 0;
+}
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 24px;
+}
+h1 {
+    font-size: 2em;
+    margin-bottom: 8px;
+    color: var(--text);
+}
+h1 + p.subtitle {
+    color: var(--text-muted);
+    font-size: 1.05em;
+    margin-bottom: 32px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 24px;
+}
+h2 {
+    font-size: 1.5em;
+    margin-top: 48px;
+    margin-bottom: 16px;
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+}
+h3 {
+    font-size: 1.15em;
+    margin-top: 32px;
+    margin-bottom: 8px;
+    color: var(--accent);
+}
+p, li {
+    color: var(--text);
+    margin-bottom: 8px;
+}
+ul {
+    padding-left: 24px;
+    margin-bottom: 16px;
+}
+li { margin-bottom: 6px; }
+strong { color: var(--text); }
+code {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.9em;
+    font-family: 'SF Mono', 'Fira Code', 'Fira Mono', monospace;
+}
+pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    overflow-x: auto;
+    margin: 12px 0 20px 0;
+    font-size: 0.85em;
+    line-height: 1.5;
+}
+pre code {
+    background: none;
+    border: none;
+    padding: 0;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 24px 0;
+    font-size: 0.92em;
+}
+th, td {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    text-align: left;
+}
+th {
+    background: var(--surface);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+td { background: var(--bg); }
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: 600;
+}
+.badge-ready { background: #1a3a2a; color: var(--green); }
+.badge-installed { background: #2a2a1a; color: var(--yellow); }
+.badge-planned { background: #2a1a1a; color: var(--orange); }
+.diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    overflow-x: auto;
+    margin: 12px 0 20px 0;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.82em;
+    line-height: 1.4;
+    white-space: pre;
+    color: var(--text-muted);
+}
+.callout {
+    background: var(--surface);
+    border-left: 3px solid var(--accent);
+    padding: 16px 20px;
+    margin: 16px 0;
+    border-radius: 0 6px 6px 0;
+}
+.callout p { margin: 0; }
+.intro-line {
+    font-size: 1.05em;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-bottom: 24px;
+}
+.compare td:first-child { font-weight: 600; color: var(--text-muted); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+@media (max-width: 600px) {
+    .container { padding: 20px 16px; }
+    h1 { font-size: 1.5em; }
+    table { font-size: 0.82em; }
+    th, td { padding: 6px 8px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Nucleus Node — Private Communications</h1>
+<p class="subtitle">Beyond tactical mesh networking, the Nucleus is a layered, infrastructure-independent platform for secure and clandestine communication. Everything described here works <strong>in addition to</strong> the standard ATAK-focused mesh capabilities the node already provides.</p>
+
+<div class="callout">
+    <p>No cloud accounts. No call logs. No metadata collection. Multiple independent communication paths — if one is compromised or blocked, others continue to function. The operator controls all infrastructure.</p>
+</div>
+
+<!-- ============================================ -->
+<h2>Capabilities</h2>
+
+<table>
+<thead>
+<tr>
+    <th>Layer</th>
+    <th>Tool</th>
+    <th>Status</th>
+    <th>Needs Internet?</th>
+    <th>Key Feature</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+    <td>Voice &amp; Video</td>
+    <td>Jami + OpenDHT</td>
+    <td><span class="badge badge-ready">Ready</span></td>
+    <td>No</td>
+    <td>E2E encrypted calls, no servers, no accounts</td>
+</tr>
+<tr>
+    <td>Secure Messaging</td>
+    <td>Reticulum (Sideband/LXMF)</td>
+    <td><span class="badge badge-ready">Ready</span></td>
+    <td>No</td>
+    <td>Sender-anonymous, forward secrecy</td>
+</tr>
+<tr>
+    <td>Long-Range Text</td>
+    <td>Meshtastic LoRa</td>
+    <td><span class="badge badge-ready">Ready</span></td>
+    <td>No</td>
+    <td>Miles of range, AES-256, no carrier</td>
+</tr>
+<tr>
+    <td>Remote Link (managed)</td>
+    <td>Tailscale</td>
+    <td><span class="badge badge-ready">Ready</span></td>
+    <td>Yes</td>
+    <td>WireGuard VPN, easy setup</td>
+</tr>
+<tr>
+    <td>Remote Link (sovereign)</td>
+    <td>Yggdrasil</td>
+    <td><span class="badge badge-installed">Installed</span></td>
+    <td>Yes</td>
+    <td>Zero-dependency, DPI-resistant</td>
+</tr>
+<tr>
+    <td>Anonymous Uplink</td>
+    <td>Cellular + privacy SIM</td>
+    <td><span class="badge badge-ready">Ready</span></td>
+    <td>Yes (creates it)</td>
+    <td>Prepaid, crypto-purchasable SIMs</td>
+</tr>
+<tr>
+    <td>Local Network</td>
+    <td>802.11s Mesh</td>
+    <td><span class="badge badge-ready">Ready</span></td>
+    <td>No</td>
+    <td>Encrypted, self-healing, no AP</td>
+</tr>
+</tbody>
+</table>
+
+<!-- ============================================ -->
+<h3>Voice &amp; Video — Jami + OpenDHT</h3>
+<p>Encrypted voice and video calls between any devices on the mesh. No phone company, no SIP server, no cloud accounts.</p>
+<ul>
+    <li>OpenDHT runs on every node with network isolation — your DHT is invisible to the public internet</li>
+    <li>Peer discovery is entirely within your network — no external observer can see who's calling whom</li>
+    <li>Works fully offline (verified)</li>
+    <li>Supports 1:1 and group encrypted messaging alongside voice/video</li>
+    <li><strong>Works across Tailscale/Yggdrasil tunnels</strong> — remote nodes add each other's tunnel IPs to the bootstrap config and calls route transparently</li>
+</ul>
+
+<h3>Secure Messaging — Reticulum</h3>
+<p>Reticulum runs as a transport node on every Nucleus, bridging traffic across the mesh and providing a TCP listener for EUD apps.</p>
+<ul>
+    <li><strong>Sideband</strong> (Android/iOS/Desktop) — secure messenger. Install on phone, point at the node's IP. E2E encrypted messaging with forward secrecy, store-and-forward delivery, file transfer.</li>
+    <li><strong>LXMF</strong> — the underlying message protocol. Delivers messages even when the recipient is offline — messages propagate and deliver when the destination reappears.</li>
+    <li><strong>I2P interface</strong> — built into the stack. Nodes with internet access can peer over I2P for Tor-like transport anonymity.</li>
+</ul>
+<p>Packets don't reveal source addresses (initiator anonymity). Destinations are cryptographic hashes. Every link uses ephemeral keys. The protocol assumes the network is hostile.</p>
+
+<h3>Long-Range Text — Meshtastic LoRa</h3>
+<p>Encrypted text and GPS over LoRa radio. Multi-mile range through terrain that blocks WiFi. No infrastructure required.</p>
+<ul>
+    <li>AES-256 channel encryption — only nodes with the key can read traffic</li>
+    <li>Dual-transport: LoRa for range, WiFi UDP for speed between nearby nodes</li>
+    <li>No carrier records, no tower logs, no metadata trail</li>
+    <li>Web UI for messaging — no phone app required</li>
+</ul>
+
+<h3>Remote Linking — Tailscale vs. Yggdrasil</h3>
+<p>Both connect geographically separated nodes over the internet. Different tradeoffs.</p>
+
+<table class="compare">
+<thead>
+<tr><th></th><th>Tailscale</th><th>Yggdrasil</th></tr>
+</thead>
+<tbody>
+<tr><td>Central dependency</td><td>Tailscale coordination server</td><td><strong>None</strong></td></tr>
+<tr><td>Account required</td><td>Yes (Google/MS/etc)</td><td><strong>No</strong> — local keypair only</td></tr>
+<tr><td>NAT traversal</td><td>Excellent (DERP relays)</td><td>Good (TCP/TLS, no relay fallback)</td></tr>
+<tr><td>Traffic signature</td><td>WireGuard — detectable by DPI</td><td><strong>Looks like normal TLS</strong></td></tr>
+<tr><td>Setup</td><td>Login and done</td><td>Config file + one public peer</td></tr>
+<tr><td>Infrastructure</td><td>Tailscale's servers</td><td><strong>Your VPS</strong></td></tr>
+</tbody>
+</table>
+
+<p><strong>Tailscale</strong> is the practical choice when ease of setup matters. <strong>Yggdrasil</strong> is the privacy choice — no accounts, no identity linkage, traffic blends with HTTPS, and you control all infrastructure. Both carry Jami, Reticulum, and all other services transparently.</p>
+
+<h3>Anonymous Cellular Uplink</h3>
+<p>The onboard 4G modem provides WAN backhaul. Paired with a privacy SIM, it creates an uplink with minimal identity linkage.</p>
+
+<table>
+<thead>
+<tr><th>Provider</th><th>Payment</th><th>KYC Required</th><th>Coverage</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Silent Link</strong></td><td>Bitcoin, Lightning, Monero</td><td><strong>None</strong></td><td>Global eSIM + physical SIM</td><td>Purpose-built for privacy</td></tr>
+<tr><td><strong>Mint Mobile</strong></td><td>Cash at retail stores</td><td>Minimal</td><td>T-Mobile US</td><td>Activate with burner email</td></tr>
+<tr><td><strong>TOTTL</strong></td><td>Bitcoin, Monero</td><td>Minimal</td><td>EU focused</td><td>Privacy MVNO</td></tr>
+</tbody>
+</table>
+
+<p>Combined with Yggdrasil: <strong>anonymous SIM → encrypted TLS tunnel → private communication</strong> — no identity linkage at any point.</p>
+
+<!-- ============================================ -->
+<h2>Technical Reference</h2>
+
+<h3>Architecture: Local Mesh</h3>
+<div class="diagram">┌─────────────────────────────────────────────────────────┐
+│                    Nucleus Node                          │
+│                                                          │
+│  ┌──────────┐  ┌──────────┐  ┌────────┐  ┌───────────┐ │
+│  │ Jami/DHT │  │Reticulum │  │LoRa/   │  │ Tailscale │ │
+│  │ Voice/   │  │ LXMF/    │  │Mesh-   │  │ or        │ │
+│  │ Video    │  │ Sideband │  │tastic  │  │ Yggdrasil │ │
+│  └────┬─────┘  └────┬─────┘  └───┬────┘  └─────┬─────┘ │
+│       │              │            │              │        │
+│  ┌────┴──────────────┴────────────┴──────────────┴────┐  │
+│  │              802.11s Encrypted Mesh (wlan1)         │  │
+│  │              + br-lan (EUD access via wlan0/eth0)   │  │
+│  └────────────────────────────────────────────────────┘  │
+│       │                                      │           │
+│  ┌────┴─────┐                          ┌─────┴────────┐  │
+│  │ RAK4631  │                          │ SIM7600G-H   │  │
+│  │ LoRa     │                          │ 4G Cellular  │  │
+│  └──────────┘                          └──────────────┘  │
+└─────────────────────────────────────────────────────────┘</div>
+
+<p>EUDs connect to a node's AP or ethernet port. All services reachable on the node's local IP.</p>
+
+<h3>Architecture: Distributed</h3>
+<div class="diagram">┌──────────┐     Yggdrasil/Tailscale      ┌──────────┐
+│ Node A   │◄────── encrypted tunnel ─────►│ Node B   │
+│ (City 1) │                               │ (City 2) │
+└────┬─────┘                               └────┬─────┘
+     │                                          │
+     ▼                                          ▼
+┌──────────┐          ┌──────────┐         ┌──────────┐
+│ Local    │          │ Linode   │         │ Local    │
+│ Mesh     │          │ Anchor   │         │ Mesh     │
+│ Nodes    │          │ Peer     │         │ Nodes    │
+└──────────┘          └──────────┘         └──────────┘</div>
+
+<p>The Linode VPS serves as <strong>Reticulum transport node</strong> (already running) and <strong>Yggdrasil anchor peer</strong> (when implemented).</p>
+
+<h3>Jami Over Tunnels</h3>
+<p>Add remote tunnel IPs to the bootstrap config:</p>
+<pre><code># /etc/nucleus/mesh.conf
+# Include both local mesh IPs AND remote tunnel IPs
+OPENDHT_BOOTSTRAP_IPS="10.20.1.8,10.20.1.10,100.64.0.5,100.64.0.12"
+#                       ^^^local mesh^^^       ^^^tailscale IPs^^^</code></pre>
+<p>OpenDHT connects across both local and tunnel interfaces. Jami calls route over whichever path is available.</p>
+
+<h3>Reticulum Over Tunnels</h3>
+<p>Add a TCP client interface pointing at the remote node or Linode:</p>
+<pre><code># ~/.reticulum/config — add alongside existing interfaces
+
+[[Remote Peer via Tailscale]]
+type = TCPClientInterface
+enabled = yes
+target_host = 100.64.0.5       # Tailscale IP of remote node
+target_port = 4242
+
+# Or via Yggdrasil:
+# [[Remote Peer via Yggdrasil]]
+# type = TCPClientInterface
+# enabled = yes
+# target_host = 200:xxxx::1    # Yggdrasil IPv6
+# target_port = 4242</code></pre>
+
+<h3>Yggdrasil Implementation Path</h3>
+<p>Installed on nodes but not configured. Four steps to production:</p>
+<ol style="padding-left: 24px; margin-bottom: 16px;">
+    <li style="margin-bottom: 12px;"><strong>Linode anchor:</strong> <code>apt install yggdrasil</code>, set <code>Listen: ["tls://0.0.0.0:443"]</code>, enable service</li>
+    <li style="margin-bottom: 12px;"><strong>Each node:</strong> Set <code>Peers: ["tls://&lt;linode-ip&gt;:443"]</code>, enable service</li>
+    <li style="margin-bottom: 12px;"><strong>Verify:</strong> Nodes get <code>200::/7</code> addresses, ping across Yggdrasil IPv6</li>
+    <li style="margin-bottom: 12px;"><strong>Integrate:</strong> Add config to <code>mesh.conf</code>, start script, web UI page</li>
+</ol>
+<p>Traffic on port 443 using TLS — indistinguishable from normal HTTPS to any observer.</p>
+
+<h3>Full Anonymous Chain</h3>
+<div class="diagram">Phone/Laptop
+    │
+    ▼  connects to node AP — local WiFi, no ISP involvement
+Nucleus Node
+    │
+    ├─► Jami call ──► OpenDHT ──► direct to other node
+    ├─► Sideband msg ──► Reticulum ──► LXMF delivery
+    ├─► LoRa text ──► Meshtastic ──► RF to remote node
+    │
+    ▼  for internet-connected operation
+SIM7600G-H Cellular (anonymous SIM via Monero)
+    │
+    ▼  carrier sees TLS traffic to a VPS — nothing else
+Yggdrasil tunnel to Linode anchor
+    │
+    ▼  encrypted overlay — Linode peers nodes together
+Remote Nucleus Node(s)</div>
+
+<p>At no point does an external observer see who is communicating, what is being communicated, or the identity of the operator.</p>
+
+<!-- ============================================ -->
+<h3>Status</h3>
+
+<table>
+<thead>
+<tr><th>Component</th><th>Status</th><th>Work Remaining</th></tr>
+</thead>
+<tbody>
+<tr><td>Jami + OpenDHT (local mesh)</td><td><span class="badge badge-ready">Production</span></td><td>None</td></tr>
+<tr><td>Jami over tunnels</td><td><span class="badge badge-ready">Ready</span></td><td>Add tunnel IPs to bootstrap</td></tr>
+<tr><td>Reticulum transport (local)</td><td><span class="badge badge-ready">Production</span></td><td>None</td></tr>
+<tr><td>Reticulum over tunnels</td><td><span class="badge badge-ready">Ready</span></td><td>Add TCPClientInterface</td></tr>
+<tr><td>Meshtastic LoRa messaging</td><td><span class="badge badge-ready">Production</span></td><td>None</td></tr>
+<tr><td>Tailscale VPN</td><td><span class="badge badge-ready">Production</span></td><td>None</td></tr>
+<tr><td>Yggdrasil overlay</td><td><span class="badge badge-installed">Installed</span></td><td>Config, systemd, web UI</td></tr>
+<tr><td>Yggdrasil on Linode</td><td><span class="badge badge-installed">Not started</span></td><td>Install + listen config</td></tr>
+<tr><td>Anonymous SIM</td><td><span class="badge badge-planned">Research</span></td><td>Purchase + test Silent Link</td></tr>
+<tr><td>Codec2 LoRa voice</td><td><span class="badge badge-planned">Planned</span></td><td>Full implementation</td></tr>
+<tr><td>Reticulum I2P</td><td><span class="badge badge-planned">Available</span></td><td>Install I2P, add interface</td></tr>
+</tbody>
+</table>
+
+</div>
+</body>
+</html>
