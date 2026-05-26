@@ -16,17 +16,22 @@ echo "SD Card Wear Minimization Setup"
 echo "=========================================="
 echo ""
 
-# 1. Disable Swap
-echo "[1/4] Disabling swap..."
+# 1. Disable SD-card-based swap (preserve zram which is RAM-only)
+echo "[1/4] Disabling SD card swap (keeping zram)..."
 if command -v dphys-swapfile &> /dev/null; then
     dphys-swapfile swapoff 2>/dev/null || true
     dphys-swapfile uninstall 2>/dev/null || true
     systemctl disable dphys-swapfile 2>/dev/null || true
     echo "  ✓ dphys-swapfile disabled"
 else
-    swapoff -a 2>/dev/null || true
-    systemctl mask swap.target 2>/dev/null || true
-    echo "  ✓ Standard swap disabled"
+    # Only disable file/partition-based swap on SD card, leave zram alone
+    for dev in $(swapon --show=NAME --noheadings 2>/dev/null); do
+        if [[ "$dev" != /dev/zram* ]]; then
+            swapoff "$dev" 2>/dev/null || true
+            echo "  ✓ Disabled SD swap: $dev"
+        fi
+    done
+    echo "  ✓ zram swap preserved (RAM-only, no SD writes)"
 fi
 
 # 2. Add noatime to fstab
