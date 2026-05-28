@@ -120,6 +120,29 @@ Follow TAKServer documentation to:
 - System remains primarily on Trixie
 - Works with TAKServer 5.3, 5.6, and likely future versions
 
+### TAK Server Boot CPU Impact on Meshtastic Radio
+
+TAK Server's JVM initialization pegs the CPU at 160%+ for 2-4 minutes after boot
+(load average > 10 on a Pi). During this window, the Meshtastic `cot-bridge` service
+may fail to complete its serial handshake with the RAK4631 radio — the protobuf
+exchange times out after ~30 seconds because the CPU is too starved to process it.
+
+Additionally, the USB hub power cycle in `mesh-start.sh` (used to recover the
+RAK4631 from firmware lockups) must allow **at least 15 seconds** after powering
+on the hub before the unbind/rebind step. The nRF52840 Meshtastic firmware needs
+5-10 seconds to fully initialize after power-on. If the USB is yanked during
+firmware init, the application layer hangs — USB CDC-ACM still works
+(`/dev/ttyACM0` appears) but serial and Bluetooth are unresponsive until a
+hardware reset.
+
+**Requirements:**
+- `mesh-start.sh`: `sleep 15` after `uhubctl -a on` (not `sleep 3`)
+- `cot-bridge.service`: starts after `mesh-start.service` completes, with an
+  additional 5-second delay (already handled by the background restart at the
+  end of `mesh-start.sh`)
+- On a fresh boot, expect cot-bridge to connect successfully only after TAK
+  Server's CPU spike subsides (~2-4 minutes post-boot)
+
 ---
 
 ## Troubleshooting
@@ -141,6 +164,23 @@ apt-cache policy openjdk-17-jdk
 cat /etc/apt/preferences.d/bookworm
 apt-cache policy
 ```
+
+**Nucleus-specific UFW rules (IMPORTANT):**
+
+TAKServer's firewall docs enable UFW with `deny incoming` as the default policy. This blocks
+critical Nucleus services on the local bridge and mesh interfaces. After enabling UFW, add:
+
+```bash
+# Trust local interfaces (AP clients and mesh peers are already authenticated)
+sudo ufw allow in on br-lan
+sudo ufw allow in on wlan1
+```
+
+Without these rules, `systemd-networkd`'s DHCP server on br-lan won't respond to AP clients,
+and `cot-bridge` won't receive ATAK multicast traffic to forward over LoRa.
+
+These rules are interface-specific — they do NOT weaken eth0 (WAN/internet) protection.
+eth0 remains firewalled with only explicitly allowed ports (SSH, TAKServer, etc.).
 
 **To remove Bookworm repos later (not recommended while TAKServer is installed):**
 ```bash
