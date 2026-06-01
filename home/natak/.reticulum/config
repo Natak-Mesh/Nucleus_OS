@@ -117,6 +117,13 @@ device = br-lan
 listen_port = 4242
 
 
+[[Natak Public IP Entry]]
+  type = TCPClientInterface
+  enabled = yes
+  target_host = 173.230.150.24
+  target_port = 4243
+
+
 [[UV-RF]]
 type = KISSInterface
 enabled = false
