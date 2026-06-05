@@ -92,39 +92,14 @@
         function renderStatus(data) {
             const container = document.getElementById('status-container');
             
-            // Container status card
-            const containerStatus = data.container_running ? 'RUNNING' : 'STOPPED';
-            const containerClass = data.container_running ? 'connected' : 'disconnected';
-            const containerColor = data.container_running ? 'var(--color-connected)' : 'var(--color-disconnected)';
-            
             // Peer count card
             const peerCount = data.peers_connected;
             const peerStatus = peerCount >= 1 ? 'Healthy' : 'No Peers';
             const peerClass = peerCount >= 1 ? 'connected' : 'disconnected';
             const peerColor = peerCount >= 1 ? 'var(--color-connected)' : 'var(--color-disconnected)';
             
-            // Render status cards
+            // Render status card
             container.innerHTML = `
-                <div class="node-card ${containerClass}">
-                    <div class="node-header">
-                        <span class="node-ip">Container Status</span>
-                    </div>
-                    <div class="node-body" style="text-align: center;">
-                        <div style="font-size: 48px; font-weight: bold; color: ${containerColor}; margin: 16px 0;">
-                            ${containerStatus === 'RUNNING' ? '●' : '○'}
-                        </div>
-                        <div style="font-size: 24px; font-weight: bold; margin-bottom: 8px;">
-                            ${containerStatus}
-                        </div>
-                        <div style="font-size: 14px; color: var(--text-secondary);">
-                            ${containerStatus === 'RUNNING' ? 'Container is active' : 'Container is not running'}
-                        </div>
-                    </div>
-                    <div class="node-status-label ${containerClass}">
-                        ${containerStatus}
-                    </div>
-                </div>
-
                 <div class="node-card ${peerClass}">
                     <div class="node-header">
                         <span class="node-ip">DHT Network</span>

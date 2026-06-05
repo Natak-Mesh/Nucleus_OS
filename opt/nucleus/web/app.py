@@ -1203,25 +1203,13 @@ def get_reticulum_status():
     import json
 
     result_data = {
-        'service_running': False,
         'transport_id': None,
         'transport_uptime': None,
         'rxb': 0,
         'txb': 0,
         'interfaces': [],
-        'destinations': [],
         'destinations_count': 0,
     }
-
-    # Check rnsd service status
-    try:
-        svc = subprocess.run(
-            ['sudo', 'systemctl', 'status', 'rnsd'],
-            capture_output=True, text=True, timeout=5
-        )
-        result_data['service_running'] = svc.returncode == 0
-    except Exception as e:
-        print(f"Error checking rnsd service: {e}")
 
     # Get interface status from rnstatus -j
     try:
@@ -1239,7 +1227,7 @@ def get_reticulum_status():
     except Exception as e:
         print(f"Error running rnstatus: {e}")
 
-    # Get known destinations from rnpath -t -j
+    # Get destination count from rnpath (count only, not full list)
     try:
         rp = subprocess.run(
             ['rnpath', '-t', '-j'],
@@ -1248,7 +1236,6 @@ def get_reticulum_status():
         if rp.returncode == 0 and rp.stdout.strip():
             destinations = json.loads(rp.stdout)
             if isinstance(destinations, list):
-                result_data['destinations'] = destinations
                 result_data['destinations_count'] = len(destinations)
     except Exception as e:
         print(f"Error running rnpath: {e}")
@@ -1287,15 +1274,6 @@ def get_opendht_status():
     """Get OpenDHT container status and configuration"""
     try:
         import json
-        
-        # Check Docker container status
-        container_running = False
-        try:
-            result = subprocess.run(['sudo', 'docker', 'ps', '--filter', 'name=dhtnode', '--format', '{{.Status}}'],
-                                  capture_output=True, text=True, timeout=5)
-            container_running = 'Up' in result.stdout
-        except Exception as e:
-            print(f"Error checking container: {e}")
         
         # Query DHT peer count
         peers_connected = 0
@@ -1340,7 +1318,6 @@ def get_opendht_status():
         proxy_url = f'{br_lan_ip}:8000' if br_lan_ip != 'N/A' else 'N/A'
         
         return jsonify({
-            'container_running': container_running,
             'peers_connected': peers_connected,
             'network_id': network_id,
             'mesh_ip': mesh_ip,

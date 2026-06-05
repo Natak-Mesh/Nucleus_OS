@@ -6,30 +6,25 @@
     <title>Natak Mesh - Reticulum Status</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
-        /* Tables */
-        .rt-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 8px;
-        }
-        .rt-table th {
-            text-align: left;
-            color: var(--text-secondary);
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding: 8px 10px;
-            border-bottom: 1px solid var(--border-color);
-        }
-        .rt-table td {
-            padding: 10px 10px;
-            font-size: 13px;
+        /* Stacked rows */
+        .rt-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 8px 0;
+            font-size: 14px;
             font-family: monospace;
-            border-bottom: 1px solid var(--border-color);
-            color: var(--text-primary);
+            border-bottom: 1px solid rgba(255,255,255,0.04);
         }
-        .rt-table tr:last-child td { border-bottom: none; }
-        .rt-table .dim { color: var(--text-secondary); }
+        .rt-row:last-child { border-bottom: none; }
+        .rt-row .rt-name { color: var(--text-primary); }
+        .rt-row .rt-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+            font-family: monospace;
+        }
+        .rt-row .dim { color: var(--text-secondary); }
 
         /* Status dot */
         .dot {
@@ -62,35 +57,6 @@
         .stat-row .label { color: var(--text-secondary); }
         .stat-row .value { color: var(--text-primary); font-family: monospace; }
 
-        /* Collapsible section */
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            cursor: pointer;
-            padding: 12px 0;
-        }
-        .section-header h2 {
-            font-size: 13px;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin: 0;
-        }
-        .section-toggle {
-            font-size: 12px;
-            border: 1px solid var(--border-color);
-            background: transparent;
-            padding: 4px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-            color: var(--text-secondary);
-        }
-        .section-toggle:hover {
-            border-color: var(--accent-primary);
-            color: var(--text-primary);
-        }
-
         /* Connection type badges */
         .badge {
             display: inline-block;
@@ -100,23 +66,20 @@
             font-weight: bold;
             letter-spacing: 0.5px;
         }
-        .badge-tcp {
-            background: rgba(26, 9, 241, 0.2);
-            color: #7B73FF;
-            border: 1px solid rgba(26, 9, 241, 0.3);
-        }
-        .badge-mesh {
+        .badge-up {
             background: rgba(0, 255, 136, 0.1);
             color: var(--color-connected);
             border: 1px solid rgba(0, 255, 136, 0.2);
         }
-
-        /* Transport ID */
-        .transport-id {
-            font-family: monospace;
-            font-size: 11px;
-            color: var(--text-secondary);
-            word-break: break-all;
+        .badge-down {
+            background: rgba(255, 0, 0, 0.1);
+            color: var(--color-disconnected);
+            border: 1px solid rgba(255, 0, 0, 0.2);
+        }
+        .badge-type {
+            background: rgba(26, 9, 241, 0.2);
+            color: #7B73FF;
+            border: 1px solid rgba(26, 9, 241, 0.3);
         }
 
         /* Empty state */
@@ -149,18 +112,18 @@
         <div class="dashboard">
             <h1>Reticulum Status</h1>
 
-            <!-- Top Status Cards -->
-            <div id="status-cards" class="node-grid">
+            <!-- Summary Card -->
+            <div id="summary-card" class="node-grid">
                 <div class="loading">Loading Reticulum status...</div>
             </div>
 
-            <!-- Reachable Destinations Section -->
-            <div id="devices-section" style="display: none; margin-top: 24px;">
+            <!-- Interfaces Section -->
+            <div id="ifaces-section" style="display: none; margin-top: 24px;">
                 <div class="node-card">
                     <div class="node-header">
-                        <span class="node-ip">Reachable Destinations</span>
+                        <span class="node-ip">Interfaces</span>
                     </div>
-                    <div id="devices-body"></div>
+                    <div id="ifaces-body"></div>
                 </div>
             </div>
 
@@ -168,7 +131,7 @@
             <div id="mesh-nodes-section" style="display: none; margin-top: 24px;">
                 <div class="node-card">
                     <div class="node-header">
-                        <span class="node-ip">Mesh Nodes</span>
+                        <span class="node-ip">Mesh Peers</span>
                     </div>
                     <div id="mesh-nodes-body"></div>
                 </div>
@@ -196,14 +159,6 @@
             return (i === 0 ? val : val.toFixed(1)) + ' ' + units[i];
         }
 
-        function formatBps(bps) {
-            if (bps === 0 || bps == null) return '0 bps';
-            if (bps >= 1e9) return (bps / 1e9).toFixed(2) + ' Gbps';
-            if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' Mbps';
-            if (bps >= 1e3) return (bps / 1e3).toFixed(1) + ' Kbps';
-            return bps.toFixed(0) + ' bps';
-        }
-
         function formatUptime(seconds) {
             if (!seconds) return '--';
             const s = Math.floor(seconds);
@@ -217,15 +172,6 @@
             return parts.join(' ');
         }
 
-        function timeAgo(ts) {
-            if (!ts) return '--';
-            const diff = Math.floor(Date.now() / 1000 - ts);
-            if (diff < 60) return diff + 's ago';
-            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-            if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-            return Math.floor(diff / 86400) + 'd ago';
-        }
-
         async function refreshStatus() {
             try {
                 const r = await fetch('/api/reticulum/status');
@@ -233,93 +179,42 @@
                 renderStatus(d);
             } catch (e) {
                 console.error('Error:', e);
-                document.getElementById('status-cards').innerHTML = '<div class="error">Error loading Reticulum status</div>';
+                document.getElementById('summary-card').innerHTML = '<div class="error">Error loading Reticulum status</div>';
             }
         }
 
         function renderStatus(d) {
             const ifaces = d.interfaces || [];
-            const dests = d.destinations || [];
+            const destCount = d.destinations_count || 0;
 
             // ── Categorize interfaces ──
-            let meshNodeCount = 0;
-            let tcpClientCount = 0;
-            let localPrograms = 0;
-            const meshPeers = [];    // AutoInterfacePeer entries
-            const tcpClients = [];   // TCPClientInterface entries (actual phone connections)
-            const mainIfaces = [];   // For raw view
+            const meshPeers = [];     // AutoInterfacePeer entries
+            const configIfaces = [];  // All non-peer, non-internal interfaces
 
             ifaces.forEach(iface => {
                 if (iface.type === 'AutoInterfacePeer') {
-                    meshNodeCount++;
                     meshPeers.push(iface);
-                } else if (iface.type === 'TCPClientInterface' && iface.parent_interface_name) {
-                    // This is an actual connected client (child of TCPServerInterface)
-                    tcpClientCount++;
-                    tcpClients.push(iface);
-                } else if (iface.type === 'LocalServerInterface') {
-                    localPrograms = iface.clients || 0;
-                    mainIfaces.push(iface);
                 } else if (iface.type === 'LocalClientInterface') {
                     // skip - internal plumbing
                 } else {
-                    mainIfaces.push(iface);
+                    configIfaces.push(iface);
                 }
             });
 
-            // ── Classify destinations by connection type ──
-            const devices = dests.map(dest => {
-                const via = dest.interface || '';
-                let connType = 'mesh';
-                let connDetail = '';
+            // ── Summary Card ──
+            const hasData = d.transport_uptime != null;
+            const summaryColor = hasData ? 'var(--color-connected)' : 'var(--color-warning)';
 
-                if (via.includes('TCPInterface') || via.includes('TCPClient')) {
-                    connType = 'tcp';
-                    // Extract IP from interface name like "TCPInterface[Client on LAN TCP Server/10.20.20.27:40706]"
-                    const ipMatch = via.match(/(\d+\.\d+\.\d+\.\d+)/);
-                    connDetail = ipMatch ? ipMatch[1] : 'TCP';
-                } else if (via.includes('AutoInterfacePeer')) {
-                    connType = 'mesh';
-                    // Extract link-local from "AutoInterfacePeer[wlan1/fe80::21]"
-                    const llMatch = via.match(/fe80::[^\s\]]+/);
-                    connDetail = llMatch ? 'via ' + llMatch[0] : 'Mesh';
-                }
-
-                return {
-                    hash: dest.hash,
-                    hops: dest.hops,
-                    connType: connType,
-                    connDetail: connDetail,
-                    timestamp: dest.timestamp,
-                    via: via
-                };
-            });
-
-            const directCount = devices.filter(d => d.connType === 'tcp').length;
-            const meshDeviceCount = devices.filter(d => d.connType === 'mesh').length;
-            const totalDevices = devices.length;
-
-            // ── Card 1: Transport Status ──
-            const running = d.service_running;
-            const statusColor = running ? 'var(--color-connected)' : 'var(--color-disconnected)';
-            const statusText = running ? 'RUNNING' : 'STOPPED';
-            const statusClass = running ? 'connected' : 'disconnected';
-
-            // ── Card 2: Connected Devices ──
-            const devColor = totalDevices > 0 ? 'var(--color-connected)' : 'var(--color-warning)';
-
-            document.getElementById('status-cards').innerHTML = `
-                <div class="node-card ${statusClass}">
+            document.getElementById('summary-card').innerHTML = `
+                <div class="node-card ${hasData ? 'connected' : ''}">
                     <div class="node-header">
-                        <span class="node-ip">Transport</span>
+                        <span class="node-ip">Reticulum Transport</span>
                     </div>
                     <div class="node-body" style="text-align: center;">
-                        <div class="big-num" style="color: ${statusColor};">
-                            ${running ? '●' : '○'}
+                        <div class="big-num" style="color: ${summaryColor};">
+                            ${destCount}
                         </div>
-                        <div style="font-size: 20px; font-weight: bold; margin-bottom: 12px;">
-                            ${statusText}
-                        </div>
+                        <div class="stat-label">Reachable Destinations</div>
                     </div>
                     <div style="padding: 0 4px;">
                         <div class="stat-row">
@@ -330,106 +225,86 @@
                             <span class="label">Traffic:</span>
                             <span class="value">↑${formatBytes(d.txb)}  ↓${formatBytes(d.rxb)}</span>
                         </div>
-                    </div>
-                    <div class="node-status-label ${statusClass}">${statusText}</div>
-                </div>
-
-                <div class="node-card ${totalDevices > 0 ? 'connected' : ''}">
-                    <div class="node-header">
-                        <span class="node-ip">Reachable Destinations</span>
-                    </div>
-                    <div class="node-body" style="text-align: center;">
-                        <div class="big-num" style="color: ${devColor};">
-                            ${totalDevices}
-                        </div>
-                        <div class="stat-label">Total Reachable</div>
-                    </div>
-                    <div style="padding: 0 4px;">
                         <div class="stat-row">
-                            <span class="label">Direct (TCP):</span>
-                            <span class="value">${directCount}</span>
+                            <span class="label">Interfaces:</span>
+                            <span class="value">${configIfaces.length}</span>
                         </div>
                         <div class="stat-row">
-                            <span class="label">Via Mesh:</span>
-                            <span class="value">${meshDeviceCount}</span>
+                            <span class="label">Mesh Peers:</span>
+                            <span class="value">${meshPeers.length}</span>
                         </div>
                     </div>
-                    ${totalDevices === 0 ? `
-                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color); font-size: 13px; color: var(--color-warning); text-align: center;">
-                        ⚠ No devices discovered yet
-                    </div>` : ''}
                 </div>
             `;
 
-            // ── Connected Devices Table ──
-            const devSec = document.getElementById('devices-section');
-            const devBody = document.getElementById('devices-body');
+            // ── Interfaces Table ──
+            const ifaceSec = document.getElementById('ifaces-section');
+            const ifaceBody = document.getElementById('ifaces-body');
 
-            if (devices.length > 0) {
-                devSec.style.display = 'block';
-                let h = `<table class="rt-table">
-                    <thead><tr>
-                        <th>Destination</th>
-                        <th>Connection</th>
-                        <th>Hops</th>
-                        <th>Last Seen</th>
-                    </tr></thead><tbody>`;
+            if (configIfaces.length > 0) {
+                ifaceSec.style.display = 'block';
+                let h = '<div style="padding: 4px 8px;">';
 
-                devices.forEach(dev => {
-                    const shortHash = dev.hash || '--';
-                    const badgeClass = dev.connType === 'tcp' ? 'badge-tcp' : 'badge-mesh';
-                    const badgeLabel = dev.connType === 'tcp' ? 'TCP' : 'MESH';
+                configIfaces.forEach(iface => {
+                    let name = iface.name || 'unknown';
+                    const nameMatch = name.match(/\[(.+)\]/);
+                    const displayName = nameMatch ? nameMatch[1] : name;
 
-                    h += `<tr>
-                        <td title="${dev.hash || ''}">${shortHash}</td>
-                        <td>
-                            <span class="badge ${badgeClass}">${badgeLabel}</span>
-                            <span class="dim" style="margin-left: 6px; font-size: 12px;">${dev.connDetail}</span>
-                        </td>
-                        <td>${dev.hops != null ? dev.hops + ' hop' + (dev.hops !== 1 ? 's' : '') : '--'}</td>
-                        <td class="dim">${timeAgo(dev.timestamp)}</td>
-                    </tr>`;
+                    let typeLabel = (iface.type || '').replace('Interface', '');
+
+                    const up = iface.status === true;
+                    const dotClass = up ? 'dot-green' : 'dot-red';
+                    const statusText = up ? 'Up' : 'Down';
+
+                    let clientInfo = '';
+                    if (iface.clients != null && iface.clients > 0) {
+                        clientInfo = ` (${iface.clients})`;
+                    }
+
+                    const statusColor = up ? 'var(--color-connected)' : 'var(--color-disconnected)';
+
+                    h += `<div class="rt-row">
+                        <div>
+                            <div class="rt-name">${displayName}${clientInfo}</div>
+                            <div class="rt-meta">${typeLabel}</div>
+                        </div>
+                        <div style="color: ${statusColor}; white-space: nowrap;">${statusText}</div>
+                    </div>`;
                 });
-                h += '</tbody></table>';
-                devBody.innerHTML = h;
+                h += '</div>';
+                ifaceBody.innerHTML = h;
             } else {
-                devSec.style.display = 'block';
-                devBody.innerHTML = '<div class="empty-msg">No devices discovered yet. Devices will appear when Sideband or other Reticulum apps announce.</div>';
+                ifaceSec.style.display = 'block';
+                ifaceBody.innerHTML = '<div class="empty-msg">No interfaces configured</div>';
             }
 
-            // ── Mesh Nodes Table ──
+            // ── Mesh Peers Table ──
             const meshSec = document.getElementById('mesh-nodes-section');
             const meshBody = document.getElementById('mesh-nodes-body');
 
             if (meshPeers.length > 0) {
                 meshSec.style.display = 'block';
-                let mh = `<table class="rt-table">
-                    <thead><tr>
-                        <th>Node</th>
-                        <th>Traffic</th>
-                        <th>Announces</th>
-                        <th>Status</th>
-                    </tr></thead><tbody>`;
+                let mh = '<div style="padding: 4px 8px;">';
 
                 meshPeers.forEach(peer => {
-                    // Extract readable name from "AutoInterfacePeer[wlan1/fe80::21]"
                     const nameMatch = peer.name.match(/\[(.+)\]/);
-                    const peerName = nameMatch ? nameMatch[1] : peer.name;
+                    let peerName = nameMatch ? nameMatch[1] : peer.name;
+                    // Strip wlan1/ prefix, show just the link-local
+                    peerName = peerName.replace(/^wlan1\//, '');
 
                     const up = peer.status === true;
-                    const dotClass = up ? 'dot-green' : 'dot-red';
+                    const statusText = up ? 'Up' : 'Down';
+                    const statusColor = up ? 'var(--color-connected)' : 'var(--color-disconnected)';
 
-                    const inFreq = peer.incoming_announce_frequency;
-                    const announceStr = inFreq > 0 ? (inFreq * 60).toFixed(1) + '/min' : 'idle';
-
-                    mh += `<tr>
-                        <td>${peerName}</td>
-                        <td>↑${formatBytes(peer.txb)}  ↓${formatBytes(peer.rxb)}</td>
-                        <td class="dim">${announceStr}</td>
-                        <td><span class="dot ${dotClass}"></span>${up ? 'Up' : 'Down'}</td>
-                    </tr>`;
+                    mh += `<div class="rt-row">
+                        <div>
+                            <div class="rt-name">${peerName}</div>
+                            <div class="rt-meta">↑${formatBytes(peer.txb)}  ↓${formatBytes(peer.rxb)}</div>
+                        </div>
+                        <div style="color: ${statusColor}; white-space: nowrap;">${statusText}</div>
+                    </div>`;
                 });
-                mh += '</tbody></table>';
+                mh += '</div>';
                 meshBody.innerHTML = mh;
             } else {
                 meshSec.style.display = 'none';
