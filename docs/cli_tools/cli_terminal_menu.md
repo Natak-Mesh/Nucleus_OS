@@ -191,11 +191,52 @@ All file transfers use `~/transfer/` (`/home/natak/transfer/`) as the staging di
 |---|------|---------|
 | 10 | **rnstatus / NomadNet** | Reticulum network status and NomadNet TUI |
 
-### 6. Shell Access
+### 6. System & Updates
+
+| # | Tool | Purpose |
+|---|------|---------|
+| 11 | **Update Node** | In-place update from GitHub — `nucleus-update.sh` |
+| 12 | **Service Control** | Start/stop/restart/status of key services |
+| 13 | **Edit Mesh Config** | Edit `/etc/nucleus/mesh.conf`, optionally regen + reboot |
+
+### 7. Shell Access
 
 | # | Tool | Purpose |
 |---|------|---------|
 | 9 | **bash** | Drop to shell as natak user, `exit` returns to menu |
+
+## Update System (`nucleus-update.sh`)
+
+In-place updater so a node can be updated over SSH without pushing files via Tailscale. Lives at `/opt/nucleus/cli/nucleus-update.sh`; launched from menu option 11 or run directly.
+
+**Source:** GitHub over WAN (Phase 1). The node needs internet (eth0 → router, or shared over mesh). An over-mesh delivery path (rngit / Reticulum `rncp` bundle pull from a seed node) is a future Phase 2 — the script's "fetch source" step is intentionally the only thing that would change.
+
+**Sequence:**
+1. **Pre-flight** — repo present at `~/Nucleus_OS`, GitHub reachable (`git ls-remote`), working tree clean (offers to stash if dirty).
+2. **Version diff** — compares local vs `origin/<branch>` `VERSION`, shows `vX → vY` and the incoming commit log; confirms before proceeding. Detects "already up to date".
+3. **git pull** (`--ff-only`).
+4. **Self re-exec** — after the pull, the script re-exec's the freshly-pulled copy of itself (guarded by `NUCLEUS_UPDATE_REEXEC=1` so it runs once). This is what lets updates to `nucleus-update.sh`, `deploy.sh`, etc. take effect in the same run.
+5. **install-packages.sh → deploy.sh** — runs the *new* (just-pulled) versions.
+6. **Config auto-migrate** — see below.
+7. **config_generation.sh** → optional reboot.
+
+**Design decision — orchestrate, don't merge.** `install-packages.sh`, `deploy.sh`, and `config_generation.sh` stay as independent building blocks. `nucleus-update.sh` is the orchestrator that calls them in order. Rationale: `config_generation.sh` has frequent standalone use (every config edit) and `install-packages.sh` is slow/network-heavy — both benefit from staying callable on their own.
+
+### Config Auto-Migration
+
+Replaces the old manual "back up config / restore / hand-edit new vars in nano" dance. Mechanism:
+
+- Template = repo's `etc/nucleus/mesh.conf`; live = `/etc/nucleus/mesh.conf`.
+- For each `KEY=` in the template: if the key already exists in the live file, **skip it entirely** (user's value untouched, matched on key name not value). If missing, **append** the key's comment block + default to the bottom of the live file.
+- A timestamped backup (`mesh.conf.bak-<timestamp>`) is made before any change.
+- Prints a summary of which keys were added.
+
+**Intentional limitations:**
+- **Add-only.** Never removes orphaned/renamed keys (harmless, safer) and never re-values an existing key — so a changed *default* for an existing key still needs a manual note.
+- Default value changes are not auto-applied for the reason above.
+
+**Deferred (not in this round):** mesh.conf placeholder template + `config_generation.sh` guard for unfilled placeholders on fresh installs. Tracked as a future task to avoid piling on complexity.
+
 
 ## Evaluated and Dropped
 

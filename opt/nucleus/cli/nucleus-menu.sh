@@ -202,11 +202,17 @@ show_menu() {
     printf "  ${BOLD}Reticulum${RESET}\n"
     printf "   ${CYAN}10${RESET} Reticulum / NomadNet\n"
     echo ""
+    printf "  ${BOLD}System & Updates${RESET}\n"
+    printf "   ${CYAN}11${RESET} Update Node ${DIM}(pull latest from GitHub)${RESET}\n"
+    printf "   ${CYAN}12${RESET} Service Control ${DIM}(start/stop/restart)${RESET}\n"
+    printf "   ${CYAN}13${RESET} Edit Mesh Config\n"
+    echo ""
     printf "   ${CYAN}9${RESET}  Shell Access ${DIM}(bash)${RESET}\n"
     printf "   ${CYAN}0${RESET}  Exit\n"
     echo ""
     printf "  Select [1]: "
 }
+
 
 # --- Menu Actions ---
 
@@ -566,12 +572,109 @@ do_reticulum() {
     pause_after
 }
 
+do_update() {
+    if [ ! -x "$CLI_DIR/nucleus-update.sh" ]; then
+        printf "  ${RED}nucleus-update.sh not found in %s${RESET}\n" "$CLI_DIR"
+        pause_after
+        return
+    fi
+    "$CLI_DIR/nucleus-update.sh"
+}
+
+# Services managed via Service Control
+SERVICES=(babeld hostapd smcroute rnsd mesh-web cot-bridge mediamtx)
+
+do_services() {
+    while true; do
+        clear
+        printf "  ${BOLD}Service Control${RESET}\n"
+        echo ""
+        # List services with current status
+        for i in "${!SERVICES[@]}"; do
+            local svc="${SERVICES[$i]}"
+            if systemctl is-active --quiet "$svc" 2>/dev/null; then
+                printf "   ${CYAN}%d${RESET}  ${GREEN}●${RESET} %-14s ${DIM}running${RESET}\n" "$((i+1))" "$svc"
+            elif systemctl list-unit-files "${svc}.service" &>/dev/null && \
+                 [ -n "$(systemctl list-unit-files "${svc}.service" 2>/dev/null | grep "${svc}")" ]; then
+                printf "   ${CYAN}%d${RESET}  ${RED}○${RESET} %-14s ${DIM}stopped${RESET}\n" "$((i+1))" "$svc"
+            else
+                printf "   ${CYAN}%d${RESET}  ${DIM}○ %-14s not installed${RESET}\n" "$((i+1))" "$svc"
+            fi
+        done
+        echo ""
+        printf "  Select service ${DIM}(number, or q to go back)${RESET}: "
+        read -r svc_choice
+
+        [ "$svc_choice" = "q" ] || [ "$svc_choice" = "Q" ] && return
+        [ -z "$svc_choice" ] && return
+
+        if ! [[ "$svc_choice" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+        local idx=$((svc_choice - 1))
+        if [ $idx -lt 0 ] || [ $idx -ge ${#SERVICES[@]} ]; then
+            continue
+        fi
+        local svc="${SERVICES[$idx]}"
+
+        echo ""
+        printf "  ${BOLD}%s${RESET}\n" "$svc"
+        printf "   ${CYAN}1${RESET}) Start   ${CYAN}2${RESET}) Stop   ${CYAN}3${RESET}) Restart   ${CYAN}4${RESET}) Status   ${DIM}(q to cancel)${RESET}\n"
+        printf "  Select: "
+        read -r action
+
+        case "$action" in
+            1) sudo systemctl start "$svc"   && printf "  ${GREEN}Started %s${RESET}\n" "$svc"   || printf "  ${RED}Failed${RESET}\n"; pause_after ;;
+            2) sudo systemctl stop "$svc"    && printf "  ${GREEN}Stopped %s${RESET}\n" "$svc"   || printf "  ${RED}Failed${RESET}\n"; pause_after ;;
+            3) sudo systemctl restart "$svc" && printf "  ${GREEN}Restarted %s${RESET}\n" "$svc" || printf "  ${RED}Failed${RESET}\n"; pause_after ;;
+            4) echo ""; systemctl status "$svc" --no-pager -n 20; pause_after ;;
+            *) ;;
+        esac
+    done
+}
+
+do_edit_config() {
+    local conf="/etc/nucleus/mesh.conf"
+    if [ ! -f "$conf" ]; then
+        printf "  ${RED}%s not found.${RESET}\n" "$conf"
+        pause_after
+        return
+    fi
+
+    local editor="${EDITOR:-nano}"
+    if ! has_cmd "$editor"; then
+        editor="vi"
+    fi
+
+    sudo "$editor" "$conf"
+
+    echo ""
+    printf "  Config edited. Apply changes now? ${DIM}(regenerate system configs)${RESET} ${DIM}[y/N]${RESET}: "
+    read -r ans
+    if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
+        echo ""
+        if sudo /opt/nucleus/bin/config_generation.sh; then
+            printf "  ${GREEN}Configs regenerated.${RESET}\n"
+            echo ""
+            printf "  Some changes need a reboot to take full effect. Reboot now? ${DIM}[y/N]${RESET}: "
+            read -r rb
+            if [ "$rb" = "y" ] || [ "$rb" = "Y" ]; then
+                sudo reboot
+            fi
+        else
+            printf "  ${RED}config_generation.sh failed.${RESET}\n"
+        fi
+    fi
+    pause_after
+}
+
 do_shell() {
     echo ""
     printf "  ${DIM}Dropping to bash. Type 'exit' to return to menu.${RESET}\n"
     echo ""
     bash --login
 }
+
 
 # --- Main Loop ---
 
@@ -590,7 +693,11 @@ while true; do
         7) do_mtr ;;
         8) do_transfer ;;
         10) do_reticulum ;;
+        11) do_update ;;
+        12) do_services ;;
+        13) do_edit_config ;;
         9) do_shell ;;
+
         0) clear; exit 0 ;;
         *)
             printf "  ${RED}Invalid choice.${RESET}"
