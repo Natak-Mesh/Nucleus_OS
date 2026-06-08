@@ -55,17 +55,31 @@ DHCP=ipv4
 IPv4Forwarding=yes
 EOF
     
-    # Apply immediately
+    # Detach from bridge and clear stale addresses/routes before re-acquiring
     ip link set eth0 nomaster 2>/dev/null
+    ip addr flush dev eth0 2>/dev/null
+    ip route flush dev eth0 2>/dev/null
+
+    # Bounce the link to force a clean DHCP cycle, then reconfigure
+    ip link set eth0 down 2>/dev/null
+    ip link set eth0 up 2>/dev/null
     systemctl restart systemd-networkd
-    
-    # Wait for DHCP to acquire an address
+
+    # Wait (up to 20s) for DHCP to acquire an IPv4 address
     echo "Waiting for DHCP address..."
-    sleep 5
-    
+    for i in $(seq 1 20); do
+        ip -4 addr show eth0 | grep -q "inet " && break
+        sleep 1
+    done
+
+    if ! ip -4 addr show eth0 | grep -q "inet "; then
+        echo "⚠ Warning: eth0 did not acquire a DHCP address"
+    fi
+
     # Add MASQUERADE for internet gateway sharing
     iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
         iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+
     
     # Flush neighbor cache to clear stale entries
     ip neigh flush dev wlan1 2>/dev/null || true

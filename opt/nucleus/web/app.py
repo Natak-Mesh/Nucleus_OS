@@ -1389,7 +1389,7 @@ def switch_eth0_mode():
         
         # Run the eth0-mode.sh script with sudo
         result = subprocess.run(['sudo', '/opt/nucleus/bin/eth0-mode.sh', mode],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, timeout=45)
         
         if result.returncode != 0:
             return jsonify({
