@@ -4,6 +4,9 @@ natak ALL=(ALL) NOPASSWD: /opt/nucleus/bin/config_generation.sh
 # Allow natak user to run iw-wifi-scan.sh as root (needed by Wi-Fi channel scan)
 natak ALL=(ALL) NOPASSWD: /opt/nucleus/bin/iw-wifi-scan.sh
 
+# Allow natak user to switch eth0 between WAN/LAN modes (needed by ethernet web UI)
+natak ALL=(ALL) NOPASSWD: /opt/nucleus/bin/eth0-mode.sh
+
 # Allow natak user to control cot-bridge service (needed by meshtastic web UI)
 natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl start cot-bridge.service
 natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop cot-bridge.service
