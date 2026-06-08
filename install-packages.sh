@@ -56,7 +56,7 @@ pip3 install --break-system-packages nomadnet
 # takproto: TAK Protocol V1 (protobuf) encoding/decoding
 pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/takproto.git"
 # meshtastic-tak: TAKPacketV2 conversion + zstd dictionary compression
-pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/TAKPacket-SDK.git#subdirectory=python"
+pip3 install --break-system-packages --upgrade "git+https://github.com/meshtastic/TAKPacket-SDK.git#subdirectory=python"
 
 # Configure environment
 echo "[4/8] Configuring environment..."
