@@ -58,6 +58,21 @@ pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/takproto
 # meshtastic-tak: TAKPacketV2 conversion + zstd dictionary compression
 pip3 install --break-system-packages --upgrade "git+https://github.com/meshtastic/TAKPacket-SDK.git#subdirectory=python"
 
+# Pin protobuf to major version 6 — MUST run AFTER meshtastic/takproto/TAKPacket-SDK
+# installs, since their `pip install --upgrade` pulls whatever protobuf is newest.
+#
+# The cot-bridge depends on meshtastic_tak, whose generated code (atak_pb2.py) is
+# compiled with protobuf gencode 6.x. Protobuf enforces that the runtime and gencode
+# share the same MAJOR version, so a runtime of 5.x or 7.x makes cot-bridge crash at
+# import with: "Detected mismatched Protobuf Gencode/Runtime major versions ...
+# Same major version is required." (seen on node 0034, 2026-06-16).
+#
+# Range (>=6,<7) instead of an exact pin: allows protobuf 6.x patch/minor updates
+# (bug/security fixes) while blocking the major-version jump that actually breaks us.
+# Revisit only if meshtastic_tak regenerates against protobuf 7.
+pip3 install --break-system-packages "protobuf>=6,<7"
+
+
 # Configure environment
 echo "[4/8] Configuring environment..."
 # Add ~/.local/bin to PATH for Python packages
