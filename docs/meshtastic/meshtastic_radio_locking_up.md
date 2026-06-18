@@ -169,3 +169,129 @@ iw phy $MESH_PHY set rts $MESH_RTS_THRESHOLD
 | `install-packages.sh` | Added `uhubctl` | Ensure USB power cycle tool is available |
 
 ---
+
+## 2026-06-17 — Fleet-wide Serial Timeout, Recovered by Clean USB Power Cycle
+
+**Affected:** Nodes 35, 36, 37 (3 of 4)
+**Not affected:** Node 34
+**Status:** Root cause confirmed (radio firmware boot lockup); boot-time recovery
+reworked because the previous implementation made it worse.
+
+### Symptom
+
+On 3 of 4 identically-configured nodes the ATAK CoT bridge would not start.
+`cot-bridge.service` crash-looped with:
+
+```
+Opening SerialInterface(devPath=None)...
+Radio connection lost!
+Failed to open serial interface: Timed out waiting for connection completion
+cot-bridge.service: Failed with result 'exit-code'.
+```
+
+The web API reported `service_active: true`, `radio_detected: true` on all three
+— i.e. `/dev/ttyACM0` existed — but the bridge could never complete the serial
+handshake. Node 34 came up clean and bridged normally.
+
+### What did NOT fix it
+
+All of these were tried multiple times and **failed**:
+
+- Full node reboots (including via power disconnection of the Pi)
+- Physically unplugging and replugging the **radio** USB
+- Pressing the **reset** button on the RAK4631
+- Setting `USB_HUB_POWER_CYCLE` `false` → `true` and rebooting
+
+### What DID fix it
+
+A single clean USB **hub** power cycle, run manually on a settled system:
+
+```
+sudo uhubctl -a cycle -l 1-1
+```
+
+This recovered every affected node on the first try. After it, re-run
+`sudo /opt/nucleus/bin/mesh-start.sh` to bring wlan1 back into mesh mode (the
+hub also carries the wifi adapter — see below).
+
+### The decisive evidence (captured live, in the failed state)
+
+Earlier investigations kept destroying the evidence by rebooting (journaling is
+**volatile by design** to minimize SD-card wear — see
+`docs/system_info/minimize_sd_wear.md` — so failed-boot logs are lost on reboot).
+This time the failed state was captured before recovery. On the failed cold boot
+the kernel log showed the radio enumerating **perfectly**:
+
+```
+usb 1-1.4: New USB device found, idVendor=239a, idProduct=8029
+usb 1-1.4: Product: WisCore RAK4631 Board
+cdc_acm 1-1.4:1.0: ttyACM0: USB ACM device
+```
+
+**Zero USB/xHCI errors** — no `-71`, no `-110`, no descriptor read failures, no
+reset storms. The USB bus, hub, cable, and power are healthy. `lsusb -t` showed
+the device present and bound to `cdc_acm`. The device node existed and was
+readable; it simply never answered the Meshtastic protocol handshake.
+
+### Root cause
+
+The **nRF52840 firmware boots into a hung state**: it completes USB enumeration
+(so `/dev/ttyACM0` appears and `radio_detected=true`) but never services the
+serial protocol. Because the hang is in the radio's own firmware:
+
+- A **warm reboot does not clear it** — a reboot never drops USB VBUS, so the
+  nRF52840 is never actually reset.
+- A **radio-only replug/reset did not reliably clear it** either in this
+  incident (the chip re-entered the hung state on the subsequent boot).
+- A **hub VBUS power cycle (`uhubctl`) clears it** — dropping and restoring
+  power hard-resets the chip so the firmware boots cleanly.
+
+This is the same class of failure as the original Node 9 lockup above; here it
+was reproducible on a cold boot across three nodes.
+
+### Why the existing boot-time workaround was making it worse
+
+The original `USB_HUB_POWER_CYCLE` block in `mesh-start.sh` did:
+
+```
+uhubctl -a off → on → sleep 3 → echo 1-1 > unbind → sleep 1 → echo 1-1 > bind
+```
+
+The boot log proved the `unbind`/`bind` "force re-enumeration" step fired only
+~4 seconds after power-on — i.e. **while the nRF52840 firmware was still
+booting** — yanking it off the bus and re-hanging it. So the workaround intended
+to recover the radio was itself leaving it hung. A *single clean* cycle on a
+settled system (the manual recovery) worked precisely because it had no
+unbind/bind and gave the firmware time to come up.
+
+### Fix implemented
+
+Reworked the `USB_HUB_POWER_CYCLE` block in `mesh-start.sh`:
+
+1. **Removed the `unbind`/`bind` force-re-enumeration step** (the thing that
+   re-hung the radio).
+2. **Clean `uhubctl -a off/on` only**, followed by a settle delay
+   (`USB_CYCLE_SETTLE`, default 10s) so the firmware finishes booting before
+   anything probes it.
+3. **Verify-and-retry:** after the settle, actually probe the radio with
+   `meshtastic --port /dev/ttyACM0 --info`. Device-node existence is NOT trusted
+   (a hung radio still creates the node). If it doesn't answer, cycle again up to
+   `USB_CYCLE_MAX_ATTEMPTS` (default 3).
+4. **Ordering preserved:** the block runs BEFORE wlan1 configuration. Hub 1-1
+   carries both the radio (1-1.4) and the wifi mesh adapter (wlan1 / 1-1.2), so
+   the cycle resets wlan1 too — running it first means wlan1 is built fresh
+   afterward instead of being torn down after the mesh is up. (This is why the
+   *manual* late cycle during troubleshooting knocked the mesh offline.)
+
+### Operational notes
+
+- **Recovery command (manual, last resort):** `sudo uhubctl -a cycle -l 1-1`,
+  then `sudo /opt/nucleus/bin/mesh-start.sh` to restore wlan1.
+- **The cycle always resets wlan1** because the radio and wifi share hub 1-1.
+  Expect a brief mesh blip whenever the power cycle runs.
+- **Root cause of the *initial* hang is the nRF52840 firmware**, not Nucleus
+  software or USB hardware. A firmware update on the RAK4631 may be the real
+  long-term fix; the power-cycle-on-boot is a reliable workaround.
+
+---
+

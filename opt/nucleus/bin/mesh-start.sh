@@ -23,29 +23,73 @@ source /etc/nucleus/mesh.conf
 sysctl -w net.ipv4.ip_forward=1
 
 # USB hub power cycle (opt-in via USB_HUB_POWER_CYCLE in mesh.conf)
+# Recovers a RAK4631 (nRF52840) Meshtastic radio that boots into a HUNG state:
+# the device enumerates cleanly on USB (/dev/ttyACM0 appears, no kernel/xhci
+# errors) but the firmware never answers the serial handshake, so cot-bridge
+# fails with "Timed out waiting for connection completion". A warm reboot does
+# NOT clear this — VBUS is never cut — so only a real USB power cycle (which
+# drops VBUS and hard-resets the chip) recovers it. Confirmed reproducible on a
+# cold boot on affected nodes 2026-06-17. See:
+#   docs/meshtastic/meshtastic_radio_locking_up.md
+#
+# IMPORTANT (ordering): hub 1-1 carries BOTH the radio (1-1.4) and the wifi
+# mesh adapter (wlan1 / 1-1.2). This block MUST run BEFORE wlan1 is configured
+# below, because the cycle resets wlan1 too — we want it (re)built fresh
+# afterward, not torn down after the mesh is already up.
+#
+# IMPORTANT (no unbind/bind): we do a CLEAN power off/on ONLY. The old code did
+# a driver unbind/bind "force re-enumeration" ~4s after power-on, which yanked
+# the nRF52840 off the bus while its firmware was still booting and RE-HANGED
+# the radio. That step is removed. Instead we settle, then VERIFY the firmware
+# actually answers, and re-cycle up to USB_CYCLE_MAX_ATTEMPTS times if not.
 if [ "${USB_HUB_POWER_CYCLE}" = "true" ]; then
     if command -v uhubctl &> /dev/null; then
-        echo "Power-cycling USB hub 1-1 to recover Meshtastic radio..."
-        uhubctl -a off -l 1-1
-        sleep 3
-        uhubctl -a on -l 1-1
-        sleep 3
+        ACM_DEV=/dev/ttyACM0
+        USB_CYCLE_MAX_ATTEMPTS=${USB_CYCLE_MAX_ATTEMPTS:-3}
+        USB_CYCLE_SETTLE=${USB_CYCLE_SETTLE:-10}
 
-        # Force kernel to re-enumerate devices (uhubctl power-on alone is unreliable on VIA Labs hubs)
-        echo "Forcing USB hub re-enumeration..."
-        echo "1-1" > /sys/bus/usb/drivers/usb/unbind
-        sleep 1
-        echo "1-1" > /sys/bus/usb/drivers/usb/bind
+        radio_responds() {
+            # Returns 0 only if the Meshtastic firmware actually answers on the
+            # serial port. Device-node existence is NOT sufficient — a hung
+            # radio still enumerates and creates /dev/ttyACM0 — so we perform a
+            # real handshake via the meshtastic CLI. The port is free here
+            # because cot-bridge.service starts After=mesh-start.service.
+            [ -e "$ACM_DEV" ] || return 1
+            timeout 20 meshtastic --port "$ACM_DEV" --info >/dev/null 2>&1
+        }
 
-        # Wait for wlan1 to appear (mt76x0u driver needs time after re-enumeration)
+        radio_ok=false
+        for attempt in $(seq 1 "$USB_CYCLE_MAX_ATTEMPTS"); do
+            echo "Power-cycling USB hub 1-1 to recover Meshtastic radio (attempt $attempt/$USB_CYCLE_MAX_ATTEMPTS)..."
+            uhubctl -a off -l 1-1
+            sleep 3
+            uhubctl -a on -l 1-1
+
+            # Let the nRF52840 firmware finish booting before probing it.
+            echo "Waiting ${USB_CYCLE_SETTLE}s for radio firmware to settle..."
+            sleep "$USB_CYCLE_SETTLE"
+
+            if radio_responds; then
+                echo "Meshtastic radio responded on $ACM_DEV (attempt $attempt)."
+                radio_ok=true
+                break
+            fi
+            echo "Radio did not respond after cycle $attempt — retrying..."
+        done
+
+        if [ "$radio_ok" != "true" ]; then
+            echo "WARNING: Meshtastic radio still not responding after ${USB_CYCLE_MAX_ATTEMPTS} power cycles."
+        fi
+
+        # Ensure wlan1 has re-appeared after the hub power cycle before we
+        # continue to mesh configuration below (mt76x0u needs a moment).
         for i in $(seq 1 15); do
             ip link show wlan1 &>/dev/null && break
             echo "Waiting for wlan1... ($i/15)"
             sleep 1
         done
-
         if ip link show wlan1 &>/dev/null; then
-            echo "USB hub power cycle complete. Devices re-enumerated."
+            echo "USB hub power cycle complete. wlan1 present; continuing to mesh setup."
         else
             echo "WARNING: wlan1 did not appear after USB power cycle!"
         fi
@@ -54,6 +98,7 @@ if [ "${USB_HUB_POWER_CYCLE}" = "true" ]; then
         echo "Install with: sudo apt install uhubctl"
     fi
 fi
+
 
 # Set interfaces to not be managed by NetworkManager
 nmcli device set eth0 managed no

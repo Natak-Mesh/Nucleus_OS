@@ -108,6 +108,25 @@ The bridge runs as `cot-bridge.service`. It starts after `mesh-start.service`,
 runs as the `natak` user with `CAP_NET_RAW` (required for raw multicast socket
 operations), and restarts on failure with a 10-second delay.
 
+### Troubleshooting: bridge crash-loops with "Failed to open serial interface"
+
+If `cot-bridge.service` repeatedly fails with
+`Failed to open serial interface: Timed out waiting for connection completion`
+while `/dev/ttyACM0` still exists, the RAK4631 (nRF52840) firmware has booted
+into a hung state — it enumerates on USB but won't answer the serial handshake.
+A warm reboot or radio-only replug does **not** clear it; only a USB hub VBUS
+power cycle does:
+
+```
+sudo uhubctl -a cycle -l 1-1
+sudo /opt/nucleus/bin/mesh-start.sh   # restore wlan1 (shares hub 1-1 with radio)
+```
+
+The boot-time auto-recovery is the `USB_HUB_POWER_CYCLE` flag in `mesh.conf`.
+Full incident analysis and root cause:
+`docs/meshtastic/meshtastic_radio_locking_up.md`.
+
+
 ### Configuration
 
 `/etc/nucleus/mesh.conf` contains the flag:
