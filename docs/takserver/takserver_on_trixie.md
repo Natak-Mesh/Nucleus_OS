@@ -174,13 +174,30 @@ critical Nucleus services on the local bridge and mesh interfaces. After enablin
 # Trust local interfaces (AP clients and mesh peers are already authenticated)
 sudo ufw allow in on br-lan
 sudo ufw allow in on wlan1
+
+# CRITICAL: allow forwarded/routed traffic between trusted interfaces.
+# UFW defaults to 'deny (routed)', which silently breaks BOTH:
+#   - Internet gateway sharing (EUD on br-lan -> eth0/router)
+#   - ATAK multicast forwarding across the mesh (br-lan <-> wlan1)
+sudo ufw default allow routed
+sudo ufw reload
 ```
 
 Without these rules, `systemd-networkd`'s DHCP server on br-lan won't respond to AP clients,
 and `cot-bridge` won't receive ATAK multicast traffic to forward over LoRa.
 
-These rules are interface-specific — they do NOT weaken eth0 (WAN/internet) protection.
-eth0 remains firewalled with only explicitly allowed ports (SSH, TAKServer, etc.).
+> ⚠️ **Watch for this symptom:** If the node itself has internet but a connected wlan0/EUD
+> client does **not**, the cause is almost always `deny (routed)`. The node reaching the
+> internet is locally-originated traffic (covered by `allow outgoing`), but EUD traffic must
+> be *forwarded* br-lan → eth0, which `deny (routed)` blocks. Verify with
+> `sudo ufw status verbose` (look at the `Default:` line) and fix with
+> `sudo ufw default allow routed && sudo ufw reload`.
+
+These rules are interface-specific (or, for `allow routed`, scoped to forwarding between
+trusted interfaces) — they do NOT weaken eth0 (WAN/internet) protection. `deny (incoming)`
+stays in place and eth0 remains firewalled with only explicitly allowed ports (SSH,
+TAKServer, etc.). See `docs/system_info/UFW_settings.md` for the full firewall reference.
+
 
 **To remove Bookworm repos later (not recommended while TAKServer is installed):**
 ```bash

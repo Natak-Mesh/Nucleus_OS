@@ -322,7 +322,36 @@ curl http://example.com
 
 ## Troubleshooting
 
+### EUD/wlan0 client has no internet, but the node itself does
+
+**Symptom:** `ping 8.8.8.8` works on the node, but a device connected to wlan0
+(or eth0 in LAN mode) cannot reach the internet.
+
+**Cause:** UFW's default routed policy is set to `deny (routed)`. The node reaching
+the internet is *locally-originated* traffic (allowed by `allow outgoing`), but the
+EUD's traffic must be **forwarded** br-lan → eth0, which `deny (routed)` blocks. The
+MASQUERADE rule and `ip_forward` can both be correct and it will still fail.
+
+**Diagnose:**
+```bash
+sudo ufw status verbose | grep Default
+# Bad:  Default: deny (incoming), allow (outgoing), deny (routed)
+# Good: Default: deny (incoming), allow (outgoing), allow (routed)
+```
+
+**Fix:**
+```bash
+sudo ufw default allow routed
+sudo ufw reload
+```
+
+This does NOT disable the firewall — `deny (incoming)` and all per-port rules stay
+intact. It only permits traffic the node forwards between its trusted interfaces
+(br-lan ↔ eth0 for internet, br-lan ↔ wlan1 for ATAK multicast). This is the
+required standing config — see `docs/system_info/UFW_settings.md`.
+
 ### Internet sharing not working after switching to WAN mode
+
 
 ```bash
 # Check if MASQUERADE rule is present
