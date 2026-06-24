@@ -34,7 +34,8 @@ sudo apt install -y \
   sshpass \
   btop \
   mtr-tiny \
-  ncdu
+  ncdu \
+  nginx
 
 # Install Python packages
 echo "[3/8] Installing Python packages..."
