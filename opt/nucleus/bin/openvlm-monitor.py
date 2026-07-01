@@ -26,7 +26,10 @@ import select
 import struct
 import subprocess
 import sys
+import tempfile
 import time
+import wave
+
 
 # struct input_event on 64-bit Linux:
 #   struct timeval { long tv_sec; long tv_usec; }  -> 'll'  (16 bytes)
@@ -50,6 +53,10 @@ CHANNELS = 1
 SAMPLE_BYTES = 2  # S16_LE
 CHUNK_FRAMES = 1024
 CHUNK_BYTES = CHUNK_FRAMES * CHANNELS * SAMPLE_BYTES
+
+# How long to record before prompting for playback.
+RECORD_SECONDS = 5
+
 
 
 def find_openvlm_event():
@@ -119,6 +126,39 @@ def maximize_mic_gain(card):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except FileNotFoundError:
             return
+
+
+def maximize_playback_volume(card):
+    """Set the OpenVLM 'PCM' playback control to max, best-effort."""
+    try:
+        subprocess.run(["amixer", "-c", str(card), "sset", "PCM", "100%"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        return
+
+
+def normalize_pcm(pcm_bytes, target=0.9):
+    """Scale S16_LE PCM so the loudest sample reaches `target` of full-scale.
+    Returns amplified bytes (clipping-protected). No-op if silent."""
+    count = len(pcm_bytes) // 2
+    if count == 0:
+        return pcm_bytes
+    samples = list(struct.unpack("<{}h".format(count), pcm_bytes[: count * 2]))
+    peak = max((abs(s) for s in samples), default=0)
+    if peak == 0:
+        return pcm_bytes
+    gain = (target * 32767.0) / peak
+    limit = 32767
+    out = []
+    for s in samples:
+        v = int(s * gain)
+        if v > limit:
+            v = limit
+        elif v < -limit:
+            v = -limit
+        out.append(v)
+    return struct.pack("<{}h".format(len(out)), *out), gain
+
 
 
 
@@ -231,6 +271,8 @@ def main():
             sys.exit("ERROR: could not locate OpenVLM ALSA card; pass --card N or --device plughw:N,0")
         alsa_device = "plughw:{},0".format(card)
         maximize_mic_gain(card)
+        maximize_playback_volume(card)
+
 
 
     # Open the PTT source: CM108 HID GPIO via /dev/hidraw0 (non-blocking).
@@ -263,16 +305,22 @@ def main():
     rms = 0.0
     peak = 0.0
     audio_buf = b""
+    meter_buf = b""
+    captured = bytearray()  # all raw PCM captured during the 5s window
+
+    ptt_pressed = False  # only capture audio to the WAV while this is True
 
     print("OpenVLM monitor")
     print("  PTT source: {} (byte[{}], pressed when bit {:#x} clear)".format(
         HIDRAW_PATH, PTT_BYTE_INDEX, PTT_PRESSED_MASK))
     print("  ALSA input: {}".format(alsa_device))
-    print("  Hold the PTT and talk - the mic meter should move. Ctrl-C to quit.")
+    print("  Recording {}s - audio is ONLY captured while the PTT is held...".format(RECORD_SECONDS))
     print("")
 
+
+    start = time.time()
     try:
-        while True:
+        while time.time() - start < RECORD_SECONDS:
             rlist, _, _ = select.select([ptt_fd, audio_fd], [], [], 0.05)
 
             # PTT: read HID report, decode byte[PTT_BYTE_INDEX].
@@ -283,14 +331,15 @@ def main():
                     report = b""
                 if len(report) > PTT_BYTE_INDEX:
                     pressed = (report[PTT_BYTE_INDEX] & PTT_PRESSED_MASK) != 0
-
+                    ptt_pressed = pressed
                     new_state = "PRESSED " if pressed else "RELEASED"
                     if new_state != ptt_state:
                         ptt_state = new_state
                         sys.stdout.write("\n[{}] PTT {}\n".format(
                             time.strftime("%H:%M:%S"), ptt_state.strip()))
 
-            # Audio: always running, so meter moves whenever there's signal.
+            # Audio: read the stream so the meter always moves, but only
+            # KEEP audio in the capture buffer while the PTT is pressed.
             if audio_fd in rlist:
                 try:
                     chunk = os.read(audio_fd, CHUNK_BYTES)
@@ -300,26 +349,69 @@ def main():
                     err = arec.stderr.read().decode(errors="replace").strip()
                     sys.stdout.write("\narecord exited: {}\n".format(err or "(no error output)"))
                     break
-                audio_buf += chunk
-                while len(audio_buf) >= CHUNK_BYTES:
-                    rms, peak = rms_and_peak(audio_buf[:CHUNK_BYTES])
-                    audio_buf = audio_buf[CHUNK_BYTES:]
+                if ptt_pressed:
+                    captured += chunk
+                meter_buf += chunk
+                while len(meter_buf) >= CHUNK_BYTES:
+                    rms, peak = rms_and_peak(meter_buf[:CHUNK_BYTES])
+                    meter_buf = meter_buf[CHUNK_BYTES:]
 
+
+            remaining = max(0.0, RECORD_SECONDS - (time.time() - start))
             sys.stdout.write(
-                "\rPTT: {:8s} | mic {} rms={:.3f} peak={:.3f}   ".format(
-                    ptt_state, meter_bar(rms), rms, peak
+                "\rREC {:4.1f}s left | PTT: {:8s} | mic {} rms={:.3f} peak={:.3f}   ".format(
+                    remaining, ptt_state, meter_bar(rms), rms, peak
                 )
             )
             sys.stdout.flush()
 
     except KeyboardInterrupt:
-        sys.stdout.write("\nStopping...\n")
+        sys.stdout.write("\nInterrupted during recording.\n")
     finally:
         try:
             arec.terminate()
         except Exception:
             pass
         os.close(ptt_fd)
+
+    # Normalize (amplify) the captured audio so quiet speech is audible.
+    result = normalize_pcm(bytes(captured))
+    if isinstance(result, tuple):
+        normalized, applied_gain = result
+    else:
+        normalized, applied_gain = result, 1.0
+
+    # Stop capture, write the normalized audio to a temp WAV.
+    wav_path = os.path.join(tempfile.gettempdir(), "openvlm-capture.wav")
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(SAMPLE_BYTES)
+        wf.setframerate(RATE)
+        wf.writeframes(normalized)
+
+    dur = len(captured) / float(RATE * CHANNELS * SAMPLE_BYTES)
+    sys.stdout.write("\n\nRecording complete: {} ({:.1f}s captured, normalized x{:.1f}).\n".format(
+        wav_path, dur, applied_gain))
+
+
+    # Prompt loop for playback.
+    while True:
+        try:
+            ans = input("Press Enter to play back (or 'q' then Enter to quit): ")
+        except (EOFError, KeyboardInterrupt):
+            sys.stdout.write("\nQuit.\n")
+            break
+        if ans.strip().lower() == "q":
+            sys.stdout.write("Quit.\n")
+            break
+        sys.stdout.write("Playing back on {} ...\n".format(alsa_device))
+        try:
+            subprocess.run(["aplay", "-D", alsa_device, wav_path],
+                           stderr=subprocess.STDOUT)
+        except FileNotFoundError:
+            sys.stdout.write("ERROR: aplay not found (install alsa-utils).\n")
+            break
+
 
 
 
