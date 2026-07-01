@@ -37,6 +37,13 @@ EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
 EV_KEY = 0x01
 # value: 0 = release, 1 = press, 2 = autorepeat
 
+# PTT is read from the CM108 HID GPIO via /dev/hidraw0.
+# Report byte[1]: 0x01 = PRESSED, 0x05 = RELEASED (observed on this OpenVLM).
+HIDRAW_PATH = "/dev/hidraw0"
+PTT_BYTE_INDEX = 1
+PTT_PRESSED_MASK = 0x04  # bit 2: 0 = pressed, 1 = released (0x01 vs 0x05)
+
+
 # Audio capture params (match the OpenVLM capture endpoint)
 RATE = 48000
 CHANNELS = 1
@@ -92,10 +99,115 @@ def rms_and_peak(pcm_bytes):
     return rms, peak / 32768.0
 
 
+# The ComTac mic is a low-level signal, so displayed levels are small.
+# Scale the meter bar for visibility (does NOT change the raw rms/peak numbers).
+METER_DISPLAY_GAIN = 15.0
+
+
 def meter_bar(level, width=30):
-    """Render a 0.0-1.0 level as a text bar."""
-    filled = int(min(1.0, max(0.0, level)) * width)
+    """Render a 0.0-1.0 level as a text bar (with display gain for low-level mics)."""
+    filled = int(min(1.0, max(0.0, level * METER_DISPLAY_GAIN)) * width)
     return "[" + "#" * filled + "-" * (width - filled) + "]"
+
+
+def maximize_mic_gain(card):
+    """Set the OpenVLM 'Mic' capture control to max and enable AGC, best-effort."""
+    for args in (["sset", "Mic", "100%", "cap"],
+                 ["sset", "Auto Gain Control", "on"]):
+        try:
+            subprocess.run(["amixer", "-c", str(card)] + args,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            return
+
+
+
+def diagnose():
+    """Watch ALL /dev/input/event* and poll /dev/hidraw* simultaneously,
+    printing anything that changes. Use this to find which source your real
+    PTT actually drives. Press your PTT a few times, then Ctrl-C."""
+    sources = {}  # fd -> (label, kind)
+
+    # Open every input event node.
+    for evdev in sorted(glob.glob("/dev/input/event*")):
+        name = "?"
+        try:
+            with open("/sys/class/input/{}/device/name".format(os.path.basename(evdev))) as f:
+                name = f.read().strip()
+        except OSError:
+            pass
+        try:
+            fd = os.open(evdev, os.O_RDONLY | os.O_NONBLOCK)
+            sources[fd] = ("{} ({})".format(evdev, name), "event")
+        except OSError as e:
+            print("skip {}: {}".format(evdev, e))
+
+    # Open every hidraw node.
+    hidraw_last = {}
+    for hidraw in sorted(glob.glob("/dev/hidraw*")):
+        try:
+            fd = os.open(hidraw, os.O_RDONLY | os.O_NONBLOCK)
+            sources[fd] = (hidraw, "hidraw")
+            hidraw_last[fd] = None
+        except OSError as e:
+            print("skip {}: {} (try sudo)".format(hidraw, e))
+
+    if not sources:
+        sys.exit("ERROR: could not open any input/hidraw devices. Run with sudo.")
+
+    print("DIAGNOSE MODE - watching:")
+    for fd, (label, kind) in sources.items():
+        print("  [{}] {}".format(kind, label))
+    print("\nNow press/hold your REAL PTT a few times. Ctrl-C to quit.\n")
+
+    poll_fds = list(sources.keys())
+    try:
+        while True:
+            rlist, _, _ = select.select(poll_fds, [], [], 0.05)
+
+            # Also actively poll hidraw nodes (some report only on change).
+            for fd, (label, kind) in sources.items():
+                if kind != "hidraw":
+                    continue
+                try:
+                    data = os.read(fd, 64)
+                except (BlockingIOError, OSError):
+                    data = b""
+                if data:
+                    hexb = " ".join("{:02x}".format(b) for b in data)
+                    prev = hidraw_last.get(fd)
+                    changed = ""
+                    if prev is not None and len(prev) == len(data):
+                        diffs = [i for i in range(len(data)) if data[i] != prev[i]]
+                        if diffs:
+                            changed = "  changed bytes: {}".format(diffs)
+                    hidraw_last[fd] = data
+                    print("[{}] HIDRAW {}: {}{}".format(
+                        time.strftime("%H:%M:%S"), label, hexb, changed))
+
+            for fd in rlist:
+                label, kind = sources[fd]
+                if kind != "event":
+                    continue
+                try:
+                    data = os.read(fd, EVENT_SIZE * 64)
+                except (BlockingIOError, OSError):
+                    continue
+                for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
+                    _, _, etype, ecode, evalue = struct.unpack(
+                        EVENT_FORMAT, data[off:off + EVENT_SIZE])
+                    if etype == 0:  # EV_SYN, skip noise
+                        continue
+                    print("[{}] EVENT {}: type={} code={} value={}".format(
+                        time.strftime("%H:%M:%S"), label, etype, ecode, evalue))
+    except KeyboardInterrupt:
+        print("\nDiagnose stopped.")
+    finally:
+        for fd in sources:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def main():
@@ -103,11 +215,13 @@ def main():
     parser.add_argument("--event", help="input event node (default: auto-detect)")
     parser.add_argument("--card", type=int, help="ALSA card number (default: auto-detect)")
     parser.add_argument("--device", help="explicit ALSA device, e.g. plughw:1,0 (overrides --card)")
+    parser.add_argument("--diagnose", action="store_true",
+                        help="watch ALL input event* and hidraw* nodes to find the real PTT source")
     args = parser.parse_args()
 
-    event_path = args.event or find_openvlm_event()
-    if not event_path:
-        sys.exit("ERROR: could not locate OpenVLM input event node; pass --event /dev/input/eventX")
+    if args.diagnose:
+        diagnose()
+        return
 
     if args.device:
         alsa_device = args.device
@@ -116,16 +230,18 @@ def main():
         if card is None:
             sys.exit("ERROR: could not locate OpenVLM ALSA card; pass --card N or --device plughw:N,0")
         alsa_device = "plughw:{},0".format(card)
+        maximize_mic_gain(card)
 
-    # Open the PTT event device (raw, non-blocking).
+
+    # Open the PTT source: CM108 HID GPIO via /dev/hidraw0 (non-blocking).
     try:
-        ev_fd = os.open(event_path, os.O_RDONLY | os.O_NONBLOCK)
+        ptt_fd = os.open(HIDRAW_PATH, os.O_RDONLY | os.O_NONBLOCK)
     except PermissionError:
-        sys.exit("ERROR: permission denied opening {}. Run with sudo or join the 'input' group.".format(event_path))
+        sys.exit("ERROR: permission denied opening {}. Run with sudo.".format(HIDRAW_PATH))
     except OSError as e:
-        sys.exit("ERROR: cannot open {}: {}".format(event_path, e))
+        sys.exit("ERROR: cannot open {}: {}".format(HIDRAW_PATH, e))
 
-    # Launch arecord, streaming raw PCM to stdout.
+    # Launch arecord, streaming raw PCM to stdout continuously.
     arecord_cmd = [
         "arecord",
         "-D", alsa_device,
@@ -138,46 +254,43 @@ def main():
     try:
         arec = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError:
-        os.close(ev_fd)
+        os.close(ptt_fd)
         sys.exit("ERROR: arecord not found (install alsa-utils).")
 
     audio_fd = arec.stdout.fileno()
 
     ptt_state = "RELEASED"
-    last_keycode = None
     rms = 0.0
     peak = 0.0
     audio_buf = b""
 
     print("OpenVLM monitor")
-    print("  PTT event:  {}".format(event_path))
+    print("  PTT source: {} (byte[{}], pressed when bit {:#x} clear)".format(
+        HIDRAW_PATH, PTT_BYTE_INDEX, PTT_PRESSED_MASK))
     print("  ALSA input: {}".format(alsa_device))
-    print("  Press the PTT and talk. Ctrl-C to quit.")
+    print("  Hold the PTT and talk - the mic meter should move. Ctrl-C to quit.")
     print("")
 
     try:
         while True:
-            rlist, _, _ = select.select([ev_fd, audio_fd], [], [], 0.1)
+            rlist, _, _ = select.select([ptt_fd, audio_fd], [], [], 0.05)
 
-            if ev_fd in rlist:
+            # PTT: read HID report, decode byte[PTT_BYTE_INDEX].
+            if ptt_fd in rlist:
                 try:
-                    data = os.read(ev_fd, EVENT_SIZE * 64)
-                except BlockingIOError:
-                    data = b""
-                for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
-                    _, _, etype, ecode, evalue = struct.unpack(
-                        EVENT_FORMAT, data[off:off + EVENT_SIZE]
-                    )
-                    if etype == EV_KEY and evalue in (0, 1):
-                        ptt_state = "PRESSED " if evalue == 1 else "RELEASED"
-                        last_keycode = ecode
-                        sys.stdout.write("\n")
-                        sys.stdout.write(
-                            "[{}] PTT {} (keycode {})\n".format(
-                                time.strftime("%H:%M:%S"), ptt_state.strip(), ecode
-                            )
-                        )
+                    report = os.read(ptt_fd, 64)
+                except (BlockingIOError, OSError):
+                    report = b""
+                if len(report) > PTT_BYTE_INDEX:
+                    pressed = (report[PTT_BYTE_INDEX] & PTT_PRESSED_MASK) != 0
 
+                    new_state = "PRESSED " if pressed else "RELEASED"
+                    if new_state != ptt_state:
+                        ptt_state = new_state
+                        sys.stdout.write("\n[{}] PTT {}\n".format(
+                            time.strftime("%H:%M:%S"), ptt_state.strip()))
+
+            # Audio: always running, so meter moves whenever there's signal.
             if audio_fd in rlist:
                 try:
                     chunk = os.read(audio_fd, CHUNK_BYTES)
@@ -192,10 +305,9 @@ def main():
                     rms, peak = rms_and_peak(audio_buf[:CHUNK_BYTES])
                     audio_buf = audio_buf[CHUNK_BYTES:]
 
-            key_label = "" if last_keycode is None else " key={}".format(last_keycode)
             sys.stdout.write(
-                "\rPTT: {:8s}{}  | mic {} rms={:.3f} peak={:.3f}   ".format(
-                    ptt_state, key_label, meter_bar(rms), rms, peak
+                "\rPTT: {:8s} | mic {} rms={:.3f} peak={:.3f}   ".format(
+                    ptt_state, meter_bar(rms), rms, peak
                 )
             )
             sys.stdout.flush()
@@ -207,7 +319,8 @@ def main():
             arec.terminate()
         except Exception:
             pass
-        os.close(ev_fd)
+        os.close(ptt_fd)
+
 
 
 if __name__ == "__main__":
