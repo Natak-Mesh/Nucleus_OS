@@ -67,6 +67,7 @@ sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-web.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/rnsd.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/cot-bridge.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mediamtx.service" /etc/systemd/system/
+sudo cp "$SOURCE_DIR/etc/systemd/system/openvlm-voice.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
 sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/systemd/system/babeld.service.d/
 sudo systemctl daemon-reload
@@ -74,6 +75,7 @@ sudo systemctl enable brlan-setup.service
 sudo systemctl enable mesh-start.service
 sudo systemctl enable mesh-web.service
 sudo systemctl enable rnsd.service
+sudo systemctl enable openvlm-voice.service
 # Note: mediamtx.service is copied but not enabled - enable manually on nodes that need video streaming:
 #       sudo systemctl enable --now mediamtx.service
 
@@ -86,6 +88,9 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/opendht-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/openvlm-voice.py" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/openvlm-monitor.py" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/voice" /usr/local/bin/
 sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
@@ -93,6 +98,9 @@ sudo chmod +x /opt/nucleus/bin/opendht-start.sh
 sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
 sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 sudo chmod +x /opt/nucleus/bin/iw-wifi-scan.sh
+sudo chmod +x /opt/nucleus/bin/openvlm-voice.py
+sudo chmod +x /opt/nucleus/bin/openvlm-monitor.py
+sudo chmod +x /usr/local/bin/voice
 
 # Copy meshtastic module if exists
 if [ -d "$SOURCE_DIR/opt/nucleus/meshtastic" ]; then

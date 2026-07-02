@@ -11,6 +11,9 @@ Shell scripts for mesh network initialization and configuration.
 | `eth0-mode.sh` | Switch eth0 between WAN/LAN modes | Manual or web GUI |
 | `opendht-start.sh` | Start OpenDHT Docker container | Called by mesh-start |
 | `sd-wear-setup.sh` | Minimize SD card writes | One-time setup |
+| `openvlm-voice.py` | Mesh PTT voice daemon (OpenVLM headset) | Boot (via systemd) |
+| `voice` | User CLI for voice daemon (installed to /usr/local/bin) | Manual |
+| `openvlm-monitor.py` | OpenVLM PTT/audio hardware test tool | Manual |
 
 ---
 
@@ -133,6 +136,25 @@ sudo /opt/nucleus/bin/sd-wear-setup.sh
 
 ---
 
+## openvlm-voice.py / voice
+
+Mesh PTT voice comms over wlan1 (UDP multicast, additive mixing). Runs as
+`openvlm-voice.service` at boot; waits for OpenVLM hardware if not plugged in.
+
+**User commands:**
+```bash
+voice start|stop|restart   # control the service
+voice status               # channel, PTT state, active talkers, hardware
+voice channel N            # switch voice channel live (1-254)
+voice log                  # follow daemon log
+```
+
+**mesh.conf variables:** `VOICE_CHANNEL`, `VOICE_JITTER_MS`, `VOICE_TX_GAIN`
+
+Full docs: `docs/VoIP/openvlm_voice_plan.md`
+
+---
+
 ## Configuration Variables
 
 All scripts source `/etc/nucleus/mesh.conf`:
@@ -161,6 +183,7 @@ All scripts source `/etc/nucleus/mesh.conf`:
 | Service | Script | Description |
 |---------|--------|-------------|
 | `mesh-start.service` | mesh-start.sh | Main mesh startup |
+| `openvlm-voice.service` | openvlm-voice.py | Mesh PTT voice daemon |
 | `mesh-web.service` | - | Flask web interface |
 | `babeld.service` | - | Babel routing daemon |
 | `hostapd.service` | - | Access point (wlan0) |

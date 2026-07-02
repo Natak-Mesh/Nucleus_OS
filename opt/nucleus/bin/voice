@@ -1,0 +1,53 @@
+#!/bin/bash
+# voice - simple control for the OpenVLM mesh voice daemon
+#
+# Usage:
+#   voice start        start the voice service
+#   voice stop         stop the voice service
+#   voice status       show service state + daemon status (channel, PTT, talkers)
+#   voice channel N    switch to voice channel N (1-254)
+#   voice log          follow the live daemon log (Ctrl-C to exit)
+
+CTL_HOST=127.0.0.1
+CTL_PORT=5556
+
+ctl() {
+    echo -n "$1" | timeout 2 nc -u -w1 "$CTL_HOST" "$CTL_PORT"
+    echo
+}
+
+case "$1" in
+    start)
+        sudo systemctl start openvlm-voice
+        echo "voice service started"
+        ;;
+    stop)
+        sudo systemctl stop openvlm-voice
+        echo "voice service stopped"
+        ;;
+    restart)
+        sudo systemctl restart openvlm-voice
+        echo "voice service restarted"
+        ;;
+    status)
+        state=$(systemctl is-active openvlm-voice)
+        echo "service: $state"
+        if [ "$state" = "active" ]; then
+            ctl "STATUS"
+        fi
+        ;;
+    channel)
+        if [ -z "$2" ]; then
+            echo "usage: voice channel N   (1-254)"
+            exit 1
+        fi
+        ctl "CHANNEL $2"
+        ;;
+    log)
+        sudo journalctl -u openvlm-voice -f
+        ;;
+    *)
+        echo "usage: voice {start|stop|restart|status|channel N|log}"
+        exit 1
+        ;;
+esac
