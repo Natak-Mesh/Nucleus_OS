@@ -26,12 +26,40 @@ sudo rfkill unblock bluetooth
 
 # Copy etc files (only static configs - generated ones are created by config_generation.sh)
 sudo mkdir -p /etc/nucleus
-if [ -f /etc/nucleus/mesh.conf ] && [ "$FORCE_CONFIG" != "true" ]; then
-    echo "mesh.conf already exists — skipping (use --force-config to overwrite)"
-else
+if [ ! -f /etc/nucleus/mesh.conf ] || [ "$FORCE_CONFIG" = "true" ]; then
+    # Fresh node (or forced): install the repo mesh.conf as-is.
     sudo cp "$SOURCE_DIR/etc/nucleus/mesh.conf" /etc/nucleus/
     sudo chown natak:natak /etc/nucleus/mesh.conf
+else
+    # Existing node: preserve all current values, only ADD keys that are
+    # missing (e.g. keys introduced by new features). The repo mesh.conf is
+    # the source of truth for the full set of keys, their defaults, and the
+    # comment block that precedes each key. Never edits or deletes existing
+    # lines. Idempotent — safe to re-run.
+    echo "mesh.conf exists — syncing any missing keys (existing values preserved)"
+    REPO_CONF="$SOURCE_DIR/etc/nucleus/mesh.conf"
+    NODE_CONF="/etc/nucleus/mesh.conf"
+    ADDED=0
+    buffer=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            key="${line%%=*}"
+            if grep -q "^${key}=" "$NODE_CONF"; then
+                buffer=""                      # key present: drop its comments
+            else
+                { [ -n "$buffer" ] && printf '%s' "$buffer"; printf '%s\n' "$line"; } \
+                    | sudo tee -a "$NODE_CONF" > /dev/null
+                echo "  + added $key"
+                ADDED=$((ADDED+1))
+                buffer=""
+            fi
+        else
+            buffer+="$line"$'\n'                # accumulate comments/blank lines
+        fi
+    done < "$REPO_CONF"
+    [ "$ADDED" -eq 0 ] && echo "  mesh.conf already up to date"
 fi
+
 
 sudo mkdir -p /etc/systemd/network
 sudo cp "$SOURCE_DIR/etc/systemd/network/20-brlan.netdev" /etc/systemd/network/
