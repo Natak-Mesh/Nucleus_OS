@@ -50,29 +50,49 @@
             font-weight: bold;
             text-transform: uppercase;
             letter-spacing: 1px;
-            margin: 16px 0 8px 0;
+            margin: 16px 0 4px 0;
             padding: 6px 8px;
             background: rgba(255,255,255,0.05);
             border-left: 3px solid var(--accent-primary);
             border-radius: 2px;
         }
 
-        /* ── Compact list rows ── */
+        /* ── Column header row ── */
+        .col-hdr {
+            display: grid;
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 6px 4px 4px 4px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .col-hdr.wifi-cols { grid-template-columns: 1fr 80px 60px; }
+        .col-hdr.mesht-cols { grid-template-columns: 1fr 70px 62px 72px; }
+        .col-hdr span:not(:first-child) { text-align: right; }
+
+        /* ── Data rows (grid, phone-friendly) ── */
         .conn-row {
-            display: flex;
-            justify-content: space-between;
+            display: grid;
             align-items: baseline;
-            padding: 6px 0;
-            font-size: 15px;
+            padding: 10px 4px;
+            font-size: 16px;
             font-family: monospace;
             border-bottom: 1px solid rgba(255,255,255,0.04);
+            min-height: 24px;
         }
+        .conn-row.wifi-cols { grid-template-columns: 1fr 80px 60px; }
+        .conn-row.mesht-cols { grid-template-columns: 1fr 70px 62px 72px; }
+        .conn-row span:not(:first-child) { text-align: right; }
         .conn-row .node-id {
             color: var(--text-primary);
         }
-        .conn-row .q-good { color: var(--color-connected); }
-        .conn-row .q-fair { color: var(--color-warning); }
-        .conn-row .q-poor { color: var(--color-disconnected); }
+        .conn-row .dim {
+            color: var(--text-secondary);
+        }
+        .conn-row .q-good { color: var(--color-connected); font-weight: bold; }
+        .conn-row .q-fair { color: var(--color-warning); font-weight: bold; }
+        .conn-row .q-poor { color: var(--color-disconnected); font-weight: bold; }
         .conn-row .q-lost {
             color: var(--text-secondary);
             opacity: 0.5;
@@ -81,23 +101,33 @@
             color: var(--text-secondary);
             font-style: italic;
         }
+        .conn-row.lost .node-id {
+            color: var(--text-secondary);
+            opacity: 0.6;
+        }
 
         /* Meshtastic freshness colors */
         .conn-row .fresh { color: var(--color-connected); }
         .conn-row .stale { color: var(--color-warning); }
         .conn-row .old { color: var(--text-secondary); opacity: 0.5; }
 
+        /* Meshtastic SNR colors */
+        .conn-row .snr-good { color: var(--color-connected); }
+        .conn-row .snr-fair { color: var(--color-warning); }
+        .conn-row .snr-poor { color: var(--color-disconnected); }
+
         .mesh-meta {
             font-size: 12px;
             color: var(--text-secondary);
             margin-top: 4px;
             margin-bottom: 8px;
+            padding: 0 4px;
         }
 
         .empty-msg {
             color: var(--text-secondary);
             font-size: 14px;
-            padding: 6px 0;
+            padding: 8px 4px;
         }
 
         /* ── Collapsible nav ── */
@@ -174,6 +204,11 @@
             font-size: 11px;
             margin-top: 12px;
         }
+        #last-update.no-data {
+            color: var(--color-disconnected);
+            font-weight: bold;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
@@ -193,12 +228,18 @@
 
             <!-- WiFi Mesh Neighbors -->
             <div class="section-hdr" id="wifi-hdr">WiFi Mesh</div>
+            <div class="col-hdr wifi-cols">
+                <span>Node</span><span>Signal</span><span>Link</span>
+            </div>
             <div id="nb-container">
                 <div class="empty-msg">Loading...</div>
             </div>
 
             <!-- Meshtastic Nodes -->
             <div class="section-hdr">Meshtastic</div>
+            <div class="col-hdr mesht-cols">
+                <span>Node</span><span>SNR</span><span>Hops</span><span>Heard</span>
+            </div>
             <div id="mesh-radio-container">
                 <div class="empty-msg">Loading...</div>
             </div>
@@ -234,6 +275,10 @@
     </main>
 
     <script>
+        const STALE_THRESHOLD = 15000; // ms without a successful refresh = stale
+        let lastSuccess = 0;
+        let lastSuccessTimeStr = null;
+
         function toggleTools() {
             const toggle = document.getElementById('tools-toggle');
             const body = document.getElementById('tools-body');
@@ -245,10 +290,10 @@
             if (!lastHeard) return '?';
             const secs = Math.floor(Date.now() / 1000) - lastHeard;
             if (secs < 0) return 'now';
-            if (secs < 60) return secs + 's ago';
-            if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
-            if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
-            return Math.floor(secs / 86400) + 'd ago';
+            if (secs < 60) return secs + 's';
+            if (secs < 3600) return Math.floor(secs / 60) + 'm';
+            if (secs < 86400) return Math.floor(secs / 3600) + 'h';
+            return Math.floor(secs / 86400) + 'd';
         }
 
         function freshnessClass(lastHeard) {
@@ -259,89 +304,140 @@
             return 'old';
         }
 
+        function snrClass(snr) {
+            // LoRa SNR: > 5 dB solid, 0-5 dB okay, < 0 dB marginal
+            if (snr > 5) return 'snr-good';
+            if (snr >= 0) return 'snr-fair';
+            return 'snr-poor';
+        }
+
+        // Babel cost → link %: cost is ETX-based, 256 = perfect delivery.
+        // link % = 256 / cost * 100, capped at 100.
+        function linkPct(cost) {
+            const c = parseInt(cost, 10);
+            if (!c || c <= 0) return null;
+            return Math.min(100, Math.round((256 / c) * 100));
+        }
+
+        function renderNeighbors(neighbors) {
+            const nb = document.getElementById('nb-container');
+            if (!neighbors || neighbors.length === 0) {
+                nb.innerHTML = '<div class="empty-msg">No mesh neighbors</div>';
+                return;
+            }
+            let h = '';
+            neighbors.forEach(function(n) {
+                if (n.status === 'connected') {
+                    const q = n.cost_quality || 'unknown';
+                    const pct = linkPct(n.cost);
+                    const pctTxt = (pct !== null) ? pct + '%' : '--';
+                    const sig = (n.signal_avg !== null && n.signal_avg !== undefined)
+                        ? n.signal_avg + '<span class="dim"> dBm</span>' : '--';
+                    h += '<div class="conn-row wifi-cols">'
+                       + '<span class="node-id">' + n.ip + '</span>'
+                       + '<span class="dim">' + sig + '</span>'
+                       + '<span class="q-' + q + '">' + pctTxt + '</span>'
+                       + '</div>';
+                } else {
+                    h += '<div class="conn-row wifi-cols lost">'
+                       + '<span class="node-id">' + n.ip + '</span>'
+                       + '<span></span>'
+                       + '<span class="q-lost">lost</span>'
+                       + '</div>';
+                }
+            });
+            nb.innerHTML = h;
+        }
+
+        function renderMeshtastic(m) {
+            const mc = document.getElementById('mesh-radio-container');
+            let mh = '';
+
+            if (m.nodes && m.nodes.length > 0) {
+                m.nodes.forEach(function(node) {
+                    const cls = freshnessClass(node.last_heard);
+                    const age = formatAge(node.last_heard);
+
+                    // SNR (last received packet, last hop only)
+                    let snrTxt = '--', snrCls = 'dim';
+                    if (node.snr !== null && node.snr !== undefined) {
+                        snrTxt = Number(node.snr).toFixed(1);
+                        snrCls = snrClass(node.snr);
+                    }
+
+                    // Hops
+                    let hopsTxt = '--';
+                    if (node.hops_away !== null && node.hops_away !== undefined) {
+                        hopsTxt = (node.hops_away === 0) ? 'direct' : node.hops_away + ' hop' + (node.hops_away > 1 ? 's' : '');
+                    }
+
+                    mh += '<div class="conn-row mesht-cols">'
+                        + '<span class="node-id">' + node.short_name + '</span>'
+                        + '<span class="' + snrCls + '">' + snrTxt + '</span>'
+                        + '<span class="dim">' + hopsTxt + '</span>'
+                        + '<span class="' + cls + '">' + age + '</span>'
+                        + '</div>';
+                });
+            } else {
+                mh += '<div class="empty-msg">No nodes heard</div>';
+            }
+
+            // Radio / bridge status line
+            const radioTxt = m.radio_detected ? 'Radio ✓' : 'No radio';
+            const bridgeTxt = m.bridge_enabled ? 'Bridge ON' : 'BLE mode';
+            const radioClass = m.radio_detected ? 'st-up' : 'st-down';
+            mh += '<div class="mesh-meta">'
+                + '<span class="' + radioClass + '">' + radioTxt + '</span>'
+                + ' · ' + bridgeTxt
+                + '</div>';
+
+            mc.innerHTML = mh;
+        }
+
+        function checkStale() {
+            const el = document.getElementById('last-update');
+            if (lastSuccess && (Date.now() - lastSuccess) > STALE_THRESHOLD) {
+                el.className = 'no-data';
+                el.textContent = 'NO DATA — last update ' + (lastSuccessTimeStr || 'unknown');
+            }
+        }
+
         async function refresh() {
             try {
                 const r = await fetch('/api/dashboard');
+                if (!r.ok) throw new Error('HTTP ' + r.status);
                 const d = await r.json();
+
+                lastSuccess = Date.now();
 
                 // Mesh IP
                 document.getElementById('mesh-ip').textContent = d.mesh_ip || 'N/A';
 
-                // wlan1 status
+                // wlan1 status (channel detail lives on the Monitor page)
                 const w = document.getElementById('wlan1-status');
                 if (d.wlan1.active) {
-                    w.textContent = 'Mesh Ch' + (d.wlan1.channel || '?');
+                    w.textContent = 'Mesh Up';
                     w.className = 'st-up';
                 } else {
-                    w.textContent = 'Mesh: Down';
+                    w.textContent = 'Mesh Down';
                     w.className = 'st-down';
                 }
 
-                // WiFi section header with channel utilization
+                // WiFi section header with channel congestion
                 const wifiHdr = document.getElementById('wifi-hdr');
                 const cu = d.channel_utilization;
                 if (cu) {
-                    var busyColor = cu.busy_pct < 30 ? 'var(--color-connected)' :
+                    var congColor = cu.busy_pct < 30 ? 'var(--color-connected)' :
                                     cu.busy_pct < 50 ? '#66ff66' :
                                     cu.busy_pct < 70 ? 'var(--color-warning)' :
                                     'var(--color-disconnected)';
-                    wifiHdr.innerHTML = 'WiFi Mesh <span style="float:right;font-size:14px;color:' + busyColor + ';text-transform:none;letter-spacing:0">' + cu.busy_pct + '% busy</span>';
+                    wifiHdr.innerHTML = 'WiFi Mesh <span style="float:right;font-size:14px;color:' + congColor + ';text-transform:none;letter-spacing:0">' + cu.busy_pct + '% congestion</span>';
                 } else {
                     wifiHdr.textContent = 'WiFi Mesh';
                 }
 
-                // WiFi Mesh Neighbors
-                const nb = document.getElementById('nb-container');
-                if (!d.neighbors || d.neighbors.length === 0) {
-                    nb.innerHTML = '<div class="empty-msg">No mesh neighbors</div>';
-                } else {
-                    let h = '';
-                    d.neighbors.forEach(function(n) {
-                        if (n.status === 'connected') {
-                            const q = n.cost_quality || 'unknown';
-                            const label = q.charAt(0).toUpperCase() + q.slice(1);
-                            h += '<div class="conn-row">'
-                               + '<span class="node-id">' + n.ip + '</span>'
-                               + '<span class="q-' + q + '">' + label + ' (' + n.cost + ')</span>'
-                               + '</div>';
-                        } else {
-                            h += '<div class="conn-row">'
-                               + '<span class="node-id">' + n.ip + '</span>'
-                               + '<span class="q-lost">lost</span>'
-                               + '</div>';
-                        }
-                    });
-                    nb.innerHTML = h;
-                }
-
-                // Meshtastic
-                const mc = document.getElementById('mesh-radio-container');
-                const m = d.meshtastic || {};
-                let mh = '';
-
-                if (m.nodes && m.nodes.length > 0) {
-                    m.nodes.forEach(function(node) {
-                        const cls = freshnessClass(node.last_heard);
-                        const age = formatAge(node.last_heard);
-                        mh += '<div class="conn-row">'
-                            + '<span class="node-id">' + node.short_name + '</span>'
-                            + '<span class="' + cls + '">' + age + '</span>'
-                            + '</div>';
-                    });
-                } else {
-                    mh += '<div class="empty-msg">No nodes heard</div>';
-                }
-
-                // Radio / bridge status line
-                const radioTxt = m.radio_detected ? 'Radio ✓' : 'No radio';
-                const bridgeTxt = m.bridge_enabled ? 'Bridge ON' : 'BLE mode';
-                const radioClass = m.radio_detected ? 'st-up' : 'st-down';
-                mh += '<div class="mesh-meta">'
-                    + '<span class="' + radioClass + '">' + radioTxt + '</span>'
-                    + ' · ' + bridgeTxt
-                    + '</div>';
-
-                mc.innerHTML = mh;
+                renderNeighbors(d.neighbors);
+                renderMeshtastic(d.meshtastic || {});
 
                 // Show/hide OpenTAKServer pill based on OTS_ENABLED
                 const otsPill = document.getElementById('pill-ots');
@@ -349,11 +445,15 @@
 
                 // Timestamp + version
                 const t = new Date(d.timestamp);
+                lastSuccessTimeStr = t.toLocaleTimeString();
                 const ver = d.version ? d.version + ' · ' : '';
-                document.getElementById('last-update').textContent = ver + 'Updated ' + t.toLocaleTimeString();
+                const el = document.getElementById('last-update');
+                el.className = '';
+                el.textContent = ver + 'Updated ' + lastSuccessTimeStr;
 
             } catch (e) {
                 console.error('Dashboard fetch error:', e);
+                checkStale();
             }
         }
 
@@ -369,6 +469,7 @@
 
         refresh();
         setInterval(refresh, 5000);
+        setInterval(checkStale, 5000);
         document.addEventListener('visibilitychange', function() { if (!document.hidden) refresh(); });
     </script>
 </body>

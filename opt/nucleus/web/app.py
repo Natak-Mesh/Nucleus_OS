@@ -855,11 +855,13 @@ def api_dashboard():
     nodes = get_mesh_nodes()
     neighbors = []
     for node in nodes:
+        wifi = node.get('wifi') or {}
         neighbors.append({
             'ip': node['ipv4'],
             'cost': node['cost'],
             'cost_quality': node.get('cost_quality', 'unknown'),
             'status': node['status'],
+            'signal_avg': wifi.get('signal_avg'),
         })
 
     # Get meshtastic data
