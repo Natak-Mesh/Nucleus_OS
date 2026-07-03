@@ -136,10 +136,21 @@ voice log          # follow the live daemon log (Ctrl-C to exit)
 ### The `/voice` web page (soft PTT)
 
 Reached from the dashboard's Tools grid ("Voice PTT") or directly at
-`https://<serial>-nucleus.local/voice`. **Must be HTTPS** — browsers only allow
-microphone capture (`getUserMedia`) in a secure context; the existing nginx
-self-signed `.local` HTTPS vhost provides this (click through the cert warning,
-same as the rest of the UI).
+`https://<serial>-nucleus.local/voice` **or** `https://<node-ip>/voice`.
+**Must be HTTPS** — browsers only allow microphone capture (`getUserMedia`) in a
+secure context. The page enforces this itself: if it's opened over `http` or on
+the Flask port `:5000`, it redirects to `https://<same-host>/voice`. Works by IP
+or `.local` (click through the self-signed cert warning, same as the rest of the
+UI).
+
+**By-IP support:** nginx routes by hostname, so the `.local` vhost alone would
+not serve voice when the phone connects by IP (on an OTS node, by-IP falls
+through to OTS). `config_generation.sh` therefore writes
+`/etc/nginx/snippets/nucleus-voice.conf` (`/voice-ws`, `/voice`, `/static`) and
+includes it in the OTS `ots_https` block, and the self-signed cert includes the
+node's IPs as SANs so `wss://<ip>` passes TLS. See
+`docs/system_info/web_ui_local_hostname.md` for the full nginx/cert detail.
+
 
 Features: a large press-and-hold PTT button (touch or Spacebar), a named
 channel picker, a live "receiving" talker list, and connection/hardware status.
@@ -188,11 +199,13 @@ attached — the phone (WebSocket) and mesh paths run regardless.
 |---|---|
 | `/opt/nucleus/bin/openvlm-voice.py` | the daemon (mesh + mixer + WS server + OpenVLM front-end) |
 | `/usr/local/bin/voice` | user CLI (start/stop/status/channels/channel/log) |
-| `/opt/nucleus/web/templates/voice.html` | the `/voice` soft-PTT web page |
-| `/etc/systemd/system/openvlm-voice.service` | service (After=mesh-start) |
+| `/opt/nucleus/web/templates/voice.html` | the `/voice` soft-PTT web page (forces itself onto https/443; back button uses history) |
+| `/etc/systemd/system/openvlm-voice.service` | service (After=mesh-start; deploy.sh restarts it on each deploy) |
 | `/etc/nucleus/mesh.conf` | VOICE_CHANNEL / VOICE_CHANNELS / VOICE_JITTER_MS / VOICE_TX_GAIN |
-| `opt/nucleus/bin/config_generation.sh` | generates the nginx vhost incl. `/voice-ws` WSS proxy |
+| `opt/nucleus/bin/config_generation.sh` | generates the `.local` nginx vhost + IP-SAN cert + `nucleus-voice.conf` (by-IP `/voice-ws`, `/voice`, `/static`) |
+| `/etc/nginx/snippets/nucleus-voice.conf` | generated: voice locations included into the OTS 443 vhost for by-IP access |
 | `/opt/nucleus/bin/openvlm-monitor.py` | standalone PTT/audio hardware test tool (not in live path) |
+
 
 ## Ports
 

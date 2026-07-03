@@ -58,19 +58,33 @@ and OTS hostnames go to OTS, untouched.
 
 ### TLS certificate (our own, self-signed)
 
-`config_generation.sh` generates a self-signed certificate for
-`<serial>-nucleus.local` (idempotent — only created if missing), stored at:
+`config_generation.sh` generates a self-signed certificate stored at:
 
 ```
 /etc/nucleus/certs/nucleus-web.crt
 /etc/nucleus/certs/nucleus-web.key
 ```
 
+The cert's Subject Alternative Names (SANs) include **both** the
+`<serial>-nucleus.local` DNS name **and every global IPv4 address on the node**
+(br-lan/AP, wlan1 mesh, eth0, tailscale, …). The IPs are read live from
+`ip -4 -o addr show scope global` at generation time — they are **not** hardcoded
+or pulled from `mesh.conf`. The cert is regenerated whenever this SAN set changes
+(and if the cert/key is missing), so it always matches the node's current
+addresses; otherwise it is left untouched (idempotent).
+
+**Why the IP SANs matter:** phones often reach a node by **IP**, not the `.local`
+name. A cert without a matching IP SAN fails TLS validation for `wss://` even
+after the user clicks through the page's cert warning — which silently breaks the
+OpenVLM voice WebSocket (the page shows "Link: reconnecting…" forever). Including
+the IPs as SANs makes HTTPS-by-IP (and thus voice-by-IP) work.
+
 We use **our own** cert (not OTS's) so the HTTPS path behaves identically on OTS
-and non-OTS nodes. Because it's self-signed for a LAN `.local` hostname,
-browsers will show a "not secure" / certificate warning that the user clicks
-through — this is expected and unavoidable for a local self-signed host (it's
-the same click-through OTS already requires).
+and non-OTS nodes. Because it's self-signed, browsers will show a "not secure" /
+certificate warning that the user clicks through — this is expected and
+unavoidable for a local self-signed host (it's the same click-through OTS already
+requires).
+
 
 ## Coexistence with OpenTAKServer (OTS)
 
@@ -83,7 +97,8 @@ nginx routes requests by the `Host:` header (name-based virtual hosting):
 | Request                                  | Served by                          |
 |------------------------------------------|------------------------------------|
 | `http(s)://<serial>-nucleus.local`       | Nucleus web UI (our vhost → :5000) |
-| `http(s)://<node-ip>` (by IP)            | OTS (its existing default block)   |
+| `http(s)://<node-ip>/voice`, `/voice-ws`, `/static` | Nucleus (voice snippet, see below) |
+| `http(s)://<node-ip>` (any other path)   | OTS (its existing default block)   |
 | OTS hostnames / OTS ATAK ports (8443/8080/8089/...) | OTS, unchanged          |
 
 The Nucleus vhost file is intentionally named with a `zzz-` prefix so it sorts
@@ -92,8 +107,33 @@ the *default* responder for any request that doesn't match our explicit
 `.local` server_name / SNI (e.g. access by raw IP), so OTS behavior is preserved
 exactly.
 
-**Net effect:** the only thing that changed is what happens when you browse to
-the `.local` hostname — it now lands on the Nucleus web UI instead of OTS.
+**Net effect:** browsing to the `.local` hostname lands on the Nucleus web UI
+instead of OTS; and the three voice paths below also work when reached by IP.
+
+### OpenVLM voice by IP (the `nucleus-voice.conf` snippet)
+
+The `.local` vhost above only matches the `.local` hostname, so on an OTS node a
+phone reaching the node **by IP** would hit OTS's 443 vhost — which has no
+`/voice-ws`, so the voice page loads but its WebSocket never connects. To make
+voice work by IP as well, `config_generation.sh`:
+
+1. Writes `/etc/nginx/snippets/nucleus-voice.conf` with three `location` blocks:
+   - `/voice-ws` → `127.0.0.1:5557` (the voice daemon's WebSocket server)
+   - `/voice`    → `127.0.0.1:5000/voice` (the Flask soft-PTT page)
+   - `/static`   → `127.0.0.1:5000/static` (CSS/images — without this the page
+     renders unstyled by IP because static assets fall through to OTS)
+2. Injects `include /etc/nginx/snippets/nucleus-voice.conf;` into the OTS
+   `ots_https` server block (after `server_name opentakserver_443;`), **once**
+   (idempotent — guarded by a `grep` so re-runs don't duplicate it).
+
+On **non-OTS** nodes nothing extra is needed: `zzz-nucleus-web` is then the only
+443 vhost, so it is already the by-IP default.
+
+The `voice.html` page also **forces itself onto https/443**: if opened over
+`http` or on the Flask dev port `:5000`, it redirects to
+`https://<same-host>/voice`. Combined with the IP-SAN cert above, this makes the
+voice page work whether the phone uses the IP or the `.local` name.
+
 
 ## Install / deploy ordering
 
