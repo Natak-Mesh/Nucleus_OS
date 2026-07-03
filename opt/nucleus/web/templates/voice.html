@@ -274,7 +274,10 @@ function ensurePlayCtx() {
 }
 
 function handleAudio(arrbuf) {
-    if (!playCtx) return;                    // playback not armed yet
+    // Real-time only: if playback isn't running (autoplay policy / suspended),
+    // drop the audio rather than queueing it — otherwise the backlog plays
+    // later like a recording.
+    if (!playCtx || playCtx.state !== 'running') return;
     const view = new DataView(arrbuf);
     const n = Math.floor(arrbuf.byteLength / 2);
     // Convert S16LE -> Float32 at 16 kHz, then resample to playback rate.
@@ -293,6 +296,8 @@ function handleAudio(arrbuf) {
         out[i] = src[i0] * (1 - frac) + src[i1] * frac;
     }
     playQueue.push(out);
+    // Bound backlog: keep at most 2x jitter buffer, drop oldest (stay live).
+    while (playQueue.length > JITTER_FRAMES * 2) playQueue.shift();
     if (playQueue.length > JITTER_FRAMES && !playing) startPlayback();
     schedulePlayback();
 }
@@ -304,6 +309,11 @@ function startPlayback() {
 
 function schedulePlayback() {
     if (!playing) return;
+    // If we've scheduled far ahead of real time (e.g. context was suspended),
+    // resync instead of letting a backlog play out late.
+    if (playHead > playCtx.currentTime + 0.5) {
+        playHead = playCtx.currentTime + 0.02;
+    }
     while (playQueue.length) {
         const frame = playQueue.shift();
         const buf = playCtx.createBuffer(1, frame.length, playCtx.sampleRate);
@@ -374,11 +384,17 @@ function onMicData(ev) {
 }
 
 // ── PTT control ─────────────────────────────────────────────────────────────
+// pttHeld tracks the PHYSICAL button state. pttDown() awaits mic setup, and
+// on first use the button can be released (touchend) before that await
+// resolves — without this check, talking would then latch on.
+let pttHeld = false;
+
 async function pttDown() {
+    pttHeld = true;
     if (talking || !wsReady) return;
     ensurePlayCtx();
     const ok = await ensureMic();
-    if (!ok) return;
+    if (!ok || !pttHeld || talking) return;  // released during setup: don't latch
     talking = true;
     captureAccum = [];
     document.getElementById('ptt-btn').classList.add('talking');
@@ -386,6 +402,7 @@ async function pttDown() {
 }
 
 function pttUp() {
+    pttHeld = false;
     if (!talking) return;
     talking = false;
     document.getElementById('ptt-btn').classList.remove('talking');
@@ -407,9 +424,10 @@ document.addEventListener('keyup', (e) => {
     if (e.code === 'Space') { e.preventDefault(); pttUp(); }
 });
 
-// Arm playback on first user interaction (mobile autoplay policy).
-document.body.addEventListener('click', ensurePlayCtx, { once: true });
-document.body.addEventListener('touchstart', ensurePlayCtx, { once: true });
+// Arm/resume playback on user interaction (mobile autoplay policy). Not
+// {once:true}: the context can re-suspend (tab switch), so resume every time.
+document.body.addEventListener('click', ensurePlayCtx);
+document.body.addEventListener('touchstart', ensurePlayCtx, { passive: true });
 
 connect();
 </script>
