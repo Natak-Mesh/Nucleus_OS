@@ -110,15 +110,38 @@
         <div class="empty-msg">No one talking</div>
     </div>
 
-    <a href="/" class="backlink">← Back to dashboard</a>
+    <a href="#" class="backlink" onclick="goBack(event)">← Back to dashboard</a>
+
 </div>
 </main>
 
 <script>
+// ── Force onto HTTPS/443 before anything else ──────────────────────────────
+// Voice needs a secure context (mic access) AND the /voice-ws WebSocket proxy,
+// both of which live only on the nginx HTTPS vhost (port 443). If this page
+// was opened over http or on the Flask dev port (:5000), redirect to
+// https://<same-host>/voice so it works whether reached by IP or .local.
+(function () {
+    if (location.protocol !== 'https:' || location.port === '5000') {
+        location.replace('https://' + location.hostname + '/voice');
+    }
+})();
+
+// Back to dashboard. Prefer browser history (the dashboard the user came
+// from); fall back to the dashboard root on the same host+scheme. Using
+// history avoids landing on OTS's page when the node was reached by IP.
+function goBack(e) {
+    if (e) e.preventDefault();
+    if (window.history.length > 1) { window.history.back(); }
+    else { location.href = location.protocol + '//' + location.host + '/'; }
+}
+
+
 // ── OpenVLM mesh voice — browser soft-PTT handset ──────────────────────────
 // Audio: 16 kHz mono S16_LE, 20 ms frames (320 samples / 640 bytes) matching
 // the daemon. Mic is captured at the device rate and downsampled to 16 kHz;
 // received frames are upsampled back to the AudioContext rate for playback.
+
 
 const FRAME_SAMPLES = 320;         // 20 ms @ 16 kHz
 const FRAME_BYTES = FRAME_SAMPLES * 2;
