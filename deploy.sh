@@ -26,12 +26,40 @@ sudo rfkill unblock bluetooth
 
 # Copy etc files (only static configs - generated ones are created by config_generation.sh)
 sudo mkdir -p /etc/nucleus
-if [ -f /etc/nucleus/mesh.conf ] && [ "$FORCE_CONFIG" != "true" ]; then
-    echo "mesh.conf already exists — skipping (use --force-config to overwrite)"
-else
+if [ ! -f /etc/nucleus/mesh.conf ] || [ "$FORCE_CONFIG" = "true" ]; then
+    # Fresh node (or forced): install the repo mesh.conf as-is.
     sudo cp "$SOURCE_DIR/etc/nucleus/mesh.conf" /etc/nucleus/
     sudo chown natak:natak /etc/nucleus/mesh.conf
+else
+    # Existing node: preserve all current values, only ADD keys that are
+    # missing (e.g. keys introduced by new features). The repo mesh.conf is
+    # the source of truth for the full set of keys, their defaults, and the
+    # comment block that precedes each key. Never edits or deletes existing
+    # lines. Idempotent — safe to re-run.
+    echo "mesh.conf exists — syncing any missing keys (existing values preserved)"
+    REPO_CONF="$SOURCE_DIR/etc/nucleus/mesh.conf"
+    NODE_CONF="/etc/nucleus/mesh.conf"
+    ADDED=0
+    buffer=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            key="${line%%=*}"
+            if grep -q "^${key}=" "$NODE_CONF"; then
+                buffer=""                      # key present: drop its comments
+            else
+                { [ -n "$buffer" ] && printf '%s' "$buffer"; printf '%s\n' "$line"; } \
+                    | sudo tee -a "$NODE_CONF" > /dev/null
+                echo "  + added $key"
+                ADDED=$((ADDED+1))
+                buffer=""
+            fi
+        else
+            buffer+="$line"$'\n'                # accumulate comments/blank lines
+        fi
+    done < "$REPO_CONF"
+    [ "$ADDED" -eq 0 ] && echo "  mesh.conf already up to date"
 fi
+
 
 sudo mkdir -p /etc/systemd/network
 sudo cp "$SOURCE_DIR/etc/systemd/network/20-brlan.netdev" /etc/systemd/network/
@@ -67,6 +95,7 @@ sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-web.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/rnsd.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/cot-bridge.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mediamtx.service" /etc/systemd/system/
+sudo cp "$SOURCE_DIR/etc/systemd/system/openvlm-voice.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
 sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/systemd/system/babeld.service.d/
 sudo systemctl daemon-reload
@@ -74,6 +103,11 @@ sudo systemctl enable brlan-setup.service
 sudo systemctl enable mesh-start.service
 sudo systemctl enable mesh-web.service
 sudo systemctl enable rnsd.service
+sudo systemctl enable openvlm-voice.service
+# Restart voice daemon so a deploy picks up new openvlm-voice.py immediately
+# (otherwise the old daemon keeps running until reboot — e.g. no WebSocket server)
+sudo systemctl restart openvlm-voice.service
+
 # Note: mediamtx.service is copied but not enabled - enable manually on nodes that need video streaming:
 #       sudo systemctl enable --now mediamtx.service
 
@@ -86,6 +120,8 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/opendht-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/openvlm-voice.py" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/voice" /usr/local/bin/
 sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
@@ -93,6 +129,8 @@ sudo chmod +x /opt/nucleus/bin/opendht-start.sh
 sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
 sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 sudo chmod +x /opt/nucleus/bin/iw-wifi-scan.sh
+sudo chmod +x /opt/nucleus/bin/openvlm-voice.py
+sudo chmod +x /usr/local/bin/voice
 
 # Copy meshtastic module if exists
 if [ -d "$SOURCE_DIR/opt/nucleus/meshtastic" ]; then

@@ -855,11 +855,13 @@ def api_dashboard():
     nodes = get_mesh_nodes()
     neighbors = []
     for node in nodes:
+        wifi = node.get('wifi') or {}
         neighbors.append({
             'ip': node['ipv4'],
             'cost': node['cost'],
             'cost_quality': node.get('cost_quality', 'unknown'),
             'status': node['status'],
+            'signal_avg': wifi.get('signal_avg'),
         })
 
     # Get meshtastic data
@@ -939,10 +941,17 @@ def api_nodes():
     })
 
 
+@app.route('/voice')
+def voice():
+    """OpenVLM mesh PTT voice — soft-PTT web handset (phone mic/speaker)."""
+    return render_template('voice.html')
+
+
 @app.route('/config')
 def config():
     """Configuration page"""
     return render_template('config.html')
+
 
 
 @app.route('/api/config', methods=['GET'])

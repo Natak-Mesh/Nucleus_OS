@@ -35,7 +35,9 @@ sudo apt install -y \
   btop \
   mtr-tiny \
   ncdu \
-  nginx
+  nginx \
+  alsa-utils
+
 
 # Install Python packages
 echo "[3/8] Installing Python packages..."

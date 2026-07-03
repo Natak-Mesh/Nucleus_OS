@@ -28,7 +28,7 @@
         <div class="dashboard">
             <h1>Connected Nodes</h1>
             <div id="channel-util" style="margin-bottom: 12px; font-size: 14px; color: #a0a0a0;">
-                <span class="label">Channel Utilization:</span>
+                <span class="label">Channel Congestion:</span>
                 <span id="channel-util-value" class="value">--</span>
             </div>
             <div id="node-container" class="node-grid">
@@ -62,8 +62,15 @@
                 el.className = 'value';
                 return;
             }
-            el.textContent = `Ch ${util.channel}: ${util.busy_pct}% busy`;
+            el.textContent = `Ch ${util.channel}: ${util.busy_pct}% congestion`;
             el.className = `value signal-${util.quality}`;
+        }
+
+        // Babel cost → link %: cost is ETX-based, 256 = perfect delivery.
+        function linkPct(cost) {
+            const c = parseInt(cost, 10);
+            if (!c || c <= 0) return null;
+            return Math.min(100, Math.round((256 / c) * 100));
         }
 
         function renderNodes(nodes) {
@@ -82,8 +89,8 @@
                     </div>
                     <div class="node-body">
                         <div class="node-metric">
-                            <span class="label">Link Cost:</span>
-                            <span class="value cost-${node.cost_quality || 'unknown'}">${node.cost}</span>
+                            <span class="label">Link:</span>
+                            <span class="value cost-${node.cost_quality || 'unknown'}">${linkPct(node.cost) !== null ? linkPct(node.cost) + '%' : 'N/A'} <span style="color:#a0a0a0;font-size:12px;">(cost ${node.cost})</span></span>
                         </div>
                         <div class="node-duration">
                             <span class="label">${node.duration_label}:</span>

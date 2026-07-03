@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenVLM Mesh PTT Voice Daemon
+After=mesh-start.service
+Wants=mesh-start.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/nucleus/bin/openvlm-voice.py
+Restart=on-failure
+RestartSec=5
+# Root required for /dev/hidraw* (PTT) access
+User=root
+
+[Install]
+WantedBy=multi-user.target

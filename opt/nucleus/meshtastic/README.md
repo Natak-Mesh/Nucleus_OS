@@ -16,7 +16,6 @@ direct phone app usage.
   cot_bridge.py          Main bridge daemon (TX + RX)
   meshtastic_api.py      Flask Blueprint -- REST API for service control
   takmessage_to_xml.py   TakMessage protobuf -> CoT XML converter
-  archive/               Historical planning docs and earlier prototypes
 ```
 
 Supporting system files:
