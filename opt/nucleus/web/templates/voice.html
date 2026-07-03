@@ -67,9 +67,15 @@
         }
         .empty-msg { color: var(--text-secondary); font-size: 14px; padding: 6px 0; }
 
-        .backlink { display: inline-block; margin-top: 20px; color: var(--text-secondary);
-            text-decoration: none; font-size: 13px; }
-        .backlink:hover { color: var(--text-primary); }
+        nav { max-width: 480px; margin: 0 auto; padding: 12px 12px 0 12px; }
+        .nav-btn {
+            padding: 8px 14px; background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-color); border-radius: 6px;
+            color: var(--text-secondary); font-size: 13px; font-family: monospace;
+            cursor: pointer;
+        }
+        .nav-btn:hover { background: rgba(26, 9, 241, 0.2); border-color: #1A09f1;
+            color: var(--text-primary); }
 
         #banner {
             display: none; padding: 10px; border-radius: 6px; margin-bottom: 12px;
@@ -79,6 +85,9 @@
     </style>
 </head>
 <body>
+<nav>
+    <button class="nav-btn" onclick="goBack(event)">← Back to Menu</button>
+</nav>
 <main>
 <div class="dash">
 
@@ -109,8 +118,6 @@
     <div class="talkers" id="talkers">
         <div class="empty-msg">No one talking</div>
     </div>
-
-    <a href="#" class="backlink" onclick="goBack(event)">← Back to dashboard</a>
 
 </div>
 </main>

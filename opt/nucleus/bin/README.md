@@ -13,7 +13,6 @@ Shell scripts for mesh network initialization and configuration.
 | `sd-wear-setup.sh` | Minimize SD card writes | One-time setup |
 | `openvlm-voice.py` | Mesh PTT voice daemon (OpenVLM headset + phone soft-PTT) | Boot (via systemd) |
 | `voice` | User CLI for voice daemon (installed to /usr/local/bin) | Manual |
-| `openvlm-monitor.py` | OpenVLM PTT/audio hardware test tool | Manual |
 
 
 ---
@@ -166,7 +165,7 @@ voice log                  # follow daemon log
 **Ports:** UDP 5555 (mesh voice), UDP 5556 (control socket / CLI),
 TCP 5557 (WebSocket server; nginx proxies `/voice-ws` here).
 
-Full docs: `docs/VoIP/openvlm_voice_plan.md`
+Full docs: `docs/VoIP/mesh_voice.md`
 
 
 ---

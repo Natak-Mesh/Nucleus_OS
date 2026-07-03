@@ -121,7 +121,6 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/openvlm-voice.py" /opt/nucleus/bin/
-sudo cp "$SOURCE_DIR/opt/nucleus/bin/openvlm-monitor.py" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/voice" /usr/local/bin/
 sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
@@ -131,7 +130,6 @@ sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
 sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 sudo chmod +x /opt/nucleus/bin/iw-wifi-scan.sh
 sudo chmod +x /opt/nucleus/bin/openvlm-voice.py
-sudo chmod +x /opt/nucleus/bin/openvlm-monitor.py
 sudo chmod +x /usr/local/bin/voice
 
 # Copy meshtastic module if exists
