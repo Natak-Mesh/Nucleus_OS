@@ -233,6 +233,18 @@ server {
 
     server_name ${NUCLEUS_HOSTNAME}.local;
 
+    # OpenVLM voice — WebSocket audio bridge to the voice daemon (soft PTT).
+    location /voice-ws {
+        proxy_pass http://127.0.0.1:5557;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:5000;
         proxy_http_version 1.1;
@@ -247,6 +259,7 @@ server {
 # this block is what actually serves the .local hostname on mobile. Uses our
 # OWN self-signed cert. NOT a default_server, so OTS's 443 vhost is untouched
 # and remains the responder for IP/OTS-hostname HTTPS requests.
+
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
@@ -255,6 +268,19 @@ server {
 
     ssl_certificate ${NUCLEUS_CERT};
     ssl_certificate_key ${NUCLEUS_KEY};
+
+    # OpenVLM voice — WebSocket audio bridge to the voice daemon (soft PTT).
+    # This is the path phones actually use (they force HTTPS -> wss).
+    location /voice-ws {
+        proxy_pass http://127.0.0.1:5557;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:5000;
@@ -266,6 +292,7 @@ server {
     }
 }
 EOF
+
 
 # Enable the vhost (idempotent symlink)
 ln -sf /etc/nginx/sites-available/zzz-nucleus-web /etc/nginx/sites-enabled/zzz-nucleus-web

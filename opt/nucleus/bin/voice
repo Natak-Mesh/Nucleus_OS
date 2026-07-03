@@ -5,8 +5,10 @@
 #   voice start        start the voice service
 #   voice stop         stop the voice service
 #   voice status       show service state + daemon status (channel, PTT, talkers)
+#   voice channels     list configured named voice channels
 #   voice channel N    switch to voice channel N (1-254)
 #   voice log          follow the live daemon log (Ctrl-C to exit)
+
 
 CTL_HOST=127.0.0.1
 CTL_PORT=5556
@@ -36,6 +38,9 @@ case "$1" in
             ctl "STATUS"
         fi
         ;;
+    channels)
+        ctl "CHANNELS"
+        ;;
     channel)
         if [ -z "$2" ]; then
             echo "usage: voice channel N   (1-254)"
@@ -47,7 +52,8 @@ case "$1" in
         sudo journalctl -u openvlm-voice -f
         ;;
     *)
-        echo "usage: voice {start|stop|restart|status|channel N|log}"
+        echo "usage: voice {start|stop|restart|status|channels|channel N|log}"
         exit 1
         ;;
+
 esac

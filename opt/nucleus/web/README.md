@@ -9,6 +9,7 @@ Flask-based web interface for mesh network monitoring and configuration.
 | Route | Page | Description |
 |-------|------|-------------|
 | `/` | Dashboard | Mobile-optimized connectivity overview — WiFi mesh neighbors, meshtastic nodes |
+| `/voice` | Voice PTT | Soft-PTT mesh voice handset (phone mic/speaker) — press-to-talk, named channel picker, live talkers. Requires HTTPS for mic access; connects to the voice daemon via `/voice-ws` |
 | `/monitor` | Monitor | Detailed node cards with WiFi stats, routes, channel utilization |
 | `/config` | Configuration | Edit mesh.conf settings, apply and reboot |
 | `/scan` | Channel Scan | WiFi channel congestion analysis |
@@ -132,9 +133,15 @@ Uses `iw-wifi-scan.sh` to analyze 2.4GHz channel congestion via `iw survey dump`
 - `POST /api/opentakserver/restart` — Restart OTS service
 - `/ots/*` — Reverse proxy to OTS web UI (bypasses IP whitelist)
 
+### Voice PTT
+- `GET /voice` — soft-PTT web handset page
+- `/voice-ws` — WebSocket (proxied by nginx to the voice daemon on
+  `127.0.0.1:5557`) carrying PTT/channel control + bidirectional 16 kHz audio
+
 ### System
 - `POST /api/shutdown` — Graceful shutdown (disconnects meshtastic radio first)
 - `POST /api/restart-mesh` — Restart Flask application
+
 
 ## File Structure
 
@@ -144,6 +151,7 @@ Uses `iw-wifi-scan.sh` to analyze 2.4GHz channel congestion via `iw survey dump`
 ├── README.md                 # This file
 ├── templates/
 │   ├── nav.html             # Dashboard (mobile-optimized front page)
+│   ├── voice.html           # Soft-PTT mesh voice handset (WebSocket to voice daemon)
 │   ├── monitor.html         # Detailed node monitoring
 │   ├── config.html          # Configuration editor
 │   ├── scan.html            # Channel scan

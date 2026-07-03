@@ -939,10 +939,17 @@ def api_nodes():
     })
 
 
+@app.route('/voice')
+def voice():
+    """OpenVLM mesh PTT voice — soft-PTT web handset (phone mic/speaker)."""
+    return render_template('voice.html')
+
+
 @app.route('/config')
 def config():
     """Configuration page"""
     return render_template('config.html')
+
 
 
 @app.route('/api/config', methods=['GET'])

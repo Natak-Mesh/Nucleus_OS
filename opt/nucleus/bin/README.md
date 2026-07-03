@@ -11,9 +11,10 @@ Shell scripts for mesh network initialization and configuration.
 | `eth0-mode.sh` | Switch eth0 between WAN/LAN modes | Manual or web GUI |
 | `opendht-start.sh` | Start OpenDHT Docker container | Called by mesh-start |
 | `sd-wear-setup.sh` | Minimize SD card writes | One-time setup |
-| `openvlm-voice.py` | Mesh PTT voice daemon (OpenVLM headset) | Boot (via systemd) |
+| `openvlm-voice.py` | Mesh PTT voice daemon (OpenVLM headset + phone soft-PTT) | Boot (via systemd) |
 | `voice` | User CLI for voice daemon (installed to /usr/local/bin) | Manual |
 | `openvlm-monitor.py` | OpenVLM PTT/audio hardware test tool | Manual |
+
 
 ---
 
@@ -52,6 +53,8 @@ Generates all configuration files from `/etc/nucleus/mesh.conf` variables.
 | `/etc/hostapd/hostapd.conf` | Access point config |
 | `/etc/wpa_supplicant/wpa_supplicant-wlan1-encrypt.conf` | Mesh encryption (SAE) |
 | `/etc/babeld.conf` | Babel routing daemon config |
+| `/etc/nginx/sites-available/zzz-nucleus-web` | Web UI `.local` vhost (also proxies `/voice-ws` WSS → voice daemon) + self-signed TLS cert |
+
 
 **Usage:**
 ```bash
@@ -138,20 +141,33 @@ sudo /opt/nucleus/bin/sd-wear-setup.sh
 
 ## openvlm-voice.py / voice
 
-Mesh PTT voice comms over wlan1 (UDP multicast, additive mixing). Runs as
-`openvlm-voice.service` at boot; waits for OpenVLM hardware if not plugged in.
+Real-time mesh PTT voice over wlan1 (UDP multicast, additive mixing). Runs as
+`openvlm-voice.service` at boot. The mesh transport is **independent of the
+OpenVLM hardware** — two interchangeable PTT front-ends feed the same mesh:
+
+- **Hardware PTT:** tactical headset on the OpenVLM USB card (attaches/detaches
+  with the device; the mesh + phone paths run even with no OpenVLM plugged in).
+- **Soft PTT:** a phone on the node's Wi-Fi AP using the `/voice` web page
+  (phone mic/speaker are the handset, streamed over a WebSocket). Served over
+  HTTPS at `https://<serial>-nucleus.local/voice` (mic capture needs HTTPS).
 
 **User commands:**
 ```bash
 voice start|stop|restart   # control the service
 voice status               # channel, PTT state, active talkers, hardware
+voice channels             # list configured named channels
 voice channel N            # switch voice channel live (1-254)
 voice log                  # follow daemon log
 ```
 
-**mesh.conf variables:** `VOICE_CHANNEL`, `VOICE_JITTER_MS`, `VOICE_TX_GAIN`
+**mesh.conf variables:** `VOICE_CHANNEL`, `VOICE_CHANNELS`, `VOICE_JITTER_MS`,
+`VOICE_TX_GAIN`
+
+**Ports:** UDP 5555 (mesh voice), UDP 5556 (control socket / CLI),
+TCP 5557 (WebSocket server; nginx proxies `/voice-ws` here).
 
 Full docs: `docs/VoIP/openvlm_voice_plan.md`
+
 
 ---
 
