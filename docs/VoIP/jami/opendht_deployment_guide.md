@@ -221,4 +221,4 @@ watch -n 5 'curl -s http://127.0.0.1:8000/ | grep good'
 ## References
 - **OpenDHT Documentation:** https://github.com/savoirfairelinux/opendht/wiki
 - **Jami Documentation:** https://jami.net/
-- **Full Implementation Plan:** `docs/jami_opendht_manet_plan.md`
+- **Full Implementation Plan:** `docs/VoIP/jami/jami_opendht_manet_plan.md`

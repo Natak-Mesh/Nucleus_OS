@@ -56,7 +56,7 @@ Run as root (hidraw access). Designed to run via openvlm-voice.service.
 Safe on nodes WITHOUT an OpenVLM: the mesh + WS (phone) paths run regardless;
 the OpenVLM front-end attaches/detaches with the USB device.
 
-See: docs/VoIP/mesh_voice.md
+See: docs/VoIP/openvlm/mesh_voice.md
 """
 
 import base64

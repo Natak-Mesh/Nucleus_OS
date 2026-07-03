@@ -165,7 +165,7 @@ voice log                  # follow daemon log
 **Ports:** UDP 5555 (mesh voice), UDP 5556 (control socket / CLI),
 TCP 5557 (WebSocket server; nginx proxies `/voice-ws` here).
 
-Full docs: `docs/VoIP/mesh_voice.md`
+Full docs: `docs/VoIP/openvlm/mesh_voice.md`
 
 
 ---
