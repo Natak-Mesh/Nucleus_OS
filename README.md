@@ -22,6 +22,10 @@
 ### Jami
 - Direct and group text
 ## VOIP
+### Mesh Voice (PTT)
+- Multicast PTT voice directly over the mesh, no server required
+- Hardware PTT via OpenVLM USB sound card + headset, or soft PTT from a phone browser via the /voice web page
+- Named channels with live switching via web UI or `voice` CLI
 ### Jami
 - Direct and group calls, PTT or full time voice functionality
 ### Reticulum
@@ -47,3 +51,6 @@
 ## Onboard Access Point
 ### Pi onboard Wi-Fi (wlan0) in AP mode
 - 5.8GHz AP to connect external devices to the mesh node
+## USB Audio
+### Optional OpenVLM USB sound card for hardware PTT
+- Headset audio via ALSA, PTT button via HID; hot-pluggable

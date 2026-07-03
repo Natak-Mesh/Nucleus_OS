@@ -52,7 +52,6 @@ UDP mcast                   └── phone mic     (while soft PTT held, via WS
 | `/etc/nucleus/mesh.conf` | `VOICE_*` configuration (below) |
 | `/opt/nucleus/bin/config_generation.sh` | generates the nginx glue: the voice snippet + `.local` vhost + IP-SAN self-signed cert |
 | `/etc/nginx/snippets/nucleus-voice.conf` | generated: the `/voice-ws`, `/voice`, `/static` locations — included by the nucleus vhost and injected into the OTS 443 vhost so voice works by IP |
-| `opt/nucleus/bin/archive/openvlm-monitor.py` | archived standalone hardware test tool (not in the live path, not deployed) |
 
 ## Configuration (`/etc/nucleus/mesh.conf`)
 
