@@ -618,14 +618,10 @@ def get_mesh_nodes():
                 else:
                     link_quality_status = 'poor'
 
-            # Signal — filter bogus values (>= -10 dBm is physically impossible)
+            # Signal
             signal_quality = None
             sig = wifi.get('signal_avg')
             raw_signal = wifi.get('signal')
-            if sig is not None and sig >= -10:
-                sig = None          # bogus driver value
-            if raw_signal is not None and raw_signal >= -10:
-                raw_signal = None   # bogus driver value
             if sig is not None:
                 if sig >= -50:
                     signal_quality = 'excellent'
