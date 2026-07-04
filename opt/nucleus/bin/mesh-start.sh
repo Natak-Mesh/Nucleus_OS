@@ -54,9 +54,20 @@ if [ "${USB_HUB_POWER_CYCLE}" = "true" ]; then
             # radio still enumerates and creates /dev/ttyACM0 — so we perform a
             # real handshake via the meshtastic CLI. The port is free here
             # because cot-bridge.service starts After=mesh-start.service.
+            #
+            # IMPORTANT: the serial handshake is ONLY performed when the CoT
+            # bridge is enabled. Opening the serial API on the RAK4631 stops
+            # BLE advertising and it does not resume, so when the bridge is
+            # disabled (radio in BLE mode for the phone app) we must never
+            # touch the serial port — device enumeration is the only check.
             [ -e "$ACM_DEV" ] || return 1
-            timeout 20 meshtastic --port "$ACM_DEV" --info >/dev/null 2>&1
+            if [ "${COT_BRIDGE_ENABLED}" = "true" ]; then
+                timeout 20 meshtastic --port "$ACM_DEV" --info >/dev/null 2>&1
+            else
+                return 0
+            fi
         }
+
 
         radio_ok=false
         for attempt in $(seq 1 "$USB_CYCLE_MAX_ATTEMPTS"); do
@@ -160,15 +171,6 @@ fi
 sleep 2
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
 echo "nameserver 8.8.4.4" >> /etc/resolv.conf
-
-# rnsd is now managed by its own systemd service (rnsd.service)
-
-# Start mediamtx (required for TAKserver video)
-# nohup runuser -l natak -c 'cd /opt/nucleus/bin/mediamtx && ./mediamtx' > /var/log/mediamtx.log 2>&1 &
-# MEDIAMTX_PID=$!
-# echo "Started mediamtx with PID: $MEDIAMTX_PID"
-
-# sleep 2
 
 # Enable NAT for internet gateway sharing (WAN mode default)
 # Check if rule exists before adding to avoid duplicates

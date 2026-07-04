@@ -8,7 +8,6 @@ TX: ATAK multicast (SA + Chat) → compress TAKPacketV2 → LoRa (portnum 257)
 RX: LoRa (portnum 257) → decompress TAKPacketV2 → ATAK multicast
 
 Standalone daemon — owns the serial port exclusively.
-Not used simultaneously with meshtastic_manager.py.
 
 Usage:
     python3 cot_bridge.py [--port /dev/ttyACM0] [--debug]

@@ -15,14 +15,11 @@ from flask import Flask, render_template, jsonify, request
 import socket
 import subprocess
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 import threading
-import signal
-import csv
 import os
 import sys
 import glob
-from collections import defaultdict
 import time
 import ipaddress
 import urllib.request as _urlreq
@@ -48,12 +45,6 @@ DISCONNECTED_DISPLAY_TIME = 60  # seconds
 
 # Store node history
 node_history = {}
-
-# WiFi Channel to Frequency Mapping (2.4 GHz)
-WIFI_CHANNELS = {
-    1: 2412, 2: 2417, 3: 2422, 4: 2427, 5: 2432, 6: 2437,
-    7: 2442, 8: 2447, 9: 2452, 10: 2457, 11: 2462, 12: 2467, 13: 2472, 14: 2484
-}
 
 # Channel scanning state
 scan_state = {
@@ -1690,22 +1681,8 @@ def get_channel_scan_results():
 
 @app.route('/api/shutdown', methods=['POST'])
 def shutdown_node():
-    """Gracefully shut down the node.
-
-    Disconnects the meshtastic radio first (sends reboot command so the
-    radio firmware restarts cleanly and BLE comes back up), then powers
-    off the Pi.  Without the clean disconnect the radio can hang on next
-    boot, requiring a manual reset button press.
-    """
+    """Gracefully shut down the node."""
     try:
-        # Disconnect meshtastic radio cleanly if connected
-        try:
-            from meshtastic_api import mgr
-            if mgr.interface is not None:
-                mgr.disconnect(reboot_radio=True)
-        except Exception as e:
-            print(f"Meshtastic disconnect during shutdown: {e}")
-
         # Schedule shutdown after response is sent
         def do_shutdown():
             time.sleep(1)
