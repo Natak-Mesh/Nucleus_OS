@@ -97,6 +97,7 @@
     </div>
 
     <div id="banner"></div>
+    <div id="ptt-warn" style="display:none; margin:8px 0; padding:8px 12px; border:1px solid var(--color-warning); color:var(--text-primary); border-radius:4px;"></div>
 
     <div class="status-line">
         <span id="conn-status" class="st-down">Link: connecting…</span>
@@ -227,6 +228,14 @@ function handleStatus(s) {
         const hw = document.getElementById('hw-status');
         hw.textContent = s.hardware ? 'Headset: attached' : '';
         hw.className = s.hardware ? 'st-up' : '';
+    }
+    const pw = document.getElementById('ptt-warn');
+    if (s.wrong_ptt) {
+        pw.textContent = '\u26A0 Unsupported PTT device: ' + s.wrong_ptt +
+            ' \u2014 this model cannot hold-to-talk. Plug in a supported PTT.';
+        pw.style.display = 'block';
+    } else {
+        pw.style.display = 'none';
     }
     if (Array.isArray(s.channels)) {
         channels = s.channels;

@@ -107,10 +107,42 @@ SOURCE_TIMEOUT = 1.0           # drop a source after this much silence (s)
 # Playback sink queue bounds (frames). Kept small to bound latency; drop oldest.
 SINK_QUEUE_FRAMES = 12
 
-# OpenVLM (CM108) PTT via HID GPIO
-PTT_BYTE_INDEX = 1
-PTT_PRESSED_MASK = 0x04
-OPENVLM_USB_ID = "0D8C:0012"
+# Supported hardware PTT devices. Matched by USB VID:PID (model, not unit),
+# so any unit of the same model works. Each profile defines how to find the
+# ALSA card and how to decode the PTT state from its hidraw reports.
+#   card_match : lowercase substrings matched against /proc/asound/cards lines
+#   ptt_byte   : index into the hidraw report holding the PTT bit
+#   ptt_mask   : bitmask for "pressed" within that byte
+#   supported  : False = known device but rejected (e.g. pulse-only "Zello"
+#                variants whose button doesn't report held state). Listed
+#                BEFORE any profile it would shadow so it is matched first.
+PTT_DEVICES = [
+    {
+        # Zello variant: button sends a ~100ms pulse per click (app-side
+        # latching), so hold-to-talk is impossible. Same USB ID as the hold
+        # variant; distinguished by the "Audio" suffix in its name.
+        "name": "NBT POC Audio (Zello variant)",
+        "usb_id": "0020:0B21",
+        "card_match": ("nbt poc audio",),
+        "ptt_byte": 1,
+        "ptt_mask": 0x01,
+        "supported": False,
+    },
+    {
+        "name": "OpenVLM (CM108)",
+        "usb_id": "0D8C:0012",
+        "card_match": ("openvlm",),
+        "ptt_byte": 1,
+        "ptt_mask": 0x04,
+    },
+    {
+        "name": "NBT POC",
+        "usb_id": "0020:0B21",
+        "card_match": ("nbt poc",),
+        "ptt_byte": 1,
+        "ptt_mask": 0x01,
+    },
+]
 
 # WebSocket
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -178,11 +210,11 @@ def parse_channels(spec, default_channel):
 
 
 # ---------------------------------------------------------------------------
-# Hardware discovery (OpenVLM sound card + PTT hidraw)
+# Hardware discovery (PTT sound card + hidraw, profile-driven)
 # ---------------------------------------------------------------------------
 
-def find_openvlm_card():
-    """Locate the OpenVLM ALSA card number from /proc/asound/cards."""
+def find_ptt_card(profile):
+    """Locate the profile's ALSA card number from /proc/asound/cards."""
     try:
         with open("/proc/asound/cards") as f:
             text = f.read()
@@ -192,13 +224,16 @@ def find_openvlm_card():
         stripped = line.strip()
         if not stripped or not stripped[0].isdigit():
             continue
-        if "openvlm" in line.lower():
+        low = line.lower()
+        if any(m in low for m in profile["card_match"]):
             return int(stripped.split()[0])
     return None
 
 
-def find_openvlm_hidraw():
-    """Locate the OpenVLM hidraw node by USB VID:PID, fallback /dev/hidraw0."""
+def find_ptt_hidraw(profile):
+    """Locate the profile's hidraw node by USB VID:PID."""
+    vid, _, pid = profile["usb_id"].partition(":")
+    hid_id = "{}:{}".format(vid.zfill(8), pid.zfill(8)).upper()
     for node in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
         uevent = os.path.join(node, "device", "uevent")
         try:
@@ -206,11 +241,20 @@ def find_openvlm_hidraw():
                 text = f.read().upper()
         except OSError:
             continue
-        if OPENVLM_USB_ID in text:
+        if profile["usb_id"].upper() in text or hid_id in text:
             return "/dev/" + os.path.basename(node)
-    if os.path.exists("/dev/hidraw0"):
-        return "/dev/hidraw0"
     return None
+
+
+def find_ptt_device():
+    """Return (profile, card, hidraw_path) for the first attached PTT device,
+    or (None, None, None) if none present."""
+    for profile in PTT_DEVICES:
+        card = find_ptt_card(profile)
+        hidraw = find_ptt_hidraw(profile)
+        if card is not None and hidraw is not None:
+            return profile, card, hidraw
+    return None, None, None
 
 
 def set_mixer(card):
@@ -625,6 +669,7 @@ class VoiceDaemon:
 
         self.ptt_hw = False                # OpenVLM hardware PTT held
         self.card = None
+        self.wrong_ptt = None              # name of rejected PTT device, if any
         self.sources = {}                  # node_id -> Source
         self.sources_lock = threading.Lock()
         self.channel_lock = threading.Lock()
@@ -682,6 +727,7 @@ class VoiceDaemon:
             "sources": active,
             "card": self.card,
             "hardware": self.card is not None,
+            "wrong_ptt": self.wrong_ptt,
         }
 
     # -- networking ---------------------------------------------------------
@@ -958,8 +1004,10 @@ class VoiceDaemon:
             self.aplay_sink.close()
             self.aplay_sink = None
 
-    def openvlm_ptt_thread(self, hidraw_path, session_failed):
-        """Track hardware PTT state from the CM108 HID GPIO."""
+    def openvlm_ptt_thread(self, hidraw_path, profile, session_failed):
+        """Track hardware PTT state from the device's hidraw reports."""
+        ptt_byte = profile["ptt_byte"]
+        ptt_mask = profile["ptt_mask"]
         try:
             fd = os.open(hidraw_path, os.O_RDONLY | os.O_NONBLOCK)
         except OSError as e:
@@ -980,8 +1028,8 @@ class VoiceDaemon:
                     log("PTT: hidraw EOF (device removed?)")
                     session_failed.set()
                     break
-                if len(report) > PTT_BYTE_INDEX:
-                    pressed = (report[PTT_BYTE_INDEX] & PTT_PRESSED_MASK) != 0
+                if len(report) > ptt_byte:
+                    pressed = (report[ptt_byte] & ptt_mask) != 0
                     if pressed != self.ptt_hw:
                         self.ptt_hw = pressed
                         log("PTT {}".format("PRESSED" if pressed else "RELEASED"))
@@ -1023,25 +1071,41 @@ class VoiceDaemon:
                 pass
 
     def openvlm_supervisor_thread(self):
-        """Attach the OpenVLM front-end when present; detach on removal.
+        """Attach a hardware PTT front-end when present; detach on removal.
         The mesh/RX/mixer/WS keep running regardless of this thread."""
         announced = False
         while not self.stop.is_set():
-            card = find_openvlm_card()
-            hidraw = find_openvlm_hidraw()
-            if card is None or hidraw is None:
+            profile, card, hidraw = find_ptt_device()
+            if profile is None:
+                if self.wrong_ptt is not None:
+                    self.wrong_ptt = None
+                    self.broadcast_status()
                 if not announced:
-                    log("OpenVLM not present (card={}, hidraw={}); phone/mesh "
-                        "path active, waiting for hardware...".format(card, hidraw))
+                    log("PTT hardware not present; phone/mesh path active, "
+                        "waiting for hardware...")
                     announced = True
                 time.sleep(5)
                 continue
 
+            if not profile.get("supported", True):
+                if self.wrong_ptt != profile["name"]:
+                    self.wrong_ptt = profile["name"]
+                    log("WARNING: unsupported PTT device detected: {} "
+                        "(pulse-only button, no hold-to-talk). Ignoring it; "
+                        "plug in a supported PTT.".format(profile["name"]))
+                    self.broadcast_status()
+                announced = False
+                time.sleep(5)
+                continue
+
+            if self.wrong_ptt is not None:
+                self.wrong_ptt = None
+                self.broadcast_status()
             announced = False
             self.card = card
             alsa_device = "plughw:{},0".format(card)
-            log("OpenVLM attached: card {} ({}), ptt {}".format(
-                card, alsa_device, hidraw))
+            log("{} attached: card {} ({}), ptt {}".format(
+                profile["name"], card, alsa_device, hidraw))
             set_mixer(card)
             self._attach_openvlm_playback(alsa_device)
             self.broadcast_status()
@@ -1049,7 +1113,8 @@ class VoiceDaemon:
             session_failed = threading.Event()
             threads = [
                 threading.Thread(target=self.openvlm_ptt_thread,
-                                 args=(hidraw, session_failed), daemon=True),
+                                 args=(hidraw, profile, session_failed),
+                                 daemon=True),
                 threading.Thread(target=self.openvlm_capture_thread,
                                  args=(alsa_device, session_failed), daemon=True),
             ]
@@ -1058,8 +1123,8 @@ class VoiceDaemon:
 
             # Watch for device loss (either thread trips session_failed).
             while not session_failed.is_set() and not self.stop.is_set():
-                if find_openvlm_card() is None:
-                    log("OpenVLM card vanished")
+                if find_ptt_card(profile) is None:
+                    log("{} card vanished".format(profile["name"]))
                     session_failed.set()
                     break
                 time.sleep(2)
@@ -1071,7 +1136,8 @@ class VoiceDaemon:
             self.card = None
             self.ptt_hw = False
             self.broadcast_status()
-            log("OpenVLM detached; mesh/phone path still active")
+            log("{} detached; mesh/phone path still active".format(
+                profile["name"]))
             time.sleep(3)
 
     # -- lifecycle ----------------------------------------------------------
