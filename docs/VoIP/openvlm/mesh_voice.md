@@ -1,5 +1,24 @@
 # Mesh Voice — PTT Voice over the 802.11s Mesh
 
+## TL;DR
+
+Push-to-talk voice runs as a single daemon on each node that sends audio as
+**UDP multicast** (group `239.10.10.N` where N = channel number, port 5555)
+directly over the wlan1 802.11s mesh — no SIP, no server, and **no smcroute**:
+802.11s forwards multicast natively multi-hop at L2, and soft-PTT phones reach
+the daemon over a WebSocket rather than speaking multicast themselves. There
+is **no compression codec** — raw **PCM S16_LE, 16 kHz mono** in 20 ms frames
+at 50 pkt/s, costing **~262 kbps while keyed** (zero when idle; Opus planned
+for a ~10x cut). On receive, each talker gets a small jitter buffer (default
+80 ms) and a mixer overlays all active talkers — no floor control. Latency is
+roughly **150–200 ms mouth-to-ear at one hop**. PTT input is either a tactical
+headset on the OpenVLM USB sound card or a phone browser; both put identical
+frames on the air. No app-layer crypto — the mesh's SAE L2 encryption covers
+it. Everyone on the same channel number hears each other; channel switching
+is live.
+
+## Overview
+
 Real-time push-to-talk voice between Nucleus nodes, carried as UDP multicast
 directly on the wlan1 mesh. One daemon per node (`openvlm-voice.py`, run by
 `openvlm-voice.service`) with two interchangeable PTT front-ends that put

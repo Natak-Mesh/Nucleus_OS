@@ -1058,15 +1058,80 @@ def reticulum_page():
     return render_template('reticulum.html')
 
 
-@app.route('/hoptest')
-def hoptest_page():
-    """Mesh hop test — raw data view for proving multi-hop relay"""
-    return render_template('hoptest.html')
+def _discover_mesh_nodes():
+    """Discover mesh node IPs (10.20.1.X) visible to this node.
+
+    Sources:
+    - Babel routes: mesh host routes (10.20.1.X/32), br-lan subnets
+      (10.20.X.0/24 -> node at 10.20.1.X), and 'via' next-hop addresses
+    - ARP/neighbor cache on wlan1 (direct neighbors on the on-link /24)
+
+    Returns (nodes, own_ip): sorted list of mesh IPs excluding this node.
+    """
+    import re as _re
+    own_ip = None
+    try:
+        with open('/etc/nucleus/mesh.conf', 'r') as f:
+            for line in f:
+                if line.strip().startswith('MESH_IP='):
+                    own_ip = line.strip().split('=', 1)[1].strip('"')
+                    break
+    except Exception:
+        pass
+
+    nodes = set()
+
+    # From babel routes (destinations + via next-hops)
+    try:
+        r = subprocess.run(['ip', 'route', 'show', 'proto', 'babel'],
+                           capture_output=True, text=True, timeout=5)
+        for line in r.stdout.strip().split('\n'):
+            if not line.strip():
+                continue
+            prefix_m = _re.match(r'(\S+)', line)
+            via_m = _re.search(r'via\s+(\S+)', line)
+            if prefix_m:
+                dest = prefix_m.group(1).split('/')[0]
+                parts = dest.split('.')
+                if len(parts) == 4 and parts[0] == '10' and parts[1] == '20':
+                    if parts[2] == '1' and parts[3] not in ('0', '255'):
+                        nodes.add(dest)                    # mesh host route 10.20.1.X
+                    elif parts[3] == '0' and parts[2] != '1':
+                        nodes.add('10.20.1.' + parts[2])   # br-lan 10.20.X.0 -> node X
+            if via_m and via_m.group(1).startswith('10.20.1.'):
+                nodes.add(via_m.group(1))
+    except Exception:
+        pass
+
+    # From neighbor cache on wlan1 (direct mesh neighbors)
+    try:
+        r = subprocess.run(['ip', 'neigh', 'show', 'dev', 'wlan1'],
+                           capture_output=True, text=True, timeout=5)
+        for line in r.stdout.strip().split('\n'):
+            m = _re.match(r'(10\.20\.1\.\d+)\s+lladdr', line)
+            if m and 'FAILED' not in line:
+                nodes.add(m.group(1))
+    except Exception:
+        pass
+
+    nodes.discard(own_ip)
+    nodes.discard(None)
+    try:
+        node_list = sorted(nodes, key=lambda ip: int(ip.split('.')[3]))
+    except Exception:
+        node_list = sorted(nodes)
+    return node_list, own_ip
 
 
-@app.route('/api/hoptest')
-def api_hoptest():
-    """API endpoint returning mesh hop data for the hop test page.
+@app.route('/pathtrace')
+def pathtrace_page():
+    """Mesh path trace — active traceroute view for proving multi-hop relay"""
+    return render_template('pathtrace.html')
+
+
+@app.route('/api/pathtrace')
+def api_pathtrace():
+    """API endpoint returning mesh hop data for the path trace page.
 
     Returns two data blocks:
     1. Babel routes (ip route show proto babel dev wlan1)
@@ -1190,7 +1255,81 @@ def api_hoptest():
         'relayed_routes': relay_count,
     }
 
+    # Known mesh nodes (for the path trace target dropdown)
+    try:
+        node_list, _own = _discover_mesh_nodes()
+        result['nodes'] = node_list
+    except Exception:
+        result['nodes'] = []
+
     return jsonify(result)
+
+
+@app.route('/api/pathtrace/run')
+def api_pathtrace_run():
+    """Run an active traceroute (mtr) to a known mesh node.
+
+    Target must be a 10.20.1.X mesh IP that is currently known to this node
+    (discovered via babel routes / neighbor cache). Anything else is rejected.
+    mtr runs with a hard timeout so this endpoint can never hang the server.
+    """
+    import re as _re
+    import json as _json
+
+    target = request.args.get('target', '').strip()
+
+    # Strict format check: must be 10.20.1.X
+    if not _re.fullmatch(r'10\.20\.1\.\d{1,3}', target):
+        return jsonify({'error': 'Invalid target — must be a 10.20.1.X mesh IP'}), 400
+
+    # Must be a currently-known mesh node
+    known_nodes, own_ip = _discover_mesh_nodes()
+    if target not in known_nodes:
+        return jsonify({'error': f'{target} is not a known mesh node'}), 400
+
+    # Run mtr: 2 probes per hop, no DNS, JSON output, hard 15s timeout
+    try:
+        r = subprocess.run(
+            ['mtr', '--json', '--no-dns', '-c', '2', target],
+            capture_output=True, text=True, timeout=15
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Trace timed out (15s)'}), 504
+    except Exception as e:
+        return jsonify({'error': f'Trace failed: {e}'}), 500
+
+    if r.returncode != 0 or not r.stdout.strip():
+        return jsonify({'error': f'mtr failed: {r.stderr.strip() or "no output"}'}), 500
+
+    try:
+        report = _json.loads(r.stdout)['report']
+        hops = []
+        for hub in report.get('hubs', []):
+            hops.append({
+                'host': hub.get('host', '???'),
+                'loss_pct': hub.get('Loss%', 0.0),
+                'avg_ms': hub.get('Avg'),
+                'best_ms': hub.get('Best'),
+                'worst_ms': hub.get('Wrst'),
+            })
+    except Exception as e:
+        return jsonify({'error': f'Could not parse mtr output: {e}'}), 500
+
+    # Verdict: did the trace actually reach the target?
+    reached = bool(hops) and hops[-1]['host'] == target
+    hop_count = len(hops)
+    relays = [h['host'] for h in hops[:-1]] if reached else []
+
+    return jsonify({
+        'target': target,
+        'source': own_ip,
+        'reached': reached,
+        'hop_count': hop_count if reached else None,
+        'relays': relays,
+        'hops': hops,
+        'timestamp': datetime.now().isoformat(),
+    })
+
 
 
 @app.route('/api/reticulum/status', methods=['GET'])

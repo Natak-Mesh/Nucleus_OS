@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Natak Mesh - Path Trace</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .hop-dash {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 12px;
+            font-family: monospace;
+        }
+        .top-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .top-bar .logo { height: 40px; width: auto; }
+        .top-bar h1 {
+            font-size: 18px;
+            color: var(--text-primary);
+            margin: 0;
+        }
+        .back-btn {
+            margin-left: auto;
+            padding: 8px 14px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            font-family: monospace;
+        }
+        .back-btn:hover {
+            background: rgba(26, 9, 241, 0.2);
+            border-color: #1A09f1;
+            color: var(--text-primary);
+        }
+
+        /* Explainer */
+        .explainer {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            margin-bottom: 16px;
+            padding: 8px 10px;
+            background: rgba(255,255,255,0.03);
+            border-left: 3px solid var(--border-color);
+            border-radius: 2px;
+        }
+
+        /* Test controls */
+        .test-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .test-controls label {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+        #target-select {
+            flex: 1;
+            min-width: 160px;
+            padding: 10px 12px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: monospace;
+            font-size: 14px;
+        }
+        #run-btn {
+            padding: 10px 20px;
+            background: rgba(26, 9, 241, 0.25);
+            border: 1px solid #1A09f1;
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: monospace;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        #run-btn:hover:not(:disabled) { background: rgba(26, 9, 241, 0.45); }
+        #run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Result area */
+        .result-panel {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 14px;
+            margin-bottom: 16px;
+            min-height: 80px;
+        }
+        .result-panel .placeholder {
+            color: var(--text-secondary);
+            font-style: italic;
+            font-size: 13px;
+        }
+        .running {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+        .running::after {
+            content: '';
+            animation: dots 1.2s steps(4, end) infinite;
+        }
+        @keyframes dots {
+            0% { content: ''; }
+            25% { content: '.'; }
+            50% { content: '..'; }
+            75% { content: '...'; }
+        }
+
+        /* Verdict banner */
+        .verdict {
+            font-size: 15px;
+            font-weight: bold;
+            padding: 10px 12px;
+            border-radius: 6px;
+            margin-bottom: 14px;
+        }
+        .verdict.direct {
+            color: var(--color-connected);
+            background: rgba(0, 255, 0, 0.06);
+            border: 1px solid var(--color-connected);
+        }
+        .verdict.relayed {
+            color: var(--color-warning);
+            background: rgba(255, 165, 0, 0.06);
+            border: 1px solid var(--color-warning);
+        }
+        .verdict.failed {
+            color: var(--color-disconnected);
+            background: rgba(255, 0, 0, 0.06);
+            border: 1px solid var(--color-disconnected);
+        }
+
+        /* Hop chain */
+        .hop-chain { font-size: 14px; }
+        .hop-node {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: rgba(255,255,255,0.04);
+            margin: 2px 0;
+        }
+        .hop-node.source { border-color: var(--text-secondary); }
+        .hop-node.relay { border-color: var(--color-warning); }
+        .hop-node.target { border-color: var(--color-connected); }
+        .hop-node .hop-tag {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.08);
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .hop-node.relay .hop-tag { color: var(--color-warning); }
+        .hop-node.target .hop-tag { color: var(--color-connected); }
+        .hop-node .hop-host {
+            color: var(--text-primary);
+            font-weight: bold;
+        }
+        .hop-node .hop-ms {
+            margin-left: auto;
+            color: var(--text-secondary);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .hop-arrow {
+            text-align: left;
+            color: var(--text-secondary);
+            padding: 0 0 0 22px;
+            font-size: 13px;
+            line-height: 1.1;
+        }
+
+        .result-time {
+            color: var(--text-secondary);
+            font-size: 11px;
+            margin-top: 10px;
+        }
+
+        /* Collapsible raw routes */
+        details.raw-routes {
+            margin-bottom: 16px;
+        }
+        details.raw-routes summary {
+            cursor: pointer;
+            font-size: 12px;
+            color: var(--text-secondary);
+            padding: 6px 8px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        details.raw-routes .panel-body {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+            padding: 10px;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: var(--text-primary);
+        }
+        details.raw-routes .empty {
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <div class="hop-dash">
+
+            <!-- Header -->
+            <div class="top-bar">
+                <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
+                <h1>Path Trace</h1>
+                <a href="/" class="back-btn">← Back</a>
+            </div>
+
+            <div class="explainer">
+                Sends real packets (traceroute) from this node to a selected mesh node
+                and shows every hop the traffic passes through — proving whether the
+                path is direct or relayed through intermediate nodes.
+            </div>
+
+            <!-- Controls -->
+            <div class="test-controls">
+                <label for="target-select">Target:</label>
+                <select id="target-select">
+                    <option value="">Loading nodes...</option>
+                </select>
+                <button id="run-btn" disabled>Run Path Trace</button>
+            </div>
+
+            <!-- Result -->
+            <div class="result-panel" id="result">
+                <span class="placeholder">Select a target node and run the test.</span>
+            </div>
+
+            <!-- Raw routes (debug) -->
+            <details class="raw-routes">
+                <summary>Raw Babel Routes (advanced)</summary>
+                <div class="panel-body" id="babel-routes"><span class="empty">Loading...</span></div>
+            </details>
+
+        </div>
+    </main>
+
+    <script>
+        var ownIp = null;
+
+        function escapeHtml(text) {
+            var div = document.createElement('div');
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+
+        // Populate the target dropdown + raw routes from existing status API
+        async function loadNodes() {
+            try {
+                var r = await fetch('/api/pathtrace');
+                var d = await r.json();
+                ownIp = d.mesh_ip;
+
+                var sel = document.getElementById('target-select');
+                var current = sel.value;
+                var nodes = d.nodes || [];
+
+                sel.innerHTML = '';
+                if (nodes.length === 0) {
+                    var opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = 'No mesh nodes found';
+                    sel.appendChild(opt);
+                    document.getElementById('run-btn').disabled = true;
+                } else {
+                    nodes.forEach(function(ip) {
+                        var opt = document.createElement('option');
+                        opt.value = ip;
+                        opt.textContent = ip;
+                        sel.appendChild(opt);
+                    });
+                    // Preserve previous selection if still present
+                    if (current && nodes.indexOf(current) !== -1) sel.value = current;
+                    document.getElementById('run-btn').disabled = false;
+                }
+
+                // Raw routes debug panel
+                var routesEl = document.getElementById('babel-routes');
+                if (!d.babel_routes || d.babel_routes.trim() === '') {
+                    routesEl.innerHTML = '<span class="empty">No babel routes</span>';
+                } else {
+                    routesEl.textContent = d.babel_routes;
+                }
+            } catch (e) {
+                console.error('Node list fetch error:', e);
+            }
+        }
+
+        async function runTrace() {
+            var target = document.getElementById('target-select').value;
+            if (!target) return;
+
+            var btn = document.getElementById('run-btn');
+            var resEl = document.getElementById('result');
+            btn.disabled = true;
+            resEl.innerHTML = '<div class="running">Tracing path to ' + escapeHtml(target) + '</div>';
+
+            try {
+                var r = await fetch('/api/pathtrace/run?target=' + encodeURIComponent(target));
+                var d = await r.json();
+
+                if (!r.ok || d.error) {
+                    resEl.innerHTML = '<div class="verdict failed">✖ ' + escapeHtml(d.error || 'Trace failed') + '</div>';
+                    return;
+                }
+
+                var html = '';
+
+                // Verdict banner
+                if (!d.reached) {
+                    html += '<div class="verdict failed">✖ Target not reached — no reply from '
+                          + escapeHtml(d.target) + '</div>';
+                } else if (d.hop_count === 1) {
+                    html += '<div class="verdict direct">✔ 1 hop — direct connection to '
+                          + escapeHtml(d.target) + '</div>';
+                } else {
+                    var relayList = d.relays.map(escapeHtml).join(' → ');
+                    html += '<div class="verdict relayed">✔ ' + d.hop_count
+                          + ' hops — traffic relayed through ' + relayList + '</div>';
+                }
+
+                // Hop chain
+                html += '<div class="hop-chain">';
+                html += '<div class="hop-node source">'
+                      + '<span class="hop-tag">This node</span>'
+                      + '<span class="hop-host">' + escapeHtml(d.source || ownIp || '?') + '</span>'
+                      + '</div>';
+
+                (d.hops || []).forEach(function(h, i) {
+                    var isTarget = (h.host === d.target);
+                    var cls = isTarget ? 'target' : 'relay';
+                    var tag = isTarget ? 'Target' : 'Relay';
+                    var ms = (h.avg_ms !== null && h.avg_ms !== undefined)
+                           ? h.avg_ms.toFixed(1) + ' ms' : '?';
+                    var loss = (h.loss_pct && h.loss_pct > 0)
+                             ? ' · ' + h.loss_pct.toFixed(0) + '% loss' : '';
+                    html += '<div class="hop-arrow">↓</div>';
+                    html += '<div class="hop-node ' + cls + '">'
+                          + '<span class="hop-tag">Hop ' + (i + 1) + ' · ' + tag + '</span>'
+                          + '<span class="hop-host">' + escapeHtml(h.host) + '</span>'
+                          + '<span class="hop-ms">' + ms + loss + '</span>'
+                          + '</div>';
+                });
+                html += '</div>';
+
+                var t = new Date(d.timestamp);
+                html += '<div class="result-time">Tested ' + t.toLocaleTimeString() + '</div>';
+
+                resEl.innerHTML = html;
+            } catch (e) {
+                resEl.innerHTML = '<div class="verdict failed">✖ Request failed: ' + escapeHtml(String(e)) + '</div>';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        document.getElementById('run-btn').addEventListener('click', runTrace);
+
+        loadNodes();
+        setInterval(loadNodes, 10000);
+        document.addEventListener('visibilitychange', function() { if (!document.hidden) loadNodes(); });
+    </script>
+</body>
+</html>
