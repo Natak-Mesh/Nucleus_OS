@@ -66,6 +66,7 @@ import json
 import os
 import queue
 import select
+import shutil
 import socket
 import struct
 import subprocess
@@ -83,6 +84,24 @@ VOICE_PORT = 5555
 CONTROL_ADDR = ("127.0.0.1", 5556)
 WS_ADDR = ("127.0.0.1", 5557)
 MCAST_BASE = "239.10.10."  # + channel number
+
+# LoRa burst transport — Codec2 clips relayed through cot-bridge, which owns
+# the Meshtastic radio serial port. See docs/VoIP/lora_voice/lora_voice_burst.md
+LORA_TX_ADDR = ("127.0.0.1", 5558)   # daemon -> cot-bridge -> LoRa
+LORA_RX_ADDR = ("127.0.0.1", 5559)   # cot-bridge -> daemon (we bind here)
+LORA_MTU = 237                        # max app payload per Meshtastic packet
+LORA_HDR = struct.Struct("<BBB")      # codec_id(B) channel(B) n_frames(B)
+# Codec2 modes: name -> (codec_id, bits/frame, c2enc bytes/frame)
+# NOTE: Debian's codec2 CLI does not include the experimental 450/700B modes;
+# 700C (~2.6 s/clip) is the low-rate baseline, 1200 (~1.5 s/clip) sounds better.
+LORA_CODECS = {
+    "700C": (2, 28, 4),
+    "1200": (1, 48, 6),
+}
+LORA_FRAME_MS = 40                    # codec2 frame duration
+LORA_RATE = 8000                      # codec2 sample rate
+LORA_SAMPLES_PER_FRAME = LORA_RATE * LORA_FRAME_MS // 1000   # 320
+LORA_SILENCE_THRESHOLD = 250          # peak-abs below which a 20ms frame is silence
 
 MAGIC = b"NVOX"
 VERSION = 1
@@ -311,16 +330,96 @@ def mix_frames(frames):
     return _FRAME_UNPACK.pack(*out)
 
 
+def downsample_2to1(pcm):
+    """S16LE 16 kHz -> 8 kHz by averaging sample pairs (exact 2:1)."""
+    n = len(pcm) // 4 * 4
+    samples = struct.unpack("<{}h".format(n // 2), pcm[:n])
+    out = [(samples[i] + samples[i + 1]) >> 1 for i in range(0, len(samples), 2)]
+    return struct.pack("<{}h".format(len(out)), *out)
+
+
+def upsample_1to2(pcm):
+    """S16LE 8 kHz -> 16 kHz by linear interpolation."""
+    n = len(pcm) // 2 * 2
+    samples = struct.unpack("<{}h".format(n // 2), pcm[:n])
+    out = []
+    last = len(samples) - 1
+    for i, s in enumerate(samples):
+        nxt = samples[i + 1] if i < last else s
+        out.append(s)
+        out.append((s + nxt) >> 1)
+    return struct.pack("<{}h".format(len(out)), *out)
+
+
+def trim_silence(pcm, threshold=LORA_SILENCE_THRESHOLD):
+    """Drop leading/trailing 20 ms frames whose peak level is below threshold."""
+    frames = [pcm[i:i + FRAME_BYTES]
+              for i in range(0, len(pcm) - FRAME_BYTES + 1, FRAME_BYTES)]
+
+    def loud(fr):
+        return max(abs(v) for v in _FRAME_UNPACK.unpack(fr)) >= threshold
+
+    start, end = 0, len(frames)
+    while start < end and not loud(frames[start]):
+        start += 1
+    while end > start and not loud(frames[end - 1]):
+        end -= 1
+    return b"".join(frames[start:end])
+
+
+def pack_bits(raw, bits_per_frame, bytes_per_frame):
+    """Strip codec2's per-frame byte padding: concatenate each frame's
+    bits_per_frame MSB-first bits into one contiguous bit stream.
+    (450 mode: 4 frames x 18 bits = exactly 9 bytes instead of 12.)"""
+    acc = 0
+    nbits = 0
+    out = bytearray()
+    for i in range(0, len(raw) - bytes_per_frame + 1, bytes_per_frame):
+        val = int.from_bytes(raw[i:i + bytes_per_frame], "big")
+        val >>= bytes_per_frame * 8 - bits_per_frame
+        acc = (acc << bits_per_frame) | val
+        nbits += bits_per_frame
+        while nbits >= 8:
+            nbits -= 8
+            out.append((acc >> nbits) & 0xFF)
+    if nbits:
+        out.append((acc << (8 - nbits)) & 0xFF)
+    return bytes(out)
+
+
+def unpack_bits(data, bits_per_frame, bytes_per_frame, n_frames):
+    """Inverse of pack_bits: rebuild codec2's byte-padded frame stream."""
+    total = int.from_bytes(data, "big")
+    bitlen = len(data) * 8
+    out = bytearray()
+    pos = 0
+    mask = (1 << bits_per_frame) - 1
+    for _ in range(n_frames):
+        if pos + bits_per_frame > bitlen:
+            break
+        val = (total >> (bitlen - pos - bits_per_frame)) & mask
+        pos += bits_per_frame
+        out += (val << (bytes_per_frame * 8 - bits_per_frame)).to_bytes(
+            bytes_per_frame, "big")
+    return bytes(out)
+
+
 # ---------------------------------------------------------------------------
 # Per-source jitter buffer
 # ---------------------------------------------------------------------------
 
 class Source:
-    """Jitter-buffered audio from one remote node."""
+    """Jitter-buffered audio from one remote node.
 
-    def __init__(self, node_id, jitter_frames):
+    max_frames: queue cap. The default suits live streams (bounds latency);
+    LoRa burst clips arrive whole, so their Source is created with a cap
+    large enough to hold the entire clip.
+    """
+
+    def __init__(self, node_id, jitter_frames, max_frames=MAX_QUEUE_FRAMES):
         self.node_id = node_id
         self.jitter_frames = jitter_frames
+        self.max_frames = max_frames
         self.queue = []          # list of frame bytes (FIFO)
         self.playing = False     # False = accumulating jitter buffer
         self.last_seen = time.monotonic()
@@ -328,7 +427,7 @@ class Source:
     def push(self, frame):
         self.last_seen = time.monotonic()
         self.queue.append(frame)
-        if len(self.queue) > MAX_QUEUE_FRAMES:
+        if len(self.queue) > self.max_frames:
             # Bound latency: drop oldest backlog
             del self.queue[: len(self.queue) - self.jitter_frames]
         if not self.playing and len(self.queue) >= self.jitter_frames:
@@ -633,7 +732,16 @@ class WSClient:
             return
         mtype = msg.get("type")
         if mtype == "ptt":
-            self.ptt = bool(msg.get("down"))
+            down = bool(msg.get("down"))
+            if down and not self.ptt:
+                self.daemon.lora_ptt_pressed()
+            elif not down and self.ptt:
+                self.daemon.lora_ptt_released()
+            self.ptt = down
+        elif mtype == "transport":
+            mode = str(msg.get("mode", "")).lower()
+            if self.daemon.set_transport(mode):
+                self.daemon.broadcast_status()
         elif mtype == "channel":
             try:
                 n = int(msg.get("n"))
@@ -666,6 +774,28 @@ class VoiceDaemon:
         jitter_ms = self._parse_int(cfg.get("VOICE_JITTER_MS"), 80)
         self.jitter_frames = max(1, jitter_ms // FRAME_MS)
         self.tx_gain = self._parse_float(cfg.get("VOICE_TX_GAIN"), 4.0)
+
+        # LoRa burst transport (see docs/VoIP/lora_voice/lora_voice_burst.md)
+        self.lora_enabled = cfg.get("VOICE_LORA_ENABLED",
+                                    "false").lower() in ("true", "1", "yes")
+        self.lora_codec = cfg.get("VOICE_LORA_CODEC", "700C")
+        if self.lora_codec not in LORA_CODECS:
+            log("LORA: unknown VOICE_LORA_CODEC '{}', using 700C".format(
+                self.lora_codec))
+            self.lora_codec = "700C"
+        if self.lora_enabled and shutil.which("c2enc") is None:
+            log("LORA: disabled — c2enc not found (sudo apt install codec2)")
+            self.lora_enabled = False
+        # Max clip length = whole codec2 frames that fit one LoRa payload
+        _cid, _bits, _cb = LORA_CODECS[self.lora_codec]
+        max_codec_frames = min(255, ((LORA_MTU - LORA_HDR.size) * 8) // _bits)
+        self.lora_max_pcm_frames = max_codec_frames * (LORA_FRAME_MS // FRAME_MS)
+        self.lora_max_secs = max_codec_frames * LORA_FRAME_MS / 1000.0
+        self.transport = "ip"              # "ip" (live mcast) | "lora" (burst)
+        self.lora_buf = []                 # 20ms PCM frames while PTT held
+        self.lora_clip_full = False        # hit clip limit: lockout to PTT-up
+        self.lora_lock = threading.Lock()
+        self.lora_tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         self.ptt_hw = False                # OpenVLM hardware PTT held
         self.card = None
@@ -728,6 +858,12 @@ class VoiceDaemon:
             "card": self.card,
             "hardware": self.card is not None,
             "wrong_ptt": self.wrong_ptt,
+            "transport": self.transport,
+            "lora": {
+                "enabled": self.lora_enabled,
+                "codec": self.lora_codec,
+                "max_secs": round(self.lora_max_secs, 1),
+            },
         }
 
     # -- networking ---------------------------------------------------------
@@ -790,11 +926,18 @@ class VoiceDaemon:
         return True
 
     def transmit_frame(self, frame, gain=1.0):
-        """Send one 20 ms PCM frame on the current channel as this node."""
-        if self.tx_sock is None:
-            return
+        """Handle one 20 ms PCM frame while PTT is held.
+
+        IP transport: send live on the current multicast channel.
+        LoRa transport: buffer the frame; the clip is encoded and sent as a
+        single burst on PTT release (or when the clip limit is reached)."""
         if gain and abs(gain - 1.0) >= 0.01:
             frame = apply_gain(frame, gain)
+        if self.transport == "lora":
+            self._lora_buffer_frame(frame)
+            return
+        if self.tx_sock is None:
+            return
         with self.channel_lock:
             chan = self.channel
             dest = (self.group_ip(chan), VOICE_PORT)
@@ -807,6 +950,167 @@ class VoiceDaemon:
             self.tx_sock.sendto(hdr + frame, dest)
         except OSError as e:
             log("TX: send failed: {}".format(e))
+
+    # -- LoRa burst transport (Codec2 clips via the cot-bridge relay) --------
+
+    def set_transport(self, mode):
+        """Switch TX transport. RX always listens on both paths."""
+        if mode not in ("ip", "lora"):
+            return False
+        if mode == "lora" and not self.lora_enabled:
+            return False
+        with self.lora_lock:
+            if mode == self.transport:
+                return True
+            self.transport = mode
+            self.lora_buf = []
+            self.lora_clip_full = False
+        log("transport -> {}".format(mode))
+        return True
+
+    def lora_ptt_pressed(self):
+        """PTT down edge: start a fresh clip buffer (LoRa mode only)."""
+        if self.transport != "lora":
+            return
+        with self.lora_lock:
+            self.lora_buf = []
+            self.lora_clip_full = False
+
+    def lora_ptt_released(self):
+        """PTT up edge: encode + send whatever was buffered (LoRa mode only)."""
+        if self.transport != "lora":
+            return
+        with self.lora_lock:
+            buf, self.lora_buf = self.lora_buf, []
+            self.lora_clip_full = False
+        if buf:
+            threading.Thread(target=self._lora_encode_send,
+                             args=(b"".join(buf),), daemon=True).start()
+
+    def _lora_buffer_frame(self, frame):
+        """Buffer one 20 ms PCM frame; auto-send when the clip limit is hit,
+        then discard further audio until PTT is released (no fragmentation)."""
+        send_buf = None
+        with self.lora_lock:
+            if self.lora_clip_full:
+                return
+            self.lora_buf.append(frame)
+            if len(self.lora_buf) >= self.lora_max_pcm_frames:
+                send_buf = b"".join(self.lora_buf)
+                self.lora_buf = []
+                self.lora_clip_full = True
+        if send_buf:
+            log("LORA: clip limit reached — auto-sending")
+            threading.Thread(target=self._lora_encode_send,
+                             args=(send_buf,), daemon=True).start()
+
+    def _lora_encode_send(self, pcm16k):
+        """Encode a PCM clip with Codec2 and hand it to the cot-bridge relay
+        (UDP 127.0.0.1:5558), which transmits it as one Meshtastic packet."""
+        try:
+            pcm16k = trim_silence(pcm16k)
+            if not pcm16k:
+                log("LORA: clip was all silence — dropped")
+                return
+            pcm8k = downsample_2to1(pcm16k)
+            # Pad to whole 40 ms codec2 frames
+            frame_bytes = LORA_SAMPLES_PER_FRAME * 2
+            rem = len(pcm8k) % frame_bytes
+            if rem:
+                pcm8k += b"\x00" * (frame_bytes - rem)
+            n_frames = len(pcm8k) // frame_bytes
+            codec_id, bits, cbytes = LORA_CODECS[self.lora_codec]
+            proc = subprocess.run(
+                ["c2enc", self.lora_codec, "-", "-"],
+                input=pcm8k, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, timeout=10)
+            raw = proc.stdout
+            if not raw:
+                log("LORA: c2enc produced no output")
+                return
+            packed = pack_bits(raw, bits, cbytes)
+            payload = LORA_HDR.pack(codec_id, self.channel, n_frames) + packed
+            if len(payload) > LORA_MTU:
+                log("LORA: encoded clip too large ({}B) — dropped".format(
+                    len(payload)))
+                return
+            self.lora_tx_sock.sendto(payload, LORA_TX_ADDR)
+            log("LORA TX: {:.1f}s clip -> {}B packet ({} frames, {})".format(
+                n_frames * LORA_FRAME_MS / 1000.0, len(payload), n_frames,
+                self.lora_codec))
+        except FileNotFoundError:
+            log("LORA: c2enc not found (sudo apt install codec2)")
+        except Exception as e:
+            log("LORA: encode/send failed: {}".format(e))
+
+    def lora_rx_thread(self):
+        """Receive LoRa voice clips from the cot-bridge relay (UDP 5559),
+        decode, and inject into the mixer so they play on every sink."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(LORA_RX_ADDR)
+        except OSError as e:
+            log("LORA: cannot bind {}:{}: {}".format(
+                LORA_RX_ADDR[0], LORA_RX_ADDR[1], e))
+            return
+        log("LORA: RX relay socket on {}:{}".format(*LORA_RX_ADDR))
+        while not self.stop.is_set():
+            rlist, _, _ = select.select([sock], [], [], 0.5)
+            if not rlist:
+                continue
+            try:
+                data, _addr = sock.recvfrom(2048)
+            except OSError:
+                continue
+            # cot-bridge prepends the sender's 4-byte meshtastic node num
+            if len(data) < 4 + LORA_HDR.size + 1:
+                continue
+            sender = struct.unpack("<I", data[:4])[0]
+            try:
+                self._lora_decode_play(sender, data[4:])
+            except Exception as e:
+                log("LORA: decode failed: {}".format(e))
+
+    def _lora_decode_play(self, sender, payload):
+        codec_id, channel, n_frames = LORA_HDR.unpack(payload[:LORA_HDR.size])
+        mode = None
+        for name, (cid, _b, _c) in LORA_CODECS.items():
+            if cid == codec_id:
+                mode = name
+                break
+        if mode is None:
+            log("LORA RX: unknown codec id {}".format(codec_id))
+            return
+        if channel != self.channel:
+            return                          # different voice channel
+        _cid, bits, cbytes = LORA_CODECS[mode]
+        raw = unpack_bits(payload[LORA_HDR.size:], bits, cbytes, n_frames)
+        proc = subprocess.run(
+            ["c2dec", mode, "-", "-"],
+            input=raw, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=10)
+        pcm8k = proc.stdout
+        if not pcm8k:
+            return
+        pcm16k = upsample_1to2(pcm8k)
+        # Split into 20 ms frames and feed a large-queue Source; the mixer
+        # plays it out to all sinks (headset + phones) in real time.
+        frames = [pcm16k[i:i + FRAME_BYTES]
+                  for i in range(0, len(pcm16k) - FRAME_BYTES + 1, FRAME_BYTES)]
+        if not frames:
+            return
+        node_key = sender & 0xFFFF
+        with self.sources_lock:
+            src = self.sources.get(node_key)
+            if src is None or src.max_frames < len(frames) + 4:
+                src = Source(node_key, 1, max_frames=len(frames) + 8)
+                self.sources[node_key] = src
+            for f in frames:
+                src.push(f)
+        log("LORA RX: {:.1f}s clip from node {} ({} frames, {})".format(
+            len(frames) * FRAME_MS / 1000.0, sender, len(frames), mode))
+        self.broadcast_status()
 
     # -- WS client registry -------------------------------------------------
 
@@ -929,6 +1233,14 @@ class VoiceDaemon:
                 reply = {"ok": True, "current": self.channel,
                          "channels": [{"n": n, "label": l}
                                       for n, l in self.channels]}
+            elif len(parts) == 2 and parts[0].upper() == "TRANSPORT":
+                if self.set_transport(parts[1].lower()):
+                    self.broadcast_status()
+                    reply = {"ok": True, "transport": self.transport}
+                else:
+                    reply = {"ok": False,
+                             "error": "bad transport (ip|lora; lora requires "
+                                      "VOICE_LORA_ENABLED=true and codec2)"}
             elif len(parts) == 2 and parts[0].upper() == "CHANNEL":
                 try:
                     n = int(parts[1])
@@ -1032,10 +1344,17 @@ class VoiceDaemon:
                     pressed = (report[ptt_byte] & ptt_mask) != 0
                     if pressed != self.ptt_hw:
                         self.ptt_hw = pressed
+                        if pressed:
+                            self.lora_ptt_pressed()
+                        else:
+                            self.lora_ptt_released()
                         log("PTT {}".format("PRESSED" if pressed else "RELEASED"))
                         self.broadcast_status()
         finally:
             os.close(fd)
+            if self.ptt_hw:
+                self.ptt_hw = False
+                self.lora_ptt_released()   # flush a clip cut off by unplug
             self.ptt_hw = False
 
     def openvlm_capture_thread(self, alsa_device, session_failed):
@@ -1161,9 +1480,14 @@ class VoiceDaemon:
 
         # Always-on threads: mesh RX, self-clocked mixer, control socket,
         # WebSocket server (phones), status broadcaster.
-        for target in (self.rx_thread, self.mixer_thread, self.control_thread,
-                       self.ws_server_thread, self.status_broadcaster_thread,
-                       self.openvlm_supervisor_thread):
+        targets = [self.rx_thread, self.mixer_thread, self.control_thread,
+                   self.ws_server_thread, self.status_broadcaster_thread,
+                   self.openvlm_supervisor_thread]
+        if self.lora_enabled:
+            targets.append(self.lora_rx_thread)
+            log("LORA: burst transport available (codec {}, max clip {:.1f}s)"
+                .format(self.lora_codec, self.lora_max_secs))
+        for target in targets:
             threading.Thread(target=target, daemon=True).start()
 
         try:

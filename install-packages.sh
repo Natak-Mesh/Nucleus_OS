@@ -36,7 +36,8 @@ sudo apt install -y \
   mtr-tiny \
   ncdu \
   nginx \
-  alsa-utils
+  alsa-utils \
+  codec2
 
 
 # Install Python packages

@@ -135,6 +135,11 @@ sudo chmod +x /usr/local/bin/voice
 # Copy meshtastic module if exists
 if [ -d "$SOURCE_DIR/opt/nucleus/meshtastic" ]; then
     sudo cp -r "$SOURCE_DIR/opt/nucleus/meshtastic" /opt/nucleus/
+    # Restart cot-bridge (if running) so a deploy picks up new cot_bridge.py
+    # immediately (e.g. the LoRa voice relay). No-op when the service is off.
+    if systemctl is-active --quiet cot-bridge.service; then
+        sudo systemctl restart cot-bridge.service
+    fi
 fi
 
 # Copy web directory if exists
