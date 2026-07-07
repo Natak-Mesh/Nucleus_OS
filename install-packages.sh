@@ -85,7 +85,13 @@ pip3 install --break-system-packages "protobuf>=6,<7"
 
 # Download speech models for LoRa Voice→Text (requires internet)
 echo "[3b/8] Downloading STT/TTS models for LoRa voice-text..."
-# Vosk STT model (~40 MB) -> /opt/nucleus/models/vosk/vosk-model-small-en-us-0.15
+# Vosk STT model (~40 MB disk, ~100 MB RAM) -> /opt/nucleus/models/vosk/
+# The small model is the fielded default: it decodes faster than real-time
+# on a Pi 4 so the transcript is ready the moment PTT is released. Larger
+# models (e.g. vosk-model-en-us-0.22-lgraph) were tested and REJECTED on
+# Pi 4: slower-than-real-time decode = 10+ s latency after release, plus
+# ~500-700 MB RAM. For accuracy gains use the opt-in grammar constraint
+# (VOICE_STT_GRAMMAR in mesh.conf) instead.
 VOSK_DIR=/opt/nucleus/models/vosk
 if [ ! -d "$VOSK_DIR/vosk-model-small-en-us-0.15" ]; then
     sudo mkdir -p "$VOSK_DIR"
@@ -97,6 +103,7 @@ if [ ! -d "$VOSK_DIR/vosk-model-small-en-us-0.15" ]; then
 else
     echo "Vosk model already installed."
 fi
+
 # Piper TTS voice (~60 MB) -> /opt/nucleus/models/piper/en_US-lessac-low.onnx
 PIPER_DIR=/opt/nucleus/models/piper
 PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/low"

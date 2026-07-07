@@ -50,6 +50,8 @@ Config (/etc/nucleus/mesh.conf):
     VOICE_CHANNELS="1:Command,..."  named channel list (number:label, comma-sep)
     VOICE_JITTER_MS=80              per-source RX buffer before playback starts
     VOICE_TX_GAIN=4                 software mic gain for the OpenVLM path
+    VOICE_STT_MODEL=                Vosk model override (dir name or abs path)
+    VOICE_STT_GRAMMAR=              optional phrase-list file (constrained STT)
     MESH_IP, MESH_802_TTL are also read.
 
 Run as root (hidraw access). Designed to run via openvlm-voice.service.
@@ -97,8 +99,22 @@ LORA_HDR = struct.Struct("<BB")       # flags(B) channel(B)
 LORA_FLAG_TRUNCATED = 0x01            # transcript didn't fit in one packet
 LORA_TEXT_MAX = LORA_MTU - LORA_HDR.size   # max UTF-8 text bytes per packet
 
-VOSK_MODEL_PATH = "/opt/nucleus/models/vosk/vosk-model-small-en-us-0.15"
+# Vosk STT models live in VOSK_MODEL_DIR. The first installed candidate is
+# used; VOICE_STT_MODEL in mesh.conf overrides. The small model is the
+# default: field-tested on Pi 4, it decodes faster than real-time (so the
+# transcript really is ready at PTT release) at ~100 MB RAM. Larger models
+# (e.g. vosk-model-en-us-0.22-lgraph) were tried and REJECTED on Pi 4:
+# slower-than-real-time decode added 10+ s of latency after PTT release and
+# ~500-700 MB RAM, for little practical accuracy gain. Use VOICE_STT_MODEL
+# to opt into a bigger model on faster hardware only. For accuracy on Pi 4,
+# use the opt-in grammar constraint (VOICE_STT_GRAMMAR) instead.
+VOSK_MODEL_DIR = "/opt/nucleus/models/vosk"
+VOSK_MODEL_CANDIDATES = [
+    "vosk-model-small-en-us-0.15",      # default: real-time on Pi 4, low RAM
+]
+
 PIPER_MODEL_PATH = "/opt/nucleus/models/piper/en_US-lessac-low.onnx"
+
 # The en_US-lessac-low Piper voice outputs 16 kHz S16 — exactly the mixer
 # format (RATE below), so TTS audio feeds the mixer with no resampling.
 
@@ -714,6 +730,12 @@ class VoiceDaemon:
                                               / FRAME_MS))
         self.vosk_model = None             # loaded in stt_worker at startup
         self.lora_ready = False            # True once the Vosk model is loaded
+        # Which Vosk model to load: VOICE_STT_MODEL override wins, else the
+        # default candidate (small model — see VOSK_MODEL_CANDIDATES note).
+        self.vosk_model_path = self._resolve_stt_model(
+            cfg.get("VOICE_STT_MODEL"))
+        # Optional grammar-constrained recognition (see _load_stt_grammar).
+        self.stt_grammar = self._load_stt_grammar(cfg.get("VOICE_STT_GRAMMAR"))
         if self.lora_enabled:
             try:
                 import vosk  # noqa: F401 — availability check only
@@ -721,9 +743,9 @@ class VoiceDaemon:
                 log("LORA: disabled — python 'vosk' package not installed "
                     "(pip3 install vosk)")
                 self.lora_enabled = False
-        if self.lora_enabled and not os.path.isdir(VOSK_MODEL_PATH):
-            log("LORA: disabled — Vosk model missing at {}".format(
-                VOSK_MODEL_PATH))
+        if self.lora_enabled and self.vosk_model_path is None:
+            log("LORA: disabled — no Vosk model found in {} "
+                "(run install-packages.sh)".format(VOSK_MODEL_DIR))
             self.lora_enabled = False
         if self.lora_enabled and (shutil.which("piper") is None
                                   or not os.path.isfile(PIPER_MODEL_PATH)):
@@ -772,6 +794,62 @@ class VoiceDaemon:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _resolve_stt_model(override):
+        """Pick the Vosk model directory to load.
+
+        VOICE_STT_MODEL (a directory name under VOSK_MODEL_DIR, or an
+        absolute path) wins if it exists; otherwise the first installed
+        VOSK_MODEL_CANDIDATES entry. None = nothing found.
+        """
+        if override:
+            path = override if os.path.isabs(override) \
+                else os.path.join(VOSK_MODEL_DIR, override)
+            if os.path.isdir(path):
+                return path
+            log("LORA: VOICE_STT_MODEL '{}' not found — auto-detecting "
+                "instead".format(override))
+        for name in VOSK_MODEL_CANDIDATES:
+            path = os.path.join(VOSK_MODEL_DIR, name)
+            if os.path.isdir(path):
+                return path
+        return None
+
+    @staticmethod
+    def _load_stt_grammar(path):
+        """Load an optional grammar phrase list for constrained recognition.
+
+        VOICE_STT_GRAMMAR points at a text file with one lowercase word or
+        phrase per line (blank lines / '#' comments ignored). Constraining
+        the recognizer to a fixed radio vocabulary (callsigns, prowords,
+        digits...) makes it dramatically more accurate on those phrases;
+        out-of-vocabulary speech maps to [unk] instead of a forced wrong
+        match. Returns the JSON string Vosk expects, or None for the default
+        free-form recognition.
+        """
+        if not path:
+            return None
+        try:
+            with open(path) as f:
+                phrases = []
+                for line in f:
+                    line = line.strip().lower()
+                    if line and not line.startswith("#"):
+                        phrases.append(line)
+        except OSError as e:
+            log("LORA: cannot read VOICE_STT_GRAMMAR {}: {} — using "
+                "free-form recognition".format(path, e))
+            return None
+        if not phrases:
+            log("LORA: VOICE_STT_GRAMMAR {} is empty — using free-form "
+                "recognition".format(path))
+            return None
+        if "[unk]" not in phrases:
+            phrases.append("[unk]")
+        log("LORA: STT grammar loaded from {} ({} phrases + [unk])".format(
+            path, len(phrases) - 1))
+        return json.dumps(phrases)
+
     # -- status -------------------------------------------------------------
 
     def any_ptt(self):
@@ -807,6 +885,9 @@ class VoiceDaemon:
                 "enabled": self.lora_enabled,
                 "ready": self.lora_ready,
                 "stt": "vosk",
+                "stt_model": (os.path.basename(self.vosk_model_path)
+                              if self.vosk_model_path else None),
+                "stt_grammar": self.stt_grammar is not None,
                 "max_secs": round(self.lora_max_secs, 1),
             },
         }
@@ -877,11 +958,15 @@ class VoiceDaemon:
         LoRa transport: stream the frame into the Vosk recognizer; the
         transcript is finalized and sent as one text packet on PTT release
         (or when the clip time limit is reached)."""
-        if gain and abs(gain - 1.0) >= 0.01:
-            frame = apply_gain(frame, gain)
         if self.transport == "lora":
+            # Feed the recognizer the RAW frame. The software TX gain exists
+            # for playback loudness on the IP path and hard-clips at high
+            # settings (e.g. the OpenVLM's 4x) — clipped audio wrecks STT
+            # accuracy, and Vosk doesn't need the level boost.
             self._lora_buffer_frame(frame)
             return
+        if gain and abs(gain - 1.0) >= 0.01:
+            frame = apply_gain(frame, gain)
         if self.tx_sock is None:
             return
         with self.channel_lock:
@@ -969,13 +1054,17 @@ class VoiceDaemon:
         try:
             from vosk import Model, KaldiRecognizer, SetLogLevel
             SetLogLevel(-1)
-            log("LORA: loading Vosk model ({})...".format(VOSK_MODEL_PATH))
+            log("LORA: loading Vosk model ({})...".format(
+                self.vosk_model_path))
             t0 = time.monotonic()
-            self.vosk_model = Model(VOSK_MODEL_PATH)
+            self.vosk_model = Model(self.vosk_model_path)
             self.lora_ready = True
-            log("LORA: voice-text ready — Vosk model loaded in {:.1f}s "
-                "(max clip {:.0f}s)".format(
-                    time.monotonic() - t0, self.lora_max_secs))
+            log("LORA: voice-text ready — Vosk model '{}' loaded in {:.1f}s "
+                "({}, max clip {:.0f}s)".format(
+                    os.path.basename(self.vosk_model_path),
+                    time.monotonic() - t0,
+                    "grammar-constrained" if self.stt_grammar else "free-form",
+                    self.lora_max_secs))
             self.broadcast_status()
         except Exception as e:
             log("LORA: disabled — Vosk model load failed: {}".format(e))
@@ -989,7 +1078,11 @@ class VoiceDaemon:
             except queue.Empty:
                 continue
             if cmd == "start":
-                rec = KaldiRecognizer(self.vosk_model, RATE)
+                if self.stt_grammar is not None:
+                    rec = KaldiRecognizer(self.vosk_model, RATE,
+                                          self.stt_grammar)
+                else:
+                    rec = KaldiRecognizer(self.vosk_model, RATE)
             elif cmd == "frame":
                 if rec is not None:
                     try:

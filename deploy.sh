@@ -122,6 +122,10 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/openvlm-voice.py" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/voice" /usr/local/bin/
+# Example STT grammar phrase list (opt-in constrained recognition, see
+# VOICE_STT_GRAMMAR in mesh.conf). Never overwrites a node's edited grammar.txt.
+sudo mkdir -p /opt/nucleus/models/vosk
+sudo cp "$SOURCE_DIR/opt/nucleus/models/vosk/grammar.example.txt" /opt/nucleus/models/vosk/
 sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh

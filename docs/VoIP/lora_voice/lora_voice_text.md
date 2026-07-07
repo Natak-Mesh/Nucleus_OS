@@ -45,16 +45,56 @@ Airtime discipline (inherited unchanged):
 
 ## Why Vosk (not whisper.cpp)
 
-| | Vosk small-en-us | whisper.cpp base-q5_0 |
+| | Vosk (streaming) | whisper.cpp base-q5_0 |
 |---|---|---|
-| Model size | ~40 MB disk / ~100 MB RAM | ~150 MB RAM |
 | Mode | **Streaming** — transcribes *while PTT is held* | Batch — can't start until PTT release |
 | Latency at release | ~instant (finalize only) | 3–6x realtime on Pi 4 → 45–90 s for a 15 s clip |
-| Accuracy | Good for short tactical phrases; no punctuation | Better, but irrelevant if unusably slow |
+| Accuracy | Good–very good depending on model (see below); no punctuation | Better, but irrelevant if unusably slow |
 
 Streaming is the killer feature: by the time the user releases PTT the
 transcript is already computed. Whisper remains a possible future upgrade for
 higher-RAM nodes, but Vosk is the fielded baseline.
+
+### STT model selection
+
+`install-packages.sh` installs the small model; the daemon loads it by
+default. `VOICE_STT_MODEL` in mesh.conf forces a different model (directory
+name under `/opt/nucleus/models/vosk/` or absolute path) — for faster
+hardware only.
+
+| Model | Disk | RAM (loaded) | Pi 4 verdict |
+|---|---|---|---|
+| `vosk-model-small-en-us-0.15` (**default**) | ~40 MB | ~100 MB | decodes faster than real-time — transcript truly ready at PTT release |
+| `vosk-model-en-us-0.22-lgraph` (tested, **rejected on Pi 4**) | ~128 MB | ~500–700 MB | decodes *slower* than real-time → 10+ s latency after release (field-tested 2026-07-07) |
+
+The lesson: on a Pi 4, model size buys nothing if decode falls behind the
+live audio — the "streaming = instant transcript" property only holds when
+the recognizer keeps up. The active model is logged at startup and reported
+in `voice status` / the WS status (`lora.stt_model`). **For accuracy gains
+on Pi 4, use the grammar constraint below instead of a bigger model.**
+
+### Optional: grammar-constrained recognition (opt-in)
+
+For traffic that sticks to a fixed radio vocabulary (callsigns, prowords,
+phonetic alphabet, digits), Vosk can be constrained to a phrase list, making
+recognition of those phrases dramatically more accurate — even with the
+small model. The trade-off: out-of-vocabulary speech maps to `[unk]`
+(dropped) instead of being transcribed, so only enable it if traffic really
+is disciplined.
+
+- Set `VOICE_STT_GRAMMAR=/opt/nucleus/models/vosk/grammar.txt` in mesh.conf
+  (file format: one lowercase word/phrase per line, `#` comments allowed).
+- A starter vocabulary ships at
+  `/opt/nucleus/models/vosk/grammar.example.txt` — copy it, add your
+  callsigns/locations, and point the config at your copy.
+- Empty/unset (default) = normal free-form recognition.
+
+### STT audio path note
+
+In LoRa mode the recognizer is fed the **raw mic frames**, *before* the
+`VOICE_TX_GAIN` software gain is applied. That gain (4x by default, for the
+low-level ComTac mics on the IP voice path) hard-clips loud audio, and
+clipped audio wrecks STT accuracy; Vosk doesn't need the level boost.
 
 **TTS:** Piper `en_US-lessac-low.onnx` (~60 MB). The `-low` voices output
 **16 kHz S16 mono — exactly the voice daemon's mixer format**, so synthesized
@@ -137,6 +177,8 @@ VOICE_LORA_ENABLED=true       # feature gate
 VOICE_LORA_MAX_SECS=30        # max speech per PTT press (auto-finalize after)
 VOICE_LORA_PORTNUM=260        # PRIVATE_APP range; same on all nodes
 VOICE_LORA_HOP_LIMIT=0        # direct RF neighbors only
+VOICE_STT_MODEL=              # empty = small model (default; Pi 4 real-time)
+VOICE_STT_GRAMMAR=            # empty = free-form; path = phrase-list file
 ```
 
 Dependencies (handled by `install-packages.sh`, needs internet at install):
@@ -146,6 +188,7 @@ Dependencies (handled by `install-packages.sh`, needs internet at install):
 | `vosk` + `piper-tts` (pip, system-wide) | daemon runs as root |
 | Vosk model `vosk-model-small-en-us-0.15` (~40 MB) | `/opt/nucleus/models/vosk/` |
 | Piper voice `en_US-lessac-low.onnx` (~60 MB) | `/opt/nucleus/models/piper/` |
+| Grammar example `grammar.example.txt` (deploy.sh) | `/opt/nucleus/models/vosk/` |
 
 Startup behavior: the Vosk model loads in a background thread (~5–15 s on a
 Pi 4). Until it's ready the LoRa transport button shows "loading speech
@@ -160,8 +203,9 @@ texts still display in the log — they just aren't spoken.
 | `opt/nucleus/meshtastic/cot_bridge.py` | payload-agnostic voice relay: UDP 5558 → LoRa TX (portnum 260); portnum-260 RX → UDP 5559 |
 | `opt/nucleus/web/templates/voice.html` | "LoRa (voice→text)" transport button, Messages log panel, SENDING state cleared by tx confirmation |
 | `opt/nucleus/bin/voice` | `voice transport ip\|lora`, `voice texts` CLI commands |
-| `etc/nucleus/mesh.conf` | `VOICE_LORA_ENABLED / MAX_SECS / PORTNUM / HOP_LIMIT` keys |
+| `etc/nucleus/mesh.conf` | `VOICE_LORA_ENABLED / MAX_SECS / PORTNUM / HOP_LIMIT / VOICE_STT_MODEL / VOICE_STT_GRAMMAR` keys |
 | `install-packages.sh` | `vosk` + `piper-tts` pip installs and model downloads to `/opt/nucleus/models/` |
+| `opt/nucleus/models/vosk/grammar.example.txt` | starter phrase list for opt-in grammar-constrained STT |
 
 ### Enabling on a node
 
@@ -183,9 +227,11 @@ texts still display in the log — they just aren't spoken.
 
 ### Known limitations / future work
 
-- **English only** (both models). Other Vosk/Piper models drop in via the
-  model paths if needed.
+- **English only** (both models). Other Vosk/Piper models drop in via
+  `VOICE_STT_MODEL` / the model paths if needed.
 - **No punctuation** from Vosk small — fine for radio-style traffic.
+- **Bigger Vosk models don't work on Pi 4** (see STT model selection above);
+  revisit only on faster hardware.
 - Multi-packet utterances (seq/continuation flags) deferred; single-packet
   truncation keeps the airtime doctrine simple.
 - Per-message Piper subprocess costs ~1–2 s of model load; if that proves
