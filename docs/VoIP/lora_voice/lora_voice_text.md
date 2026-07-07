@@ -100,6 +100,42 @@ clipped audio wrecks STT accuracy; Vosk doesn't need the level boost.
 **16 kHz S16 mono — exactly the voice daemon's mixer format**, so synthesized
 audio feeds the existing mixer with zero resampling.
 
+### TTS: resident Piper + chunked streaming (2026-07-07)
+
+The original implementation spawned a `piper` **subprocess per received
+message**, which field-tested at 5–10 s from message arrival to speech. The
+fix, measured on a Pi 4 with the same test sentence (~3.8 s of audio):
+
+| TTS path | Time to audio |
+|---|---|
+| `piper` subprocess per message (**old**) | **~8.8 s** — interpreter + onnxruntime + ONNX model load + espeak init, every message |
+| Resident `PiperVoice` (loaded once), whole message | ~2.3 s |
+| Resident + chunked streaming (**current**) | **< 1 s to first words** |
+
+Two changes in `tts_worker_thread`:
+
+1. **Resident voice** — `PiperVoice.load()` (piper-tts ≥ 1.4 Python API) runs
+   once at thread startup (~5.6 s, in the background like the Vosk model,
+   plus a short warm-up synthesis). Every message after that pays only raw
+   synthesis time, which is ~1.7x *faster* than real time on a Pi 4.
+2. **Chunked streaming** — Vosk emits no punctuation, so Piper treats the
+   whole transcript as one long sentence and won't return any audio until
+   the entire thing is synthesized. The worker instead splits the text into
+   8-word chunks (`TTS_CHUNK_WORDS`), synthesizes chunk by chunk, and pushes
+   each chunk's PCM into the mixer `Source` as soon as it's ready. Playback
+   starts on the first chunk; because synthesis outruns real time, later
+   chunks always land before the buffer runs dry.
+
+Trade-off: the resident voice holds the ONNX model + onnxruntime in RAM
+permanently (~100 MB) instead of transiently per message. Only applies when
+`VOICE_LORA_ENABLED=true` (which already keeps Vosk resident). Rollback is
+confined to `tts_worker_thread` in `openvlm-voice.py` if RAM becomes a
+problem.
+
+If the piper Python package or the voice model is missing, received texts
+still display in the message log — they just aren't spoken (same fallback as
+before).
+
 ## Architecture
 
 ```
@@ -159,14 +195,17 @@ the burst design: `want_ack=False`, low `hop_limit`, single ~200 ms burst.
   arrive as `{"type":"text"}` events.
 - CLI: `voice texts` dumps the history via the control socket (`TEXTS`).
 
-## Latency budget (PTT release → remote playback)
+## Latency budget (PTT release → remote playback starts)
 
 | Stage | Estimate |
 |---|---|
 | Vosk finalize (streaming already done) | ~0.1–0.5 s |
 | LoRa TX queue + airtime (SHORT_FAST) | ~0.3–1 s |
-| Piper TTS synthesis (Pi 4, -low voice) | ~1–3 s |
-| **Total** | **~2–4 s** |
+| Piper TTS first chunk (resident model, chunked) | ~0.3–1 s |
+| **Total** | **~1–2.5 s** |
+
+(Before the resident/chunked TTS rework the Piper stage alone was 5–10 s —
+see the TTS section above.)
 
 ## Nucleus integration
 
@@ -185,21 +224,23 @@ Dependencies (handled by `install-packages.sh`, needs internet at install):
 
 | What | Where |
 |---|---|
-| `vosk` + `piper-tts` (pip, system-wide) | daemon runs as root |
+| `vosk` + `piper-tts>=1.4` (pip, system-wide; ≥1.4 for the resident `PiperVoice` Python API) | daemon runs as root |
 | Vosk model `vosk-model-small-en-us-0.15` (~40 MB) | `/opt/nucleus/models/vosk/` |
 | Piper voice `en_US-lessac-low.onnx` (~60 MB) | `/opt/nucleus/models/piper/` |
 | Grammar example `grammar.example.txt` (deploy.sh) | `/opt/nucleus/models/vosk/` |
 
 Startup behavior: the Vosk model loads in a background thread (~5–15 s on a
 Pi 4). Until it's ready the LoRa transport button shows "loading speech
-model…" and cannot be selected. If piper or its voice is missing, received
-texts still display in the log — they just aren't spoken.
+model…" and cannot be selected. The Piper voice also loads once in the
+background (~5–6 s) in the TTS worker thread; messages received before it
+finishes are simply queued. If the piper package or its voice is missing,
+received texts still display in the log — they just aren't spoken.
 
 ### Implementation files
 
 | file | role |
 |---|---|
-| `opt/nucleus/bin/openvlm-voice.py` | STT worker (resident Vosk model + per-clip streaming recognizer), text packetizer, TTS worker (Piper → mixer), message history + WS text events, `TEXTS` control command |
+| `opt/nucleus/bin/openvlm-voice.py` | STT worker (resident Vosk model + per-clip streaming recognizer), text packetizer, TTS worker (resident PiperVoice, chunked streaming → mixer), message history + WS text events, `TEXTS` control command |
 | `opt/nucleus/meshtastic/cot_bridge.py` | payload-agnostic voice relay: UDP 5558 → LoRa TX (portnum 260); portnum-260 RX → UDP 5559 |
 | `opt/nucleus/web/templates/voice.html` | "LoRa (voice→text)" transport button, Messages log panel, SENDING state cleared by tx confirmation |
 | `opt/nucleus/bin/voice` | `voice transport ip\|lora`, `voice texts` CLI commands |
@@ -209,7 +250,7 @@ texts still display in the log — they just aren't spoken.
 
 ### Enabling on a node
 
-1. Run `install-packages.sh` (or manually: `sudo pip3 install --break-system-packages vosk piper-tts` + download the two models to `/opt/nucleus/models/`)
+1. Run `install-packages.sh` (or manually: `sudo pip3 install --break-system-packages vosk "piper-tts>=1.4"` + download the two models to `/opt/nucleus/models/`)
 2. In `/etc/nucleus/mesh.conf`: `COT_BRIDGE_ENABLED=true`, `VOICE_LORA_ENABLED=true`
    (same `VOICE_LORA_PORTNUM` on all nodes)
 3. `sudo systemctl restart cot-bridge openvlm-voice`
@@ -222,7 +263,7 @@ texts still display in the log — they just aren't spoken.
   shows `VOICE TX → LoRa`. Your transcript appears in the `/voice` Messages
   log.
 - Two nodes: same voice channel + same LoRa channel/preset. The remote node
-  displays the text and speaks it ~2–4 s after release.
+  displays the text and starts speaking it ~1–2.5 s after release.
 - `voice texts` dumps the message history from the CLI.
 
 ### Known limitations / future work
@@ -234,5 +275,7 @@ texts still display in the log — they just aren't spoken.
   revisit only on faster hardware.
 - Multi-packet utterances (seq/continuation flags) deferred; single-packet
   truncation keeps the airtime doctrine simple.
-- Per-message Piper subprocess costs ~1–2 s of model load; if that proves
-  annoying, switch to the resident `piper` Python API.
+- ~~Per-message Piper subprocess costs ~1–2 s of model load~~ — resolved
+  2026-07-07: switched to the resident `PiperVoice` Python API + chunked
+  streaming synthesis (see the TTS section above). Measured cost of the
+  subprocess was actually ~8.8 s per message on a Pi 4.

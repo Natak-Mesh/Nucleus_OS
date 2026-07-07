@@ -64,9 +64,12 @@ pip3 install --break-system-packages --upgrade "git+https://github.com/meshtasti
 
 # LoRa Voice→Text (openvlm-voice.py) — offline STT + TTS
 # vosk: streaming speech-to-text (transcribes while PTT is held)
-# piper-tts: neural text-to-speech (speaks received texts)
+# piper-tts: neural text-to-speech (speaks received texts). Must be >= 1.4:
+#   the voice daemon uses the resident PiperVoice Python API (not the CLI)
+#   so the model loads once at startup instead of per message — see
+#   docs/VoIP/lora_voice/lora_voice_text.md (TTS section).
 # Installed with sudo (system-wide) because the voice daemon runs as root.
-sudo pip3 install --break-system-packages vosk piper-tts
+sudo pip3 install --break-system-packages vosk "piper-tts>=1.4"
 
 # Pin protobuf to major version 6 — MUST run AFTER meshtastic/takproto/TAKPacket-SDK
 # installs, since their `pip install --upgrade` pulls whatever protobuf is newest.

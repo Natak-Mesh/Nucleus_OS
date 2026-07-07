@@ -68,7 +68,6 @@ import json
 import os
 import queue
 import select
-import shutil
 import socket
 import struct
 import subprocess
@@ -117,6 +116,17 @@ PIPER_MODEL_PATH = "/opt/nucleus/models/piper/en_US-lessac-low.onnx"
 
 # The en_US-lessac-low Piper voice outputs 16 kHz S16 — exactly the mixer
 # format (RATE below), so TTS audio feeds the mixer with no resampling.
+#
+# TTS runs via the resident PiperVoice Python API (piper-tts >= 1.4), loaded
+# ONCE by tts_worker_thread. A per-message `piper` subprocess was measured at
+# ~8.8 s on a Pi 4 (interpreter + onnxruntime + model load every time) vs
+# ~2.3 s resident for the same text. Received text is synthesized in small
+# word chunks whose PCM is pushed to the mixer as each chunk completes, so
+# the first words play in well under a second; Piper -low synthesizes ~1.7x
+# faster than real time on a Pi 4, so playback never outruns synthesis.
+# See docs/VoIP/lora_voice/lora_voice_text.md
+TTS_CHUNK_WORDS = 8                   # words per streaming synthesis chunk
+TTS_SOURCE_MAX_FRAMES = 3000          # mixer Source cap for TTS clips (60 s)
 
 TEXT_HISTORY_MAX = 50                 # sent+received messages kept for UI/CLI
 
@@ -747,10 +757,16 @@ class VoiceDaemon:
             log("LORA: disabled — no Vosk model found in {} "
                 "(run install-packages.sh)".format(VOSK_MODEL_DIR))
             self.lora_enabled = False
-        if self.lora_enabled and (shutil.which("piper") is None
-                                  or not os.path.isfile(PIPER_MODEL_PATH)):
-            log("LORA: warning — piper or its voice model missing; received "
-                "texts will display but not be spoken")
+        if self.lora_enabled:
+            piper_ok = os.path.isfile(PIPER_MODEL_PATH)
+            if piper_ok:
+                try:
+                    import piper  # noqa: F401 — availability check only
+                except ImportError:
+                    piper_ok = False
+            if not piper_ok:
+                log("LORA: warning — piper python package or its voice model "
+                    "missing; received texts will display but not be spoken")
         self.transport = "ip"              # "ip" (live mcast) | "lora" (text)
         self.lora_active = False           # a clip is being captured
         self.lora_clip_frames = 0          # 20ms frames fed to STT this clip
@@ -1215,48 +1231,97 @@ class VoiceDaemon:
             log("LORA: TTS queue full — message displayed but not spoken")
 
     def tts_worker_thread(self):
-        """Synthesize received texts with Piper and inject the audio into the
-        mixer so every sink (headset + phones) hears them. One at a time so
-        two messages never talk over each other."""
+        """Speak received texts through the mixer so every sink (headset +
+        phones) hears them, one message at a time.
+
+        The Piper voice is loaded ONCE here and kept resident: a `piper`
+        subprocess per message cost ~8.8 s on a Pi 4 (interpreter +
+        onnxruntime + model load every time) vs ~2.3 s resident for the same
+        text. Each text is synthesized in TTS_CHUNK_WORDS-word chunks and
+        each chunk's PCM is pushed to the mixer as soon as it is ready, so
+        the first words play in well under a second; Piper -low synthesizes
+        faster than real time on a Pi 4, so playback never runs dry
+        mid-message."""
+        voice = None
+        try:
+            from piper import PiperVoice
+            if os.path.isfile(PIPER_MODEL_PATH):
+                voice = PiperVoice.load(PIPER_MODEL_PATH)
+                for _ in voice.synthesize("ready"):    # warm-up inference
+                    pass
+        except Exception as e:
+            log("LORA: piper TTS unavailable ({}); received texts will "
+                "display but not be spoken".format(e))
+            voice = None
+
         while not self.stop.is_set():
             try:
                 node_key, text = self.tts_q.get(timeout=0.5)
             except queue.Empty:
                 continue
-            if shutil.which("piper") is None \
-                    or not os.path.isfile(PIPER_MODEL_PATH):
+            if voice is None:
                 continue                    # display-only fallback
-            try:
-                proc = subprocess.run(
-                    ["piper", "--model", PIPER_MODEL_PATH, "--output-raw"],
-                    input=text.encode("utf-8"),
-                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                    timeout=60)
-                pcm = proc.stdout
-            except Exception as e:
-                log("LORA: piper TTS failed: {}".format(e))
+            # Vosk emits no punctuation, so Piper sees the whole transcript
+            # as one long sentence and would synthesize it all before any
+            # audio is available. Chunking by word count restores streaming.
+            words = text.split()
+            chunks = [" ".join(words[i:i + TTS_CHUNK_WORDS])
+                      for i in range(0, len(words), TTS_CHUNK_WORDS)]
+            src = Source(node_key, 1, max_frames=TTS_SOURCE_MAX_FRAMES)
+            total_frames = 0
+            started = None
+            carry = b""                     # partial frame across chunks
+            failed = False
+            for chunk in chunks:
+                try:
+                    # Piper -low voices output 16 kHz S16 mono == the mixer
+                    # format, so the chunk PCM feeds the mixer directly.
+                    pcm = b"".join(
+                        c.audio_int16_bytes
+                        if hasattr(c, "audio_int16_bytes") else bytes(c)
+                        for c in voice.synthesize(chunk))
+                except Exception as e:
+                    log("LORA: piper TTS failed: {}".format(e))
+                    failed = True
+                    break
+                carry += pcm
+                nframes = len(carry) // FRAME_BYTES
+                if not nframes:
+                    continue
+                frames = [carry[i:i + FRAME_BYTES]
+                          for i in range(0, nframes * FRAME_BYTES,
+                                         FRAME_BYTES)]
+                carry = carry[nframes * FRAME_BYTES:]
+                with self.sources_lock:
+                    # (Re)attach in case the mixer expired the source.
+                    if self.sources.get(node_key) is not src:
+                        self.sources[node_key] = src
+                    for f in frames:
+                        src.push(f)
+                total_frames += nframes
+                if started is None:
+                    started = time.monotonic()
+            if carry and not failed:
+                # Pad the trailing partial frame with silence.
+                with self.sources_lock:
+                    if self.sources.get(node_key) is not src:
+                        self.sources[node_key] = src
+                    src.push(carry + SILENCE[len(carry):])
+                total_frames += 1
+                if started is None:
+                    started = time.monotonic()
+            if not total_frames:
                 continue
-            if not pcm:
-                log("LORA: piper produced no audio")
-                continue
-            # Piper -low voices output 16 kHz S16 mono == the mixer format.
-            frames = [pcm[i:i + FRAME_BYTES]
-                      for i in range(0, len(pcm) - FRAME_BYTES + 1,
-                                     FRAME_BYTES)]
-            if not frames:
-                continue
-            with self.sources_lock:
-                src = self.sources.get(node_key)
-                if src is None or src.max_frames < len(frames) + 4:
-                    src = Source(node_key, 1, max_frames=len(frames) + 8)
-                    self.sources[node_key] = src
-                for f in frames:
-                    src.push(f)
             log("LORA: speaking {:.1f}s TTS clip from node {}".format(
-                len(frames) * FRAME_MS / 1000.0, node_key))
+                total_frames * FRAME_MS / 1000.0, node_key))
             self.broadcast_status()
             # Let the clip play out before starting the next message.
-            time.sleep(len(frames) * FRAME_MS / 1000.0 + 0.3)
+            end = started + total_frames * FRAME_SEC + 0.3
+            while not self.stop.is_set():
+                remain = end - time.monotonic()
+                if remain <= 0:
+                    break
+                time.sleep(min(remain, 0.5))
 
     # -- WS client registry -------------------------------------------------
 
