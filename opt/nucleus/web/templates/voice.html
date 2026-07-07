@@ -286,10 +286,10 @@ function renderTransport() {
     loraBtn.classList.toggle('active', transport === 'lora');
     loraBtn.disabled = !loraInfo.enabled;
     if (!loraInfo.enabled) {
-        meta.textContent = 'LoRa voice not enabled on this node (VOICE_LORA_ENABLED)';
+        meta.textContent = 'LoRa voice not enabled on this node';
     } else if (transport === 'lora') {
-        meta.textContent = 'Burst mode: clips up to ' + loraInfo.max_secs +
-            's, sent on release (Codec2 ' + loraInfo.codec + ', low quality)';
+        meta.textContent = 'Burst mode \u00B7 ' + loraInfo.max_secs +
+            's max, sent on release';
     } else {
         meta.textContent = '';
     }
