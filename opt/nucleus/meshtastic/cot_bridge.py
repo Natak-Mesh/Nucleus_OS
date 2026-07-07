@@ -55,8 +55,9 @@ LORA_MTU = 237
 
 # ── LoRa voice relay (openvlm-voice.py <-> radio) ───────────────
 # The bridge owns the Meshtastic serial port exclusively, so it relays
-# voice-burst packets for the voice daemon over localhost UDP.
-# See docs/VoIP/lora_voice/lora_voice_burst.md
+# voice-text packets for the voice daemon over localhost UDP. The relay
+# is payload-agnostic; the daemon does STT/TTS on either end.
+# See docs/VoIP/lora_voice/lora_voice_text.md
 MESH_CONF = "/etc/nucleus/mesh.conf"
 VOICE_RELAY_LISTEN = ("127.0.0.1", 5558)   # voice daemon -> bridge -> LoRa TX
 VOICE_RELAY_FORWARD = ("127.0.0.1", 5559)  # LoRa RX -> bridge -> voice daemon

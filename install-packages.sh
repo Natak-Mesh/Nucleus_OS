@@ -37,7 +37,7 @@ sudo apt install -y \
   ncdu \
   nginx \
   alsa-utils \
-  codec2
+  unzip
 
 
 # Install Python packages
@@ -62,6 +62,12 @@ pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/takproto
 # meshtastic-tak: TAKPacketV2 conversion + zstd dictionary compression
 pip3 install --break-system-packages --upgrade "git+https://github.com/meshtastic/TAKPacket-SDK.git#subdirectory=python"
 
+# LoRa Voice→Text (openvlm-voice.py) — offline STT + TTS
+# vosk: streaming speech-to-text (transcribes while PTT is held)
+# piper-tts: neural text-to-speech (speaks received texts)
+# Installed with sudo (system-wide) because the voice daemon runs as root.
+sudo pip3 install --break-system-packages vosk piper-tts
+
 # Pin protobuf to major version 6 — MUST run AFTER meshtastic/takproto/TAKPacket-SDK
 # installs, since their `pip install --upgrade` pulls whatever protobuf is newest.
 #
@@ -76,6 +82,34 @@ pip3 install --break-system-packages --upgrade "git+https://github.com/meshtasti
 # Revisit only if meshtastic_tak regenerates against protobuf 7.
 pip3 install --break-system-packages "protobuf>=6,<7"
 
+
+# Download speech models for LoRa Voice→Text (requires internet)
+echo "[3b/8] Downloading STT/TTS models for LoRa voice-text..."
+# Vosk STT model (~40 MB) -> /opt/nucleus/models/vosk/vosk-model-small-en-us-0.15
+VOSK_DIR=/opt/nucleus/models/vosk
+if [ ! -d "$VOSK_DIR/vosk-model-small-en-us-0.15" ]; then
+    sudo mkdir -p "$VOSK_DIR"
+    wget -q --show-progress -O /tmp/vosk-model.zip \
+        https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+    sudo unzip -q /tmp/vosk-model.zip -d "$VOSK_DIR"
+    rm -f /tmp/vosk-model.zip
+    echo "Vosk model installed to $VOSK_DIR"
+else
+    echo "Vosk model already installed."
+fi
+# Piper TTS voice (~60 MB) -> /opt/nucleus/models/piper/en_US-lessac-low.onnx
+PIPER_DIR=/opt/nucleus/models/piper
+PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/low"
+if [ ! -f "$PIPER_DIR/en_US-lessac-low.onnx" ]; then
+    sudo mkdir -p "$PIPER_DIR"
+    sudo wget -q --show-progress -O "$PIPER_DIR/en_US-lessac-low.onnx" \
+        "$PIPER_BASE/en_US-lessac-low.onnx"
+    sudo wget -q --show-progress -O "$PIPER_DIR/en_US-lessac-low.onnx.json" \
+        "$PIPER_BASE/en_US-lessac-low.onnx.json"
+    echo "Piper voice installed to $PIPER_DIR"
+else
+    echo "Piper voice already installed."
+fi
 
 # Configure environment
 echo "[4/8] Configuring environment..."
