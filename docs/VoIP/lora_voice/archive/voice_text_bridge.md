@@ -1,5 +1,11 @@
 # Voice-Text-Voice Bridge (STT → LoRa → TTS)
 
+> **⚠ ARCHIVED — SUPERSEDED (2026-07):** this was an early planning sketch for
+> the voice→text→voice feature. The shipped implementation differs (PTT
+> front-ends live in the voice daemon, not a browser MediaRecorder flow).
+> See [../lora_voice_text.md](../lora_voice_text.md) for the current,
+> accurate documentation.
+
 ## Architecture
 
 ```

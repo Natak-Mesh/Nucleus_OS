@@ -1,15 +1,15 @@
 # LoRa Voice Burst — Codec2 PTT over Meshtastic (SHORT_FAST)
 
-> **⚠ SUPERSEDED (2026-07):** the Codec2 burst transport was retired — ~2.6 s
-> of speech per packet was not operationally useful. It has been replaced by
-> the **voice→text→voice** transport (Vosk STT → text packet → Piper TTS),
-> which fits ~15–20 s of speech in the same single packet.
-> See [lora_voice_text.md](lora_voice_text.md). This doc is kept for the
-> airtime math and design rationale, which still apply.
+> **⚠ ARCHIVED — SUPERSEDED (2026-07):** the Codec2 burst transport was
+> retired — ~2.6 s of speech per packet was not operationally useful. It has
+> been replaced by the **voice→text→voice** transport (Vosk STT → text packet
+> → Piper TTS), which fits ~15–20 s of speech in the same single packet.
+> See [../lora_voice_text.md](../lora_voice_text.md). This doc is kept for
+> the airtime math and design rationale, which still apply.
 
 **Target platform:** Raspberry Pi 4 (1 GB) + Meshtastic radio (USB serial, `/dev/ttyACM*`)
 **Preset:** `SHORT_FAST`
-**Status:** ~~implemented (branch `lora_voice`)~~ **retired — superseded by lora_voice_text.md**
+**Status:** ~~implemented (branch `lora_voice`)~~ **retired — superseded by [../lora_voice_text.md](../lora_voice_text.md)**
 
 ## TL;DR
 

@@ -149,6 +149,13 @@ Pre-defined quick-tap message buttons in the web UI for common field communicati
 
 ### Phase 11: Codec2 Voice Notes
 
+> **❌ RETIRED (2026-07):** never built as planned here, and the Codec2
+> approach was tried and retired in the LoRa voice work — a full packet only
+> fits ~2.6 s of speech. The shipped voice-over-LoRa feature is the
+> voice→text→voice transport instead:
+> [../VoIP/lora_voice/lora_voice_text.md](../VoIP/lora_voice/lora_voice_text.md).
+> The section below is kept for historical context only.
+
 Push-to-talk voice notes sent over LoRa and/or WiFi UDP. Uses Codec2, an ultra-low-bitrate open-source voice codec designed for HF/VHF radio. This is the same codec the meshtastic community has experimented with for audio (portnum 9 = `AUDIO_APP`).
 
 #### Why Codec2
@@ -246,7 +253,7 @@ High. Requires: Codec2 integration, browser audio recording, new send/receive pi
 | 8 | Web UI transport badges + UDP relay status panel | ✅ Complete |
 | 9 | Configuration (mesh.conf settings for UDP relay) | ✅ Complete |
 | 10 | Canned messages / quick send buttons | 🔲 Planned |
-| 11 | Codec2 voice notes (push-to-talk, LoRa + WiFi) | 🔲 Planned |
+| 11 | Codec2 voice notes (push-to-talk, LoRa + WiFi) | ❌ Retired — superseded by [LoRa voice→text](../VoIP/lora_voice/lora_voice_text.md) |
 | 12 | CLI menu — Meshtastic section | 🔲 Planned |
 | 13 | Config sharing via CLI (export/apply/push/fleet) | 🔲 Planned |
 | 14 | ATAK CoT ↔ Meshtastic LoRa bridge (takproto) | 🔲 Planned |
