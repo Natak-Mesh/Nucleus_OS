@@ -313,8 +313,7 @@ function renderTransport() {
     } else if (!loraInfo.ready) {
         meta.textContent = 'LoRa voice\u2192text starting (loading speech model)\u2026';
     } else if (transport === 'lora') {
-        meta.textContent = 'Speech is transcribed \u2192 sent as text \u2192 ' +
-            'spoken on receive \u00B7 ' + loraInfo.max_secs + 's max per message';
+        meta.textContent = loraInfo.max_secs + 's max per message';
     } else {
         meta.textContent = '';
     }
