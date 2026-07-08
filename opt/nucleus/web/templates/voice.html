@@ -343,11 +343,12 @@ function msgRowHtml(m) {
     const dir = m.dir === 'tx' ? 'SENT' : 'Node ' + m.node;
     const cls = 'msg-row msg-' + m.dir + (m.sent === false ? ' msg-failed' : '');
     const trunc = m.truncated ? ' \u00B7 truncated' : '';
+    const air = m.airtime_ms ? ' \u00B7 ' + m.airtime_ms + ' ms air' : '';
     const div = document.createElement('div');
     div.className = cls;
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
-    meta.textContent = fmtTime(m.ts) + ' \u00B7 ' + dir + ' \u00B7 ch ' + m.channel + trunc;
+    meta.textContent = fmtTime(m.ts) + ' \u00B7 ' + dir + ' \u00B7 ch ' + m.channel + air + trunc;
     const text = document.createElement('div');
     text.className = 'msg-text';
     text.textContent = m.text;

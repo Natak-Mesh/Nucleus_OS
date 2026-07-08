@@ -98,6 +98,22 @@ LORA_HDR = struct.Struct("<BB")       # flags(B) channel(B)
 LORA_FLAG_TRUNCATED = 0x01            # transcript didn't fit in one packet
 LORA_TEXT_MAX = LORA_MTU - LORA_HDR.size   # max UTF-8 text bytes per packet
 
+
+def lora_airtime_ms(app_payload_len):
+    """On-air time (ms) of one Meshtastic packet carrying app_payload_len
+    bytes on SHORT_FAST (SF7 / BW 250 kHz / CR 4/5, 16-symbol preamble,
+    explicit header + CRC). Deterministic LoRa PHY math for the fixed
+    preset — the radio's actual airtime for this packet size."""
+    sf = 7
+    bw_khz = 250.0
+    cr = 1                                   # coding rate 4/5
+    # wire frame = app payload + 16 B Meshtastic header + protobuf framing
+    pl = app_payload_len + 16 + 5
+    t_sym = (1 << sf) / bw_khz               # symbol time in ms
+    n_bits = 8 * pl - 4 * sf + 28 + 16       # explicit header, CRC on
+    n_payload = 8 + max(-(-n_bits // (4 * sf)) * (cr + 4), 0)
+    return int(round((16 + 4.25 + n_payload) * t_sym))
+
 # Vosk STT models live in VOSK_MODEL_DIR. The first installed candidate is
 # used; VOICE_STT_MODEL in mesh.conf overrides. The small model is the
 # default: field-tested on Pi 4, it decodes faster than real-time (so the
@@ -1140,15 +1156,16 @@ class VoiceDaemon:
             data = cut
             text = data.decode("utf-8", errors="ignore").strip()
         payload = LORA_HDR.pack(flags, self.channel) + data
+        airtime_ms = lora_airtime_ms(len(payload))
         try:
             self.lora_tx_sock.sendto(payload, LORA_TX_ADDR)
         except OSError as e:
             log("LORA: send failed: {}".format(e))
             return
-        log("LORA TX: {}B text packet{}: \"{}\"".format(
-            len(payload), " (truncated)" if flags else "", text))
+        log("LORA TX: {}B text packet{}, {} ms air: \"{}\"".format(
+            len(payload), " (truncated)" if flags else "", airtime_ms, text))
         self._push_text_event("tx", self.node_id, self.channel, text,
-                              truncated=bool(flags))
+                              truncated=bool(flags), airtime_ms=airtime_ms)
 
     # -- voice-text message history ------------------------------------------
 
@@ -1157,7 +1174,7 @@ class VoiceDaemon:
             return list(self.text_history)
 
     def _push_text_event(self, direction, node, channel, text,
-                         truncated=False, sent=True):
+                         truncated=False, sent=True, airtime_ms=None):
         """Record a sent/received text and push it to connected web clients."""
         with self.text_lock:
             self.text_seq += 1
@@ -1171,6 +1188,8 @@ class VoiceDaemon:
                 "sent": sent,
                 "ts": int(time.time()),
             }
+            if airtime_ms is not None:
+                item["airtime_ms"] = airtime_ms   # LoRa on-air time (TX)
             self.text_history.append(item)
             if len(self.text_history) > TEXT_HISTORY_MAX:
                 del self.text_history[:len(self.text_history)
