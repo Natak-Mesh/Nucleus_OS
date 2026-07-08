@@ -69,11 +69,62 @@ hardware only.
 
 The lesson: on a Pi 4, model size buys nothing if decode falls behind the
 live audio — the "streaming = instant transcript" property only holds when
-the recognizer keeps up. The active model is logged at startup and reported
-in `voice status` / the WS status (`lora.stt_model`). **For accuracy gains
-on Pi 4, use the grammar constraint below instead of a bigger model.**
+the recognizer keeps up. The active engine/model is logged at startup and
+reported in `voice status` / the WS status (`lora.stt` / `lora.stt_model`).
+**For accuracy gains on Pi 4: STT mic cleanup (below, default on) or the
+grammar constraint — not a bigger Vosk model, and not the sherpa engine
+(tested and rejected, below).**
 
-### Optional: grammar-constrained recognition (opt-in)
+### STT mic cleanup (default on)
+
+`VOICE_STT_CLEANUP=true` (default) conditions the recognizer's audio before
+decoding. Vosk-small is very sensitive to input quality, so cleaning the
+mic signal is the cheapest accuracy lever. Two stages, both per-frame
+streaming filters — **zero added pipeline delay** and well under 1 ms of
+CPU per 20 ms frame, so the "transcript ready at release" property is
+untouched:
+
+1. **100 Hz high-pass** (2nd-order Butterworth biquad, pure Python) —
+   removes rumble/handling/wind noise below the speech band.
+2. **WebRTC noise suppression** (`webrtc-noise-gain` pip package, installed
+   by `install-packages.sh`) — the same NS used in browsers/VoIP, real-time
+   by design, native 16 kHz. If the package is missing the daemon logs it
+   and falls back to high-pass only.
+
+Filter state resets at each PTT press. Applies ONLY to the STT tap — the
+live IP voice path never sees any of it. Set `VOICE_STT_CLEANUP=false` if
+it ever hurts recognition.
+
+### sherpa-onnx streaming Zipformer (tested, **rejected on Pi 4**)
+
+`VOICE_STT_ENGINE=sherpa` switches STT to a
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) streaming Zipformer
+transducer (`sherpa-onnx-streaming-zipformer-en-20M-2023-02-17`). On paper
+a modern streaming architecture more accurate than vosk-small; **field
+tests on a Pi 4 (2026-07-07) rejected it**:
+
+- **Transcripts chopped at both ends** — clips came back missing leading
+  and trailing words (`"t see if this new model ... is sol"`,
+  `"uch recognition mod"`). First attributed to endpoint detection
+  resetting the hypothesis mid-clip; explicitly disabling endpointing
+  (`enable_endpoint_detection=False`) and adding segment banking did NOT
+  fix it — the 20M model's streaming decode loses edge words on this
+  hardware/audio regardless.
+- **Recognition quality was worse than vosk-small** on the same mic/audio
+  path ("recording gibberish", e.g. `"fignitation"` for "segmentation").
+
+Verdict: vosk-small + mic cleanup beats it on Pi 4. The engine framework
+(`SherpaSttEngine`, same streaming contract as `VoskSttEngine`:
+`load()` → `start()`/`accept()`/`finalize()`) stays in the codebase for
+trialing other sherpa models on faster hardware, but the pip package and
+model are **not installed** by `install-packages.sh` (removed after the
+rejection). To trial: `sudo pip3 install --break-system-packages
+sherpa-onnx`, put a streaming zipformer model in
+`/opt/nucleus/models/sherpa/`, set `VOICE_STT_ENGINE=sherpa`. Missing
+package/model falls back to vosk automatically; `VOICE_STT_GRAMMAR` is
+vosk-only.
+
+### Optional: grammar-constrained recognition (opt-in, vosk only)
 
 For traffic that sticks to a fixed radio vocabulary (callsigns, prowords,
 phonetic alphabet, digits), Vosk can be constrained to a phrase list, making
@@ -94,7 +145,9 @@ is disciplined.
 In LoRa mode the recognizer is fed the **raw mic frames**, *before* the
 `VOICE_TX_GAIN` software gain is applied. That gain (4x by default, for the
 low-level ComTac mics on the IP voice path) hard-clips loud audio, and
-clipped audio wrecks STT accuracy; Vosk doesn't need the level boost.
+clipped audio wrecks STT accuracy; Vosk doesn't need the level boost. The
+raw frames then pass through the STT mic cleanup stage (above) before
+reaching the recognizer.
 
 **TTS:** Piper `en_US-lessac-low.onnx` (~60 MB). The `-low` voices output
 **16 kHz S16 mono — exactly the voice daemon's mixer format**, so synthesized
@@ -216,8 +269,10 @@ VOICE_LORA_ENABLED=true       # feature gate
 VOICE_LORA_MAX_SECS=30        # max speech per PTT press (auto-finalize after)
 VOICE_LORA_PORTNUM=260        # PRIVATE_APP range; same on all nodes
 VOICE_LORA_HOP_LIMIT=0        # direct RF neighbors only
-VOICE_STT_MODEL=              # empty = small model (default; Pi 4 real-time)
-VOICE_STT_GRAMMAR=            # empty = free-form; path = phrase-list file
+VOICE_STT_ENGINE=vosk         # vosk (default/fielded) | sherpa (rejected on Pi 4)
+VOICE_STT_MODEL=              # empty = engine default model
+VOICE_STT_CLEANUP=true        # HPF + WebRTC NS on the STT mic tap
+VOICE_STT_GRAMMAR=            # empty = free-form; path = phrase list (vosk)
 ```
 
 Dependencies (handled by `install-packages.sh`, needs internet at install):
@@ -225,11 +280,12 @@ Dependencies (handled by `install-packages.sh`, needs internet at install):
 | What | Where |
 |---|---|
 | `vosk` + `piper-tts>=1.4` (pip, system-wide; ≥1.4 for the resident `PiperVoice` Python API) | daemon runs as root |
+| `webrtc-noise-gain` (pip; NS stage of the STT mic cleanup, optional) | system-wide |
 | Vosk model `vosk-model-small-en-us-0.15` (~40 MB) | `/opt/nucleus/models/vosk/` |
 | Piper voice `en_US-lessac-low.onnx` (~60 MB) | `/opt/nucleus/models/piper/` |
 | Grammar example `grammar.example.txt` (deploy.sh) | `/opt/nucleus/models/vosk/` |
 
-Startup behavior: the Vosk model loads in a background thread (~5–15 s on a
+Startup behavior: the STT model loads in a background thread (~5–15 s on a
 Pi 4). Until it's ready the LoRa transport button shows "loading speech
 model…" and cannot be selected. The Piper voice also loads once in the
 background (~5–6 s) in the TTS worker thread; messages received before it
@@ -240,12 +296,12 @@ received texts still display in the log — they just aren't spoken.
 
 | file | role |
 |---|---|
-| `opt/nucleus/bin/openvlm-voice.py` | STT worker (resident Vosk model + per-clip streaming recognizer), text packetizer, TTS worker (resident PiperVoice, chunked streaming → mixer), message history + WS text events, `TEXTS` control command |
+| `opt/nucleus/bin/openvlm-voice.py` | STT worker (engine-agnostic: `VoskSttEngine` / `SherpaSttEngine`, resident model + per-clip streaming recognizer), `SttAudioCleanup` (HPF + WebRTC NS mic conditioning), text packetizer, TTS worker (resident PiperVoice, chunked streaming → mixer), message history + WS text events, `TEXTS` control command |
 | `opt/nucleus/meshtastic/cot_bridge.py` | payload-agnostic voice relay: UDP 5558 → LoRa TX (portnum 260); portnum-260 RX → UDP 5559 |
 | `opt/nucleus/web/templates/voice.html` | "LoRa (voice→text)" transport button, Messages log panel, SENDING state cleared by tx confirmation |
 | `opt/nucleus/bin/voice` | `voice transport ip\|lora`, `voice texts` CLI commands |
-| `etc/nucleus/mesh.conf` | `VOICE_LORA_ENABLED / MAX_SECS / PORTNUM / HOP_LIMIT / VOICE_STT_MODEL / VOICE_STT_GRAMMAR` keys |
-| `install-packages.sh` | `vosk` + `piper-tts` pip installs and model downloads to `/opt/nucleus/models/` |
+| `etc/nucleus/mesh.conf` | `VOICE_LORA_ENABLED / MAX_SECS / PORTNUM / HOP_LIMIT / VOICE_STT_ENGINE / VOICE_STT_MODEL / VOICE_STT_CLEANUP / VOICE_STT_GRAMMAR` keys |
+| `install-packages.sh` | `vosk` + `piper-tts` + `webrtc-noise-gain` pip installs and model downloads to `/opt/nucleus/models/` (sherpa deliberately not staged — rejected on Pi 4) |
 | `opt/nucleus/models/vosk/grammar.example.txt` | starter phrase list for opt-in grammar-constrained STT |
 
 ### Enabling on a node
@@ -273,6 +329,17 @@ received texts still display in the log — they just aren't spoken.
 - **No punctuation** from Vosk small — fine for radio-style traffic.
 - **Bigger Vosk models don't work on Pi 4** (see STT model selection above);
   revisit only on faster hardware.
+- **sherpa-onnx zipformer-20M tested and rejected on Pi 4** (2026-07-07,
+  see its section above): chopped transcripts + worse accuracy than
+  vosk-small. The engine framework remains for trying other sherpa models
+  on faster hardware.
+- **Soft post-correction (documented, not implemented):** free-form
+  recognition followed by fuzzy-matching transcript words against a known
+  vocabulary (callsigns, prowords) and correcting near-misses only. Unlike
+  the grammar constraint, out-of-vocabulary speech would pass through
+  untouched — a "grammar-lite" that boosts the words that matter without
+  dropping anything. Cheap (string distance on ≤40 words); a candidate if
+  cleanup + sherpa still miss critical vocabulary.
 - Multi-packet utterances (seq/continuation flags) deferred; single-packet
   truncation keeps the airtime doctrine simple.
 - ~~Per-message Piper subprocess costs ~1–2 s of model load~~ — resolved

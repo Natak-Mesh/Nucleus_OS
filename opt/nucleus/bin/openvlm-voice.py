@@ -50,8 +50,10 @@ Config (/etc/nucleus/mesh.conf):
     VOICE_CHANNELS="1:Command,..."  named channel list (number:label, comma-sep)
     VOICE_JITTER_MS=80              per-source RX buffer before playback starts
     VOICE_TX_GAIN=4                 software mic gain for the OpenVLM path
-    VOICE_STT_MODEL=                Vosk model override (dir name or abs path)
-    VOICE_STT_GRAMMAR=              optional phrase-list file (constrained STT)
+    VOICE_STT_ENGINE=vosk           STT engine: vosk (default) | sherpa
+    VOICE_STT_MODEL=                STT model override (dir name or abs path)
+    VOICE_STT_GRAMMAR=              optional phrase-list file (vosk only)
+    VOICE_STT_CLEANUP=true          HPF + WebRTC NS on the STT mic tap
     MESH_IP, MESH_802_TTL are also read.
 
 Run as root (hidraw access). Designed to run via openvlm-voice.service.
@@ -65,6 +67,7 @@ import base64
 import glob
 import hashlib
 import json
+import math
 import os
 import queue
 import select
@@ -122,11 +125,30 @@ def lora_airtime_ms(app_payload_len):
 # slower-than-real-time decode added 10+ s of latency after PTT release and
 # ~500-700 MB RAM, for little practical accuracy gain. Use VOICE_STT_MODEL
 # to opt into a bigger model on faster hardware only. For accuracy on Pi 4,
-# use the opt-in grammar constraint (VOICE_STT_GRAMMAR) instead.
+# use VOICE_STT_CLEANUP (mic conditioning) or the opt-in grammar constraint
+# (VOICE_STT_GRAMMAR) — the sherpa engine below was also rejected on Pi 4.
 VOSK_MODEL_DIR = "/opt/nucleus/models/vosk"
 VOSK_MODEL_CANDIDATES = [
     "vosk-model-small-en-us-0.15",      # default: real-time on Pi 4, low RAM
 ]
+
+# sherpa-onnx streaming zipformer (STT engine, VOICE_STT_ENGINE=sherpa).
+# Field-tested on Pi 4 2026-07-07 and REJECTED: transcripts chopped at both
+# ends (even with endpointing disabled + segment banking) and recognition
+# worse than vosk-small on the same audio path. Kept only as a framework
+# for trialing other sherpa models on faster hardware — vosk is the default
+# and the fielded configuration. Falls back to Vosk automatically if the
+# package or model is missing. See docs/VoIP/lora_voice/lora_voice_text.md.
+SHERPA_MODEL_DIR = "/opt/nucleus/models/sherpa"
+SHERPA_MODEL_CANDIDATES = [
+    "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
+]
+
+# STT mic cleanup (VOICE_STT_CLEANUP, default on): streaming conditioning of
+# the recognizer's audio only — never the live IP voice path. Zero added
+# pipeline delay; see SttAudioCleanup.
+STT_HPF_HZ = 100.0    # high-pass corner (Hz): below speech, above rumble
+STT_NS_LEVEL = 2      # WebRTC noise suppression aggressiveness (0..4)
 
 PIPER_MODEL_PATH = "/opt/nucleus/models/piper/en_US-lessac-low.onnx"
 
@@ -371,6 +393,240 @@ def mix_frames(frames):
             v = -32768
         out.append(v)
     return _FRAME_UNPACK.pack(*out)
+
+
+# ---------------------------------------------------------------------------
+# STT audio cleanup (LoRa voice-text mic tap)
+# ---------------------------------------------------------------------------
+
+class SttAudioCleanup:
+    """Streaming mic conditioning for the STT tap (VOICE_STT_CLEANUP).
+
+    Two stages, both per-frame streaming filters — ZERO added pipeline delay
+    and well under 1 ms of CPU per 20 ms frame on a Pi 4, so the "transcript
+    ready at PTT release" property is untouched:
+
+      1. High-pass at STT_HPF_HZ (2nd-order Butterworth biquad, pure
+         Python) — removes rumble/handling/wind noise below the speech band.
+      2. WebRTC noise suppression (optional `webrtc-noise-gain` package) —
+         the same NS used in browsers/VoIP, real-time by design. Runs on
+         10 ms sub-frames; skipped (high-pass only) if not installed.
+
+    State is reset at each PTT press so a clip never inherits the previous
+    clip's filter history. The live IP voice path never sees any of this.
+    See docs/VoIP/lora_voice/lora_voice_text.md (STT audio path + cleanup).
+    """
+
+    def __init__(self):
+        # Butterworth high-pass biquad coefficients (Audio EQ Cookbook).
+        w0 = 2.0 * math.pi * STT_HPF_HZ / RATE
+        cosw, sinw = math.cos(w0), math.sin(w0)
+        alpha = sinw / (2.0 * 0.70710678)          # Q = 1/sqrt(2)
+        a0 = 1.0 + alpha
+        self.b0 = ((1.0 + cosw) / 2.0) / a0
+        self.b1 = -(1.0 + cosw) / a0
+        self.b2 = self.b0
+        self.a1 = (-2.0 * cosw) / a0
+        self.a2 = (1.0 - alpha) / a0
+        self._ns = None
+        try:
+            from webrtc_noise_gain import AudioProcessor
+            # auto_gain_dbfs=0 disables AGC — we only want the suppressor.
+            self._ns = AudioProcessor(0, STT_NS_LEVEL)
+            log("LORA: STT cleanup active (HPF {} Hz + WebRTC NS level {})"
+                .format(int(STT_HPF_HZ), STT_NS_LEVEL))
+        except ImportError:
+            log("LORA: STT cleanup: webrtc-noise-gain not installed — "
+                "high-pass only (pip3 install webrtc-noise-gain)")
+        except Exception as e:
+            log("LORA: STT cleanup: WebRTC NS unavailable ({}) — "
+                "high-pass only".format(e))
+        self.reset()
+
+    def reset(self):
+        """Clear high-pass filter state (called at each PTT press)."""
+        self.x1 = self.x2 = self.y1 = self.y2 = 0.0
+
+    def process(self, frame):
+        """Condition one 20 ms S16 frame; returns a new 640-byte frame."""
+        samples = _FRAME_UNPACK.unpack(frame)
+        out = []
+        x1, x2, y1, y2 = self.x1, self.x2, self.y1, self.y2
+        b0, b1, b2, a1, a2 = self.b0, self.b1, self.b2, self.a1, self.a2
+        for x in samples:
+            y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2, x1 = x1, x
+            y2, y1 = y1, y
+            v = int(y)
+            if v > 32767:
+                v = 32767
+            elif v < -32768:
+                v = -32768
+            out.append(v)
+        self.x1, self.x2, self.y1, self.y2 = x1, x2, y1, y2
+        frame = _FRAME_UNPACK.pack(*out)
+        if self._ns is None:
+            return frame
+        # WebRTC NS wants exactly 10 ms per call -> two halves per frame.
+        half = FRAME_BYTES // 2
+        try:
+            return (self._ns.Process10ms(frame[:half]).audio +
+                    self._ns.Process10ms(frame[half:]).audio)
+        except Exception as e:
+            log("LORA: WebRTC NS failed ({}) — high-pass only from here"
+                .format(e))
+            self._ns = None
+            return frame
+
+
+# ---------------------------------------------------------------------------
+# STT engines (LoRa voice-text). Both implement the same streaming contract
+# used by stt_worker_thread: load() once at startup (slow, in the background),
+# then per clip: start() -> accept(frame)... -> finalize() -> text.
+# ---------------------------------------------------------------------------
+
+class VoskSttEngine:
+    """Vosk streaming recognizer — the fielded default. One resident Model,
+    a fresh KaldiRecognizer per clip (cheap; the Model holds the weights)."""
+
+    name = "vosk"
+
+    def __init__(self, model_path, grammar):
+        self.model_path = model_path
+        self.model_name = os.path.basename(model_path)
+        self.grammar = grammar             # JSON phrase list or None
+        self._model = None
+        self._Recognizer = None
+        self._rec = None
+
+    def load(self):
+        from vosk import Model, KaldiRecognizer, SetLogLevel
+        SetLogLevel(-1)
+        self._Recognizer = KaldiRecognizer
+        self._model = Model(self.model_path)
+
+    def start(self):
+        if self.grammar is not None:
+            self._rec = self._Recognizer(self._model, RATE, self.grammar)
+        else:
+            self._rec = self._Recognizer(self._model, RATE)
+
+    def accept(self, frame):
+        if self._rec is not None:
+            self._rec.AcceptWaveform(frame)
+
+    def finalize(self):
+        if self._rec is None:
+            return ""
+        text = json.loads(self._rec.FinalResult()).get("text", "").strip()
+        self._rec = None
+        return text
+
+    def abort(self):
+        self._rec = None
+
+
+class SherpaSttEngine:
+    """sherpa-onnx streaming Zipformer transducer (VOICE_STT_ENGINE=sherpa).
+    Same streaming contract as Vosk: frames are decoded live while PTT is
+    held, so finalize() is near-instant at release.
+
+    STATUS: tested and REJECTED on Pi 4 (2026-07-07) — the 20M model chopped
+    transcripts at both ends and recognized worse than vosk-small (see the
+    doc). Kept as a framework for trialing other sherpa models on faster
+    hardware; vosk remains the default."""
+
+    name = "sherpa"
+
+    def __init__(self, model_dir, num_threads=2):
+        self.model_dir = model_dir
+        self.model_name = os.path.basename(model_dir.rstrip("/"))
+        self.num_threads = num_threads
+        self._np = None
+        self._recognizer = None
+        self._stream = None
+        # Utterance segments banked when the recognizer restarts its
+        # hypothesis mid-clip (see accept()); joined at finalize().
+        self._segments = []
+        self._partial = ""
+
+    def _pick_file(self, stem, prefer_int8):
+        """Find the model's <stem>*.onnx file. int8-quantized encoder/joiner
+        are markedly faster on ARM; the tiny decoder stays fp32."""
+        files = sorted(glob.glob(os.path.join(self.model_dir,
+                                              stem + "*.onnx")))
+        int8 = [f for f in files if f.endswith(".int8.onnx")]
+        fp32 = [f for f in files if not f.endswith(".int8.onnx")]
+        ordered = (int8 + fp32) if prefer_int8 else (fp32 + int8)
+        return ordered[0] if ordered else None
+
+    def load(self):
+        import numpy                       # ships with sherpa-onnx
+        import sherpa_onnx
+        self._np = numpy
+        encoder = self._pick_file("encoder", prefer_int8=True)
+        decoder = self._pick_file("decoder", prefer_int8=False)
+        joiner = self._pick_file("joiner", prefer_int8=True)
+        tokens = os.path.join(self.model_dir, "tokens.txt")
+        if not (encoder and decoder and joiner and os.path.isfile(tokens)):
+            raise RuntimeError(
+                "incomplete sherpa model in {}".format(self.model_dir))
+        # Endpoint detection is explicitly DISABLED: with it on, a pause in
+        # speech makes the recognizer reset its hypothesis mid-clip and
+        # get_result() then only returns the last segment — field-observed
+        # as transcripts truncated to the final 3-4 s (2026-07-07). PTT is
+        # our endpoint; one clip = one utterance.
+        self._recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+            tokens=tokens, encoder=encoder, decoder=decoder, joiner=joiner,
+            num_threads=self.num_threads, sample_rate=RATE, feature_dim=80,
+            decoding_method="greedy_search",
+            enable_endpoint_detection=False)
+
+    def start(self):
+        self._stream = self._recognizer.create_stream()
+        self._segments = []
+        self._partial = ""
+
+    def accept(self, frame):
+        if self._stream is None:
+            return
+        # S16 bytes -> float32 in [-1, 1], then decode whatever is ready so
+        # the work happens live while PTT is held (streaming, like Vosk).
+        samples = self._np.frombuffer(frame, dtype=self._np.int16)
+        self._stream.accept_waveform(
+            RATE, samples.astype(self._np.float32) / 32768.0)
+        while self._recognizer.is_ready(self._stream):
+            self._recognizer.decode_stream(self._stream)
+        # Segment banking: if the recognizer restarted its hypothesis anyway
+        # (partial got shorter instead of growing), the previous partial is
+        # a completed segment — bank it so finalize() can't lose speech.
+        partial = self._recognizer.get_result(self._stream)
+        if len(partial) < len(self._partial):
+            self._segments.append(self._partial.strip())
+        self._partial = partial
+
+    def finalize(self):
+        if self._stream is None:
+            return ""
+        # A short silence tail flushes the last word through the encoder's
+        # lookahead before draining the decoder.
+        tail = self._np.zeros(int(RATE * 0.3), dtype=self._np.float32)
+        self._stream.accept_waveform(RATE, tail)
+        self._stream.input_finished()
+        while self._recognizer.is_ready(self._stream):
+            self._recognizer.decode_stream(self._stream)
+        last = self._recognizer.get_result(self._stream).strip()
+        parts = [s for s in self._segments if s] + ([last] if last else [])
+        self._stream = None
+        self._segments = []
+        self._partial = ""
+        # Lowercase: this model emits ALL CAPS; match the vosk/log/TTS style.
+        return " ".join(parts).lower()
+
+    def abort(self):
+        self._stream = None
+        self._segments = []
+        self._partial = ""
 
 
 # ---------------------------------------------------------------------------
@@ -754,25 +1010,18 @@ class VoiceDaemon:
                                                30.0)
         self.lora_max_pcm_frames = max(1, int(self.lora_max_secs * 1000
                                               / FRAME_MS))
-        self.vosk_model = None             # loaded in stt_worker at startup
-        self.lora_ready = False            # True once the Vosk model is loaded
-        # Which Vosk model to load: VOICE_STT_MODEL override wins, else the
-        # default candidate (small model — see VOSK_MODEL_CANDIDATES note).
-        self.vosk_model_path = self._resolve_stt_model(
-            cfg.get("VOICE_STT_MODEL"))
-        # Optional grammar-constrained recognition (see _load_stt_grammar).
-        self.stt_grammar = self._load_stt_grammar(cfg.get("VOICE_STT_GRAMMAR"))
+        self.lora_ready = False            # True once the STT model is loaded
+        # Mic conditioning for the STT tap (HPF + WebRTC NS). LoRa mode
+        # only; the live IP voice path never sees it. See SttAudioCleanup.
+        self.stt_cleanup = cfg.get("VOICE_STT_CLEANUP",
+                                   "true").lower() in ("true", "1", "yes")
+        # STT engine: "vosk" (fielded default) or "sherpa" (opt-in upgrade).
+        self.stt_engine = None
         if self.lora_enabled:
-            try:
-                import vosk  # noqa: F401 — availability check only
-            except ImportError:
-                log("LORA: disabled — python 'vosk' package not installed "
-                    "(pip3 install vosk)")
+            choice = (cfg.get("VOICE_STT_ENGINE") or "vosk").lower()
+            self.stt_engine = self._build_stt_engine(choice, cfg)
+            if self.stt_engine is None:
                 self.lora_enabled = False
-        if self.lora_enabled and self.vosk_model_path is None:
-            log("LORA: disabled — no Vosk model found in {} "
-                "(run install-packages.sh)".format(VOSK_MODEL_DIR))
-            self.lora_enabled = False
         if self.lora_enabled:
             piper_ok = os.path.isfile(PIPER_MODEL_PATH)
             if piper_ok:
@@ -848,6 +1097,63 @@ class VoiceDaemon:
         return None
 
     @staticmethod
+    def _resolve_sherpa_model(override):
+        """Pick the sherpa-onnx model directory (must contain tokens.txt).
+        VOICE_STT_MODEL override wins (name under SHERPA_MODEL_DIR or an
+        absolute path); else the first installed candidate. None = missing.
+        """
+        candidates = []
+        if override:
+            candidates.append(override if os.path.isabs(override)
+                              else os.path.join(SHERPA_MODEL_DIR, override))
+        candidates += [os.path.join(SHERPA_MODEL_DIR, n)
+                       for n in SHERPA_MODEL_CANDIDATES]
+        for path in candidates:
+            if os.path.isfile(os.path.join(path, "tokens.txt")):
+                return path
+        return None
+
+    def _build_stt_engine(self, choice, cfg):
+        """Construct the configured STT engine (VOICE_STT_ENGINE).
+
+        "sherpa" (opt-in) needs the sherpa-onnx package + a streaming
+        zipformer model; any missing piece logs and falls back to vosk.
+        "vosk" (default) needs the vosk package + a model. Returns None if
+        nothing usable, which disables the LoRa transport entirely."""
+        if choice == "sherpa":
+            model_dir = self._resolve_sherpa_model(cfg.get("VOICE_STT_MODEL"))
+            ok = model_dir is not None
+            if not ok:
+                log("LORA: VOICE_STT_ENGINE=sherpa but no model found in {} "
+                    "— falling back to vosk".format(SHERPA_MODEL_DIR))
+            else:
+                try:
+                    import sherpa_onnx  # noqa: F401 — availability check
+                except ImportError:
+                    log("LORA: VOICE_STT_ENGINE=sherpa but sherpa-onnx is "
+                        "not installed (pip3 install sherpa-onnx) — falling "
+                        "back to vosk")
+                    ok = False
+            if ok:
+                return SherpaSttEngine(model_dir)
+        elif choice != "vosk":
+            log("LORA: unknown VOICE_STT_ENGINE '{}' — using vosk"
+                .format(choice))
+        try:
+            import vosk  # noqa: F401 — availability check only
+        except ImportError:
+            log("LORA: disabled — python 'vosk' package not installed "
+                "(pip3 install vosk)")
+            return None
+        model_path = self._resolve_stt_model(cfg.get("VOICE_STT_MODEL"))
+        if model_path is None:
+            log("LORA: disabled — no Vosk model found in {} "
+                "(run install-packages.sh)".format(VOSK_MODEL_DIR))
+            return None
+        grammar = self._load_stt_grammar(cfg.get("VOICE_STT_GRAMMAR"))
+        return VoskSttEngine(model_path, grammar)
+
+    @staticmethod
     def _load_stt_grammar(path):
         """Load an optional grammar phrase list for constrained recognition.
 
@@ -916,10 +1222,12 @@ class VoiceDaemon:
             "lora": {
                 "enabled": self.lora_enabled,
                 "ready": self.lora_ready,
-                "stt": "vosk",
-                "stt_model": (os.path.basename(self.vosk_model_path)
-                              if self.vosk_model_path else None),
-                "stt_grammar": self.stt_grammar is not None,
+                "stt": (self.stt_engine.name if self.stt_engine else None),
+                "stt_model": (self.stt_engine.model_name
+                              if self.stt_engine else None),
+                "stt_grammar": bool(self.stt_engine and getattr(
+                    self.stt_engine, "grammar", None)),
+                "stt_cleanup": self.stt_cleanup,
                 "max_secs": round(self.lora_max_secs, 1),
             },
         }
@@ -1080,57 +1388,64 @@ class VoiceDaemon:
             self._stt_put(("stop", None))
 
     def stt_worker_thread(self):
-        """Owns the Vosk model + per-clip streaming recognizer. Frames arrive
-        live while PTT is held, so the transcript is ready ~instantly on
-        release. Finalized text is packetized and handed to cot-bridge."""
+        """Owns the resident STT engine (Vosk or sherpa-onnx) + per-clip
+        streaming recognizer state. Frames arrive live while PTT is held, so
+        the transcript is ready ~instantly on release. Finalized text is
+        packetized and handed to cot-bridge."""
+        engine = self.stt_engine
         try:
-            from vosk import Model, KaldiRecognizer, SetLogLevel
-            SetLogLevel(-1)
-            log("LORA: loading Vosk model ({})...".format(
-                self.vosk_model_path))
+            log("LORA: loading {} STT model '{}'...".format(
+                engine.name, engine.model_name))
             t0 = time.monotonic()
-            self.vosk_model = Model(self.vosk_model_path)
+            engine.load()
             self.lora_ready = True
-            log("LORA: voice-text ready — Vosk model '{}' loaded in {:.1f}s "
-                "({}, max clip {:.0f}s)".format(
-                    os.path.basename(self.vosk_model_path),
-                    time.monotonic() - t0,
-                    "grammar-constrained" if self.stt_grammar else "free-form",
-                    self.lora_max_secs))
+            log("LORA: voice-text ready — {} model '{}' loaded in {:.1f}s "
+                "(max clip {:.0f}s)".format(
+                    engine.name, engine.model_name,
+                    time.monotonic() - t0, self.lora_max_secs))
             self.broadcast_status()
         except Exception as e:
-            log("LORA: disabled — Vosk model load failed: {}".format(e))
+            log("LORA: disabled — STT model load failed: {}".format(e))
             self.lora_enabled = False
             self.broadcast_status()
             return
-        rec = None
+        # Mic conditioning for the STT tap only (never the IP voice path).
+        cleanup = SttAudioCleanup() if self.stt_cleanup else None
+        active = False
         while not self.stop.is_set():
             try:
                 cmd, data = self.stt_q.get(timeout=0.5)
             except queue.Empty:
                 continue
             if cmd == "start":
-                if self.stt_grammar is not None:
-                    rec = KaldiRecognizer(self.vosk_model, RATE,
-                                          self.stt_grammar)
-                else:
-                    rec = KaldiRecognizer(self.vosk_model, RATE)
-            elif cmd == "frame":
-                if rec is not None:
-                    try:
-                        rec.AcceptWaveform(data)
-                    except Exception as e:
-                        log("LORA: STT error: {}".format(e))
-                        rec = None
-            elif cmd == "stop":
-                if rec is None:
-                    continue
+                if cleanup is not None:
+                    cleanup.reset()
                 try:
-                    text = json.loads(rec.FinalResult()).get("text", "").strip()
+                    engine.start()
+                    active = True
+                except Exception as e:
+                    log("LORA: STT start failed: {}".format(e))
+                    active = False
+            elif cmd == "frame":
+                if not active:
+                    continue
+                if cleanup is not None:
+                    data = cleanup.process(data)
+                try:
+                    engine.accept(data)
+                except Exception as e:
+                    log("LORA: STT error: {}".format(e))
+                    engine.abort()
+                    active = False
+            elif cmd == "stop":
+                if not active:
+                    continue
+                active = False
+                try:
+                    text = engine.finalize()
                 except Exception as e:
                     log("LORA: STT finalize failed: {}".format(e))
                     text = ""
-                rec = None
                 if text:
                     self._lora_send_text(text)
                 else:
@@ -1472,8 +1787,8 @@ class VoiceDaemon:
                 else:
                     reply = {"ok": False,
                              "error": "bad transport (ip|lora; lora requires "
-                                      "VOICE_LORA_ENABLED=true and the Vosk "
-                                      "model)"}
+                                      "VOICE_LORA_ENABLED=true and a loaded "
+                                      "STT model)"}
             elif len(parts) == 2 and parts[0].upper() == "CHANNEL":
                 try:
                     n = int(parts[1])
@@ -1719,8 +2034,9 @@ class VoiceDaemon:
         if self.lora_enabled:
             targets += [self.lora_rx_thread, self.stt_worker_thread,
                         self.tts_worker_thread]
-            log("LORA: voice-text transport starting (Vosk STT + Piper TTS, "
-                "max clip {:.0f}s)".format(self.lora_max_secs))
+            log("LORA: voice-text transport starting ({} STT + Piper TTS, "
+                "max clip {:.0f}s)".format(self.stt_engine.name,
+                                           self.lora_max_secs))
         for target in targets:
             threading.Thread(target=target, daemon=True).start()
 

@@ -68,8 +68,17 @@ pip3 install --break-system-packages --upgrade "git+https://github.com/meshtasti
 #   the voice daemon uses the resident PiperVoice Python API (not the CLI)
 #   so the model loads once at startup instead of per message — see
 #   docs/VoIP/lora_voice/lora_voice_text.md (TTS section).
+# webrtc-noise-gain: WebRTC noise suppression for the STT mic tap
+#   (VOICE_STT_CLEANUP in mesh.conf). Optional but recommended: without it
+#   the daemon falls back to high-pass filtering only.
+# NOTE: the sherpa-onnx STT engine was tested and REJECTED on Pi 4
+#   (2026-07-07, see docs/VoIP/lora_voice/lora_voice_text.md) — its pip
+#   package and model are intentionally NOT installed. To trial it on
+#   faster hardware: pip3 install sherpa-onnx + a streaming zipformer
+#   model in /opt/nucleus/models/sherpa/, then VOICE_STT_ENGINE=sherpa.
 # Installed with sudo (system-wide) because the voice daemon runs as root.
-sudo pip3 install --break-system-packages vosk "piper-tts>=1.4"
+sudo pip3 install --break-system-packages vosk "piper-tts>=1.4" \
+    webrtc-noise-gain
 
 # Pin protobuf to major version 6 — MUST run AFTER meshtastic/takproto/TAKPacket-SDK
 # installs, since their `pip install --upgrade` pulls whatever protobuf is newest.
