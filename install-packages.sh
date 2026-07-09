@@ -84,15 +84,23 @@ sudo pip3 install --break-system-packages vosk "piper-tts>=1.4" \
 # installs, since their `pip install --upgrade` pulls whatever protobuf is newest.
 #
 # The cot-bridge depends on meshtastic_tak, whose generated code (atak_pb2.py) is
-# compiled with protobuf gencode 6.x. Protobuf enforces that the runtime and gencode
-# share the same MAJOR version, so a runtime of 5.x or 7.x makes cot-bridge crash at
-# import with: "Detected mismatched Protobuf Gencode/Runtime major versions ...
-# Same major version is required." (seen on node 0034, 2026-06-16).
+# compiled with protobuf gencode 6.x. Protobuf enforces TWO version rules and
+# cot-bridge crashes at import if either is violated:
+#   1. Runtime and gencode must share the same MAJOR version — a 5.x or 7.x
+#      runtime fails with "Detected mismatched Protobuf Gencode/Runtime major
+#      versions ... Same major version is required." (node 0034, 2026-06-16).
+#   2. Runtime must be >= the gencode version, even within the same major —
+#      "Runtime version cannot be older than the linked gencode version."
+#      (node 0010, 2026-07-09: gencode 6.33.2 vs runtime 6.32.1).
+#
+# --upgrade is REQUIRED here: without it, an already-installed 6.x runtime
+# satisfies ">=6,<7" and pip leaves it alone, so a fresh TAKPacket-SDK install
+# (newer gencode) with a stale runtime trips rule 2 above.
 #
 # Range (>=6,<7) instead of an exact pin: allows protobuf 6.x patch/minor updates
-# (bug/security fixes) while blocking the major-version jump that actually breaks us.
+# (bug/security fixes) while blocking the major-version jump that also breaks us.
 # Revisit only if meshtastic_tak regenerates against protobuf 7.
-pip3 install --break-system-packages "protobuf>=6,<7"
+pip3 install --break-system-packages --upgrade "protobuf>=6,<7"
 
 
 # Download speech models for LoRa Voice→Text (requires internet)
