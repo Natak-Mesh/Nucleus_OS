@@ -101,6 +101,26 @@ LORA_HDR = struct.Struct("<BB")       # flags(B) channel(B)
 LORA_FLAG_TRUNCATED = 0x01            # transcript didn't fit in one packet
 LORA_TEXT_MAX = LORA_MTU - LORA_HDR.size   # max UTF-8 text bytes per packet
 
+# LoRa voice STREAM transport — live Codec2 3200 bps audio streamed over
+# the Meshtastic radio while PTT is held (vs. the voice-text transport
+# above, which bursts one text packet at release). Mic frames are encoded
+# to Codec2 live and handed to cot-bridge (UDP 4245), which packetizes and
+# transmits them as they arrive; the remote node starts hearing you well
+# before you unkey. RX Codec2 chunks arrive on UDP 4244 (header already
+# stripped by cot-bridge) and are streaming-decoded straight into the
+# mixer. Requires SHORT_FAST-class LoRa presets: Codec2 3200 needs ~35%
+# airtime duty at SF7; high-SF presets cannot keep up.
+# Wire format is compatible with the VoiceOverLoRa (VLoRa) ATAK Vx bridges.
+# See docs/VoIP/lora_voice/lora_voice_stream.md
+STREAM_TX_ADDR = ("127.0.0.1", 4245)  # daemon -> cot-bridge -> LoRa
+STREAM_RX_ADDR = ("127.0.0.1", 4244)  # cot-bridge -> daemon (we bind here)
+C2_FRAME_SAMPLES = 160                # 20 ms @ 8 kHz = one Codec2 3200 frame
+C2_FRAME_BYTES = 8                    # Codec2 3200: 64 bits per 20 ms
+STREAM_SOURCE_KEY = "lora"            # mixer Source key for the LoRa stream
+STREAM_JITTER_FRAMES = 15             # 300 ms: LoRa chunks land ~180 ms apart
+STREAM_SOURCE_MAX_FRAMES = 150        # 3 s backlog cap (drop oldest past it)
+STREAM_IDLE_RESET = 1.0               # s of RX silence = stream over, reset
+
 
 def lora_airtime_ms(app_payload_len):
     """On-air time (ms) of one Meshtastic packet carrying app_payload_len
@@ -1032,7 +1052,24 @@ class VoiceDaemon:
             if not piper_ok:
                 log("LORA: warning — piper python package or its voice model "
                     "missing; received texts will display but not be spoken")
-        self.transport = "ip"              # "ip" (live mcast) | "lora" (text)
+        # LoRa voice STREAM transport (live Codec2 over the radio).
+        # Availability = pycodec2 + numpy importable; the worker thread
+        # flips stream_ready once its encoder is up.
+        self.stream_enabled = cfg.get("VOICE_LORA_STREAM_ENABLED",
+                                      "false").lower() in ("true", "1", "yes")
+        self.stream_ready = False
+        if self.stream_enabled:
+            try:
+                import numpy      # noqa: F401 — availability check only
+                import pycodec2   # noqa: F401 — availability check only
+            except ImportError as e:
+                log("STREAM: disabled — missing python package ({}); "
+                    "pip3 install pycodec2".format(e))
+                self.stream_enabled = False
+        self.stream_q = queue.Queue(maxsize=256)  # (cmd, frame) to worker
+        self.stream_tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        self.transport = "ip"    # "ip" (live mcast) | "lora" (text) | "stream"
         self.lora_active = False           # a clip is being captured
         self.lora_clip_frames = 0          # 20ms frames fed to STT this clip
         self.lora_clip_full = False        # hit clip limit: lockout to PTT-up
@@ -1205,7 +1242,9 @@ class VoiceDaemon:
 
     def build_status(self):
         with self.sources_lock:
-            active = sorted(self.sources)
+            # key=str: source keys are ints (mesh nodes) plus the "lora"
+            # stream key — mixed types don't sort without it.
+            active = sorted(self.sources, key=str)
         return {
             "ok": True,
             "node_id": self.node_id,
@@ -1229,6 +1268,10 @@ class VoiceDaemon:
                     self.stt_engine, "grammar", None)),
                 "stt_cleanup": self.stt_cleanup,
                 "max_secs": round(self.lora_max_secs, 1),
+            },
+            "stream": {
+                "enabled": self.stream_enabled,
+                "ready": self.stream_ready,
             },
         }
 
@@ -1305,6 +1348,10 @@ class VoiceDaemon:
             # accuracy, and Vosk doesn't need the level boost.
             self._lora_buffer_frame(frame)
             return
+        if self.transport == "stream":
+            # RAW frame here too: clipping wrecks Codec2 just like STT.
+            self._stream_put(("frame", frame))
+            return
         if gain and abs(gain - 1.0) >= 0.01:
             frame = apply_gain(frame, gain)
         if self.tx_sock is None:
@@ -1325,10 +1372,12 @@ class VoiceDaemon:
     # -- LoRa voice-text transport (Vosk STT -> cot-bridge -> Piper TTS) -----
 
     def set_transport(self, mode):
-        """Switch TX transport. RX always listens on both paths."""
-        if mode not in ("ip", "lora"):
+        """Switch TX transport. RX always listens on every path."""
+        if mode not in ("ip", "lora", "stream"):
             return False
         if mode == "lora" and not (self.lora_enabled and self.lora_ready):
+            return False
+        if mode == "stream" and not (self.stream_enabled and self.stream_ready):
             return False
         with self.lora_lock:
             if mode == self.transport:
@@ -1348,7 +1397,11 @@ class VoiceDaemon:
             log("LORA: STT queue full — dropping audio")
 
     def lora_ptt_pressed(self):
-        """PTT down edge: start a fresh streaming recognizer (LoRa mode)."""
+        """PTT down edge (LoRa transports). voice-text: start a fresh
+        streaming recognizer. stream: reset the Codec2 encoder state."""
+        if self.transport == "stream":
+            self._stream_put(("start", None))
+            return
         if self.transport != "lora":
             return
         with self.lora_lock:
@@ -1358,7 +1411,11 @@ class VoiceDaemon:
         self._stt_put(("start", None))
 
     def lora_ptt_released(self):
-        """PTT up edge: finalize the transcript and send it (LoRa mode)."""
+        """PTT up edge (LoRa transports). voice-text: finalize + send the
+        transcript. stream: stop encoding (cot-bridge TERMs on silence)."""
+        if self.transport == "stream":
+            self._stream_put(("stop", None))
+            return
         if self.transport != "lora":
             return
         finish = False
@@ -1386,6 +1443,130 @@ class VoiceDaemon:
         if hit_limit:
             log("LORA: clip limit reached — finalizing transcript")
             self._stt_put(("stop", None))
+
+    # -- LoRa voice STREAM transport (live Codec2 <-> cot-bridge) -------------
+
+    def _stream_put(self, item):
+        """Enqueue to the stream worker without blocking the audio path."""
+        try:
+            self.stream_q.put_nowait(item)
+        except queue.Full:
+            log("STREAM: encode queue full — dropping audio")
+
+    def stream_worker_thread(self):
+        """Owns the Codec2 encoder for the stream transport. Mic frames
+        arrive live while PTT is held; each 20 ms frame is downsampled
+        16 kHz -> 8 kHz, Codec2-3200 encoded (8 bytes) and immediately sent
+        to cot-bridge (UDP 4245), which packetizes and transmits over LoRa
+        as it goes — the remote side hears you while you're still talking."""
+        try:
+            import numpy as np
+            import pycodec2
+        except ImportError as e:
+            log("STREAM: disabled — {}".format(e))
+            self.stream_enabled = False
+            self.broadcast_status()
+            return
+        enc = None
+        self.stream_ready = True
+        log("STREAM: LoRa voice stream ready (Codec2 3200, live TX -> "
+            "{}:{})".format(*STREAM_TX_ADDR))
+        self.broadcast_status()
+        while not self.stop.is_set():
+            try:
+                cmd, data = self.stream_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if cmd == "start":
+                enc = pycodec2.Codec2(3200)   # fresh codec state per clip
+            elif cmd == "stop":
+                enc = None                    # cot-bridge TERMs on silence
+            elif cmd == "frame" and enc is not None:
+                pcm16 = np.frombuffer(data, dtype=np.int16)
+                if len(pcm16) != FRAME_SAMPLES:
+                    continue
+                # 16 kHz -> 8 kHz: average adjacent sample pairs (2-tap
+                # boxcar before 2:1 decimation). Crude anti-aliasing, but
+                # Codec2 3200's own quality floor dominates for speech.
+                pcm8 = ((pcm16[0::2].astype(np.int32) +
+                         pcm16[1::2]) >> 1).astype(np.int16)
+                try:
+                    c2 = enc.encode(pcm8)
+                except Exception as e:
+                    log("STREAM: Codec2 encode failed: {}".format(e))
+                    continue
+                try:
+                    self.stream_tx_sock.sendto(c2, STREAM_TX_ADDR)
+                except OSError as e:
+                    log("STREAM: send failed: {}".format(e))
+
+    def stream_rx_thread(self):
+        """Receive Codec2 chunks relayed from LoRa by cot-bridge (UDP 4244)
+        and streaming-decode them into the mixer: each chunk is decoded,
+        upsampled 8 kHz -> 16 kHz and pushed to a jitter-buffered Source as
+        it arrives, so playback starts while the sender is still keyed.
+        Partial trailing frame bytes carry over to the next chunk. The
+        decoder state resets after STREAM_IDLE_RESET of silence (stream
+        over). Always listens, regardless of the TX transport toggle."""
+        try:
+            import numpy as np
+            import pycodec2
+        except ImportError:
+            return
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(STREAM_RX_ADDR)
+        except OSError as e:
+            log("STREAM: cannot bind {}:{}: {}".format(
+                STREAM_RX_ADDR[0], STREAM_RX_ADDR[1], e))
+            return
+        log("STREAM: RX relay socket on {}:{}".format(*STREAM_RX_ADDR))
+        dec = pycodec2.Codec2(3200)
+        carry = b""
+        receiving = False
+        last_rx = 0.0
+        while not self.stop.is_set():
+            rlist, _, _ = select.select([sock], [], [], 0.25)
+            if not rlist:
+                if receiving and time.monotonic() - last_rx > STREAM_IDLE_RESET:
+                    receiving = False
+                    carry = b""
+                    dec = pycodec2.Codec2(3200)   # fresh state per stream
+                continue
+            try:
+                data, _addr = sock.recvfrom(2048)
+            except OSError:
+                continue
+            if not data:
+                continue
+            if not receiving:
+                receiving = True
+                log("STREAM: RX stream started")
+            last_rx = time.monotonic()
+            buf = carry + data
+            usable = len(buf) - (len(buf) % C2_FRAME_BYTES)
+            carry = buf[usable:]
+            for i in range(0, usable, C2_FRAME_BYTES):
+                try:
+                    pcm8 = dec.decode(buf[i:i + C2_FRAME_BYTES])
+                except Exception:
+                    pcm8 = np.zeros(C2_FRAME_SAMPLES, dtype=np.int16)
+                # 8 kHz -> 16 kHz: linear interpolation between samples.
+                pcm16 = np.empty(C2_FRAME_SAMPLES * 2, dtype=np.int16)
+                pcm16[0::2] = pcm8
+                pcm16[1:-1:2] = ((pcm8[:-1].astype(np.int32) +
+                                  pcm8[1:]) >> 1).astype(np.int16)
+                pcm16[-1] = pcm8[-1]
+                frame = pcm16.tobytes()
+                with self.sources_lock:
+                    src = self.sources.get(STREAM_SOURCE_KEY)
+                    if src is None:
+                        src = Source(STREAM_SOURCE_KEY, STREAM_JITTER_FRAMES,
+                                     max_frames=STREAM_SOURCE_MAX_FRAMES)
+                        self.sources[STREAM_SOURCE_KEY] = src
+                        log("STREAM: new LoRa voice source")
+                    src.push(frame)
 
     def stt_worker_thread(self):
         """Owns the resident STT engine (Vosk or sherpa-onnx) + per-clip
@@ -1786,9 +1967,11 @@ class VoiceDaemon:
                     reply = {"ok": True, "transport": self.transport}
                 else:
                     reply = {"ok": False,
-                             "error": "bad transport (ip|lora; lora requires "
-                                      "VOICE_LORA_ENABLED=true and a loaded "
-                                      "STT model)"}
+                             "error": "bad transport (ip|lora|stream; lora "
+                                      "requires VOICE_LORA_ENABLED=true + a "
+                                      "loaded STT model, stream requires "
+                                      "VOICE_LORA_STREAM_ENABLED=true + "
+                                      "pycodec2)"}
             elif len(parts) == 2 and parts[0].upper() == "CHANNEL":
                 try:
                     n = int(parts[1])
@@ -2037,6 +2220,9 @@ class VoiceDaemon:
             log("LORA: voice-text transport starting ({} STT + Piper TTS, "
                 "max clip {:.0f}s)".format(self.stt_engine.name,
                                            self.lora_max_secs))
+        if self.stream_enabled:
+            targets += [self.stream_worker_thread, self.stream_rx_thread]
+            log("STREAM: LoRa voice stream transport starting (Codec2 3200)")
         for target in targets:
             threading.Thread(target=target, daemon=True).start()
 

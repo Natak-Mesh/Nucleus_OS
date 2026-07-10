@@ -20,6 +20,9 @@
 		},
 		{
 			"path": "../.reticulum"
+		},
+		{
+			"path": "../VoiceOverLoRa"
 		}
 	],
 	"settings": {

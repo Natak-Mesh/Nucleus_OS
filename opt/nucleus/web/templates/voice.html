@@ -138,6 +138,7 @@
     <div class="transport-row">
         <button class="transport-btn active" id="tp-ip">IP Mesh<br>(real-time)</button>
         <button class="transport-btn" id="tp-lora" disabled>LoRa<br>(voice&rarr;text)</button>
+        <button class="transport-btn" id="tp-stream" disabled>LoRa<br>(streaming)</button>
     </div>
     <div class="lora-meta" id="lora-meta"></div>
 
@@ -202,8 +203,9 @@ let wsReady = false;
 let talking = false;
 let currentChannel = null;
 let channels = [];
-let transport = 'ip';              // 'ip' | 'lora' (mirrors daemon status)
+let transport = 'ip';              // 'ip' | 'lora' | 'stream' (mirrors daemon)
 let loraInfo = { enabled: false, ready: false, max_secs: 0 };
+let streamInfo = { enabled: false, ready: false };
 let clipTimer = null;              // countdown interval while keyed in LoRa mode
 let clipDeadline = 0;
 let messages = [];                 // voice-text history (newest last)
@@ -296,6 +298,7 @@ function handleStatus(s) {
     }
     if (s.transport !== undefined) transport = s.transport;
     if (s.lora !== undefined) loraInfo = s.lora;
+    if (s.stream !== undefined) streamInfo = s.stream;
     renderTransport();
     renderTalkers(s.sources || []);
 }
@@ -304,16 +307,21 @@ function handleStatus(s) {
 function renderTransport() {
     const ipBtn = document.getElementById('tp-ip');
     const loraBtn = document.getElementById('tp-lora');
+    const streamBtn = document.getElementById('tp-stream');
     const meta = document.getElementById('lora-meta');
     ipBtn.classList.toggle('active', transport === 'ip');
     loraBtn.classList.toggle('active', transport === 'lora');
+    streamBtn.classList.toggle('active', transport === 'stream');
     loraBtn.disabled = !(loraInfo.enabled && loraInfo.ready);
-    if (!loraInfo.enabled) {
-        meta.textContent = 'LoRa voice not enabled on this node';
-    } else if (!loraInfo.ready) {
-        meta.textContent = 'LoRa voice\u2192text starting (loading speech model)\u2026';
-    } else if (transport === 'lora') {
+    streamBtn.disabled = !(streamInfo.enabled && streamInfo.ready);
+    if (transport === 'lora') {
         meta.textContent = loraInfo.max_secs + 's max per message';
+    } else if (transport === 'stream') {
+        meta.textContent = 'Live Codec2 voice over LoRa \u2014 remote hears you while you talk';
+    } else if (!loraInfo.enabled && !streamInfo.enabled) {
+        meta.textContent = 'LoRa voice not enabled on this node';
+    } else if (loraInfo.enabled && !loraInfo.ready) {
+        meta.textContent = 'LoRa voice\u2192text starting (loading speech model)\u2026';
     } else {
         meta.textContent = '';
     }
@@ -322,6 +330,7 @@ function renderTransport() {
 function setTransport(mode) {
     if (!wsReady || talking) return;
     if (mode === 'lora' && !(loraInfo.enabled && loraInfo.ready)) return;
+    if (mode === 'stream' && !(streamInfo.enabled && streamInfo.ready)) return;
     ws.send(JSON.stringify({ type: 'transport', mode: mode }));
     transport = mode;   // optimistic; status push will confirm
     renderTransport();
@@ -329,6 +338,7 @@ function setTransport(mode) {
 
 document.getElementById('tp-ip').onclick = () => setTransport('ip');
 document.getElementById('tp-lora').onclick = () => setTransport('lora');
+document.getElementById('tp-stream').onclick = () => setTransport('stream');
 
 // ── Voice-text message log ──────────────────────────────────────────────────
 function fmtTime(ts) {
@@ -439,7 +449,9 @@ function selectChannel(n) {
 function renderTalkers(sources) {
     const el = document.getElementById('talkers');
     if (!sources.length) { el.innerHTML = '<div class="empty-msg">No one talking</div>'; return; }
-    el.innerHTML = sources.map(id => '<span class="talker-tag">Node ' + id + '</span>').join('');
+    el.innerHTML = sources.map(id =>
+        '<span class="talker-tag">' +
+        (id === 'lora' ? 'LoRa voice' : 'Node ' + id) + '</span>').join('');
 }
 
 // ── Playback (mixed RX audio from the mesh) ─────────────────────────────────
