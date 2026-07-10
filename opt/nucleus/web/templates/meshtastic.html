@@ -107,10 +107,6 @@
             <!-- Radio Config Panel -->
             <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0;">
                 <h2>Radio Config</h2>
-                <p style="color: #a0a0a0; margin: 5px 0 15px 0;">
-                    Configure the radio directly over USB serial — no phone app needed.
-                    The CoT bridge is paused automatically during radio operations.
-                </p>
 
                 <div id="cfg-empty" style="color: #666; margin-bottom: 10px;">
                     No config loaded yet — press Read Config.
@@ -493,18 +489,48 @@
             }
         }
 
+        // Config operations run in the background on the server (they take
+        // 30-120s — too long for one HTTP request). After starting one, we
+        // poll /config/op-status every 3s until it finishes.
+        function pollOpStatus(onDone, onError) {
+            const timer = setInterval(function() {
+                fetch('/api/meshtastic/config/op-status')
+                    .then(r => r.json())
+                    .then(st => {
+                        if (st.status === 'done') {
+                            clearInterval(timer);
+                            onDone(st.config);
+                        } else if (st.status === 'error') {
+                            clearInterval(timer);
+                            onError(st.error || 'Operation failed');
+                        }
+                        // 'running' -> keep polling
+                    })
+                    .catch(() => { /* transient network error — keep polling */ });
+            }, 3000);
+        }
+
         function readConfig() {
             setConfigBusy(true, 'Pausing bridge and reading config from radio... (~15s)');
             fetch('/api/meshtastic/config/read', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
-                    setConfigBusy(false);
-                    if (data.success) {
-                        populateConfig(data.config);
-                        showMessage('Config read from radio', 'success');
-                    } else {
+                    if (!data.success) {
+                        setConfigBusy(false);
                         showMessage('Error: ' + (data.error || 'Read failed'), 'error');
+                        return;
                     }
+                    pollOpStatus(
+                        function(cfg) {
+                            setConfigBusy(false);
+                            populateConfig(cfg);
+                            showMessage('Config read from radio', 'success');
+                        },
+                        function(err) {
+                            setConfigBusy(false);
+                            showMessage('Error: ' + err, 'error');
+                        }
+                    );
                 })
                 .catch(err => {
                     setConfigBusy(false);
@@ -525,7 +551,7 @@
                 return;
             }
 
-            setConfigBusy(true, 'Applying config — bridge paused, radio will reboot... (~60s)');
+            setConfigBusy(true, 'Applying config — bridge paused, radio will reboot... (~60-120s)');
             fetch('/api/meshtastic/config/apply', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -533,13 +559,22 @@
             })
                 .then(r => r.json())
                 .then(data => {
-                    setConfigBusy(false);
-                    if (data.success) {
-                        populateConfig(data.config);
-                        showMessage(data.message, 'success');
-                    } else {
+                    if (!data.success) {
+                        setConfigBusy(false);
                         showMessage('Error: ' + (data.error || 'Apply failed'), 'error');
+                        return;
                     }
+                    pollOpStatus(
+                        function(cfg) {
+                            setConfigBusy(false);
+                            populateConfig(cfg);
+                            showMessage('Config applied — radio rebooted', 'success');
+                        },
+                        function(err) {
+                            setConfigBusy(false);
+                            showMessage('Error: ' + err, 'error');
+                        }
+                    );
                 })
                 .catch(err => {
                     setConfigBusy(false);
@@ -570,15 +605,26 @@
             })
                 .then(r => r.json())
                 .then(data => {
-                    st.style.display = 'none';
-                    setConfigBusy(false);
-                    if (data.success) {
-                        populateConfig(data.config);
-                        document.getElementById('apply-url-input').value = '';
-                        showMessage(data.message, 'success');
-                    } else {
+                    if (!data.success) {
+                        st.style.display = 'none';
+                        setConfigBusy(false);
                         showMessage('Error: ' + (data.error || 'Apply failed'), 'error');
+                        return;
                     }
+                    pollOpStatus(
+                        function(cfg) {
+                            st.style.display = 'none';
+                            setConfigBusy(false);
+                            populateConfig(cfg);
+                            document.getElementById('apply-url-input').value = '';
+                            showMessage('Channel URL applied — radio rebooted', 'success');
+                        },
+                        function(err) {
+                            st.style.display = 'none';
+                            setConfigBusy(false);
+                            showMessage('Error: ' + err, 'error');
+                        }
+                    );
                 })
                 .catch(err => {
                     st.style.display = 'none';

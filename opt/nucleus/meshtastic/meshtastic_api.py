@@ -58,6 +58,59 @@ meshtastic_bp = Blueprint('meshtastic', __name__)
 # and hold the serial port)
 _config_lock = threading.Lock()
 
+# ── Async operation state ──────────────────────────────────────
+# Radio config operations take 30-120s (CLI writes + radio reboots),
+# far too long to hold a single HTTP request open (browsers time out).
+# Instead, operations run in a background thread and the frontend
+# polls /api/meshtastic/config/op-status until done.
+_op_state = {
+    'op': None,          # 'read' | 'apply' | 'channel_url'
+    'status': 'idle',    # 'idle' | 'running' | 'done' | 'error'
+    'error': None,
+    'config': None,
+    'started_at': None,
+    'finished_at': None,
+}
+_op_state_lock = threading.Lock()
+
+
+def _set_op_state(**kw):
+    with _op_state_lock:
+        _op_state.update(kw)
+
+
+def _get_op_state():
+    with _op_state_lock:
+        return dict(_op_state)
+
+
+def _start_op(op_name, work_fn):
+    """Run work_fn (inside a bridge-pause) in a background thread.
+
+    Acquires the config lock; returns False if another operation is
+    already running. work_fn must return the parsed config dict or
+    raise RuntimeError. The result lands in _op_state for polling.
+    """
+    if not _config_lock.acquire(blocking=False):
+        return False
+    _set_op_state(op=op_name, status='running', error=None, config=None,
+                  started_at=int(time.time()), finished_at=None)
+
+    def runner():
+        try:
+            with _bridge_paused():
+                parsed = work_fn()
+            _set_op_state(status='done', config=parsed,
+                          finished_at=int(time.time()))
+        except Exception as e:
+            _set_op_state(status='error', error=str(e),
+                          finished_at=int(time.time()))
+        finally:
+            _config_lock.release()
+
+    threading.Thread(target=runner, daemon=True).start()
+    return True
+
 
 def _service_is_active():
     """Check if cot-bridge.service is currently running."""
@@ -508,28 +561,33 @@ def config_cached():
     })
 
 
+@meshtastic_bp.route('/api/meshtastic/config/op-status', methods=['GET'])
+def config_op_status():
+    """Poll the state of the current/last radio config operation.
+
+    Radio operations run in a background thread (they take 30-120s,
+    too long for one HTTP request). The frontend polls this endpoint
+    until status is 'done' or 'error'.
+    """
+    return jsonify(_get_op_state())
+
+
 @meshtastic_bp.route('/api/meshtastic/config/read', methods=['POST'])
 def config_read():
-    """Read fresh config from the radio (pauses the bridge, ~15s)."""
+    """Start reading config from the radio (background, poll op-status)."""
     if not _radio_detected():
         return jsonify({'success': False, 'error': 'No radio detected'}), 400
-    if not _config_lock.acquire(blocking=False):
+
+    if not _start_op('read', _read_config_from_radio):
         return jsonify({'success': False,
                         'error': 'Another radio operation is in progress'}), 409
-    try:
-        with _bridge_paused():
-            parsed = _read_config_from_radio()
-        return jsonify({'success': True, 'config': parsed})
-    except RuntimeError as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        _config_lock.release()
+    return jsonify({'success': True, 'started': True}), 202
 
 
 @meshtastic_bp.route('/api/meshtastic/config/apply', methods=['POST'])
 def config_apply():
-    """Apply changed fields to the radio (pauses bridge, radio reboots,
-    ~30-60s depending on how many field groups changed)."""
+    """Start applying changed fields to the radio (background, poll
+    op-status). Radio reboots per config group — 30-120s total."""
     if not _radio_detected():
         return jsonify({'success': False, 'error': 'No radio detected'}), 400
 
@@ -543,31 +601,20 @@ def config_apply():
     if not groups:
         return jsonify({'success': False, 'error': 'No changes provided'}), 400
 
-    if not _config_lock.acquire(blocking=False):
+    def work():
+        for args in groups:
+            rc, out = _run_meshtastic(args)
+            if rc != 0:
+                raise RuntimeError(f'Config write failed: {out[-300:]}')
+            # Config commit reboots the radio — wait before next command
+            _wait_for_radio()
+        # Re-read so the cache/UI reflect what the radio actually has
+        return _read_config_from_radio()
+
+    if not _start_op('apply', work):
         return jsonify({'success': False,
                         'error': 'Another radio operation is in progress'}), 409
-    try:
-        with _bridge_paused():
-            for i, args in enumerate(groups):
-                rc, out = _run_meshtastic(args)
-                if rc != 0:
-                    return jsonify({
-                        'success': False,
-                        'error': f'Config write failed: {out[-300:]}'
-                    }), 500
-                # Config commit reboots the radio — wait before next command
-                _wait_for_radio()
-
-            # Re-read so the cache/UI reflect what the radio actually has
-            parsed = _read_config_from_radio()
-
-        return jsonify({'success': True,
-                        'message': 'Config applied — radio rebooted',
-                        'config': parsed})
-    except RuntimeError as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        _config_lock.release()
+    return jsonify({'success': True, 'started': True}), 202
 
 
 @meshtastic_bp.route('/api/meshtastic/config/channel-url', methods=['POST'])
@@ -590,27 +637,17 @@ def config_channel_url():
         return jsonify({'success': False,
                         'error': 'Invalid channel URL — could not decode'}), 400
 
-    if not _config_lock.acquire(blocking=False):
+    def work():
+        rc, out = _run_meshtastic(['--ch-set-url', url])
+        if rc != 0:
+            raise RuntimeError(f'Channel URL apply failed: {out[-300:]}')
+        _wait_for_radio()
+        return _read_config_from_radio()
+
+    if not _start_op('channel_url', work):
         return jsonify({'success': False,
                         'error': 'Another radio operation is in progress'}), 409
-    try:
-        with _bridge_paused():
-            rc, out = _run_meshtastic(['--ch-set-url', url])
-            if rc != 0:
-                return jsonify({
-                    'success': False,
-                    'error': f'Channel URL apply failed: {out[-300:]}'
-                }), 500
-            _wait_for_radio()
-            parsed = _read_config_from_radio()
-
-        return jsonify({'success': True,
-                        'message': 'Channel URL applied — radio rebooted',
-                        'config': parsed})
-    except RuntimeError as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        _config_lock.release()
+    return jsonify({'success': True, 'started': True}), 202
 
 
 @meshtastic_bp.route('/api/meshtastic/config/qr', methods=['GET'])
