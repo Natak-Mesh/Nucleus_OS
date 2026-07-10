@@ -104,9 +104,6 @@ sudo systemctl enable mesh-start.service
 sudo systemctl enable mesh-web.service
 sudo systemctl enable rnsd.service
 sudo systemctl enable openvlm-voice.service
-# Restart voice daemon so a deploy picks up new openvlm-voice.py immediately
-# (otherwise the old daemon keeps running until reboot — e.g. no WebSocket server)
-sudo systemctl restart openvlm-voice.service
 
 # Note: mediamtx.service is copied but not enabled - enable manually on nodes that need video streaming:
 #       sudo systemctl enable --now mediamtx.service
@@ -135,6 +132,10 @@ sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 sudo chmod +x /opt/nucleus/bin/iw-wifi-scan.sh
 sudo chmod +x /opt/nucleus/bin/openvlm-voice.py
 sudo chmod +x /usr/local/bin/voice
+# Restart voice daemon so a deploy picks up new openvlm-voice.py immediately.
+# MUST run AFTER the cp above — restarting before the copy relaunches the OLD
+# script (that bug shipped once: the streaming transport stayed greyed out).
+sudo systemctl restart openvlm-voice.service
 
 # Copy meshtastic module if exists
 if [ -d "$SOURCE_DIR/opt/nucleus/meshtastic" ]; then

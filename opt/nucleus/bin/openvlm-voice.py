@@ -121,6 +121,41 @@ STREAM_JITTER_FRAMES = 15             # 300 ms: LoRa chunks land ~180 ms apart
 STREAM_SOURCE_MAX_FRAMES = 150        # 3 s backlog cap (drop oldest past it)
 STREAM_IDLE_RESET = 1.0               # s of RX silence = stream over, reset
 
+# cot-bridge dumps its Meshtastic node database here every ~15 s (for the
+# web dashboard). We use it to resolve a sender node num to the operator's
+# assigned SHORT NAME for the Receiving display and the message log.
+NODES_JSON_PATH = "/tmp/meshtastic_nodes.json"
+_node_names_cache = {"mtime": 0.0, "names": {}}
+
+
+def lora_node_name(num):
+    """Short name for a Meshtastic node num from cot-bridge's node dump,
+    or None if unknown. Cached; re-parsed only when the file changes."""
+    if not num:
+        return None
+    try:
+        mtime = os.stat(NODES_JSON_PATH).st_mtime
+    except OSError:
+        return None
+    cache = _node_names_cache
+    if mtime != cache["mtime"]:
+        names = {}
+        try:
+            with open(NODES_JSON_PATH) as f:
+                for n in json.load(f).get("nodes", []):
+                    nid = n.get("id", "")
+                    sn = (n.get("short_name") or "").strip()
+                    if nid.startswith("!") and sn and sn != "?":
+                        try:
+                            names[int(nid[1:], 16)] = sn
+                        except ValueError:
+                            pass
+        except (OSError, ValueError):
+            return cache["names"].get(num)
+        cache["names"] = names
+        cache["mtime"] = mtime
+    return cache["names"].get(num)
+
 
 def lora_airtime_ms(app_payload_len):
     """On-air time (ms) of one Meshtastic packet carrying app_payload_len
@@ -688,7 +723,16 @@ class Source:
         return self.queue.pop(0)
 
     def expired(self, now):
-        return (now - self.last_seen) > SOURCE_TIMEOUT and not self.queue
+        if (now - self.last_seen) <= SOURCE_TIMEOUT:
+            return False
+        # Sender has gone quiet. If un-played frames are stranded below the
+        # jitter threshold (e.g. the tail of a LoRa stream), force playback
+        # so the queue drains — otherwise this source can never expire and
+        # its "Receiving" tag sticks forever.
+        if self.queue:
+            self.playing = True
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -1505,9 +1549,12 @@ class VoiceDaemon:
         and streaming-decode them into the mixer: each chunk is decoded,
         upsampled 8 kHz -> 16 kHz and pushed to a jitter-buffered Source as
         it arrives, so playback starts while the sender is still keyed.
-        Partial trailing frame bytes carry over to the next chunk. The
-        decoder state resets after STREAM_IDLE_RESET of silence (stream
-        over). Always listens, regardless of the TX transport toggle."""
+        Partial trailing frame bytes carry over to the next chunk. Each
+        datagram is prefixed with the sender's 4-byte meshtastic node num
+        by cot-bridge, so the stream is attributed to a per-node source
+        ("lora-<n>") in the Receiving display. The decoder state resets
+        after STREAM_IDLE_RESET of silence (stream over). Always listens,
+        regardless of the TX transport toggle."""
         try:
             import numpy as np
             import pycodec2
@@ -1538,13 +1585,18 @@ class VoiceDaemon:
                 data, _addr = sock.recvfrom(2048)
             except OSError:
                 continue
-            if not data:
+            if len(data) <= 4:
                 continue
+            # cot-bridge prepends the sender's 4-byte meshtastic node num.
+            sender = struct.unpack("<I", data[:4])[0]
+            name = lora_node_name(sender)
+            src_key = ("lora-{}".format(name or (sender & 0xFFFF)) if sender
+                       else STREAM_SOURCE_KEY)
             if not receiving:
                 receiving = True
-                log("STREAM: RX stream started")
+                log("STREAM: RX stream started ({})".format(src_key))
             last_rx = time.monotonic()
-            buf = carry + data
+            buf = carry + data[4:]
             usable = len(buf) - (len(buf) % C2_FRAME_BYTES)
             carry = buf[usable:]
             for i in range(0, usable, C2_FRAME_BYTES):
@@ -1560,12 +1612,13 @@ class VoiceDaemon:
                 pcm16[-1] = pcm8[-1]
                 frame = pcm16.tobytes()
                 with self.sources_lock:
-                    src = self.sources.get(STREAM_SOURCE_KEY)
+                    src = self.sources.get(src_key)
                     if src is None:
-                        src = Source(STREAM_SOURCE_KEY, STREAM_JITTER_FRAMES,
+                        src = Source(src_key, STREAM_JITTER_FRAMES,
                                      max_frames=STREAM_SOURCE_MAX_FRAMES)
-                        self.sources[STREAM_SOURCE_KEY] = src
-                        log("STREAM: new LoRa voice source")
+                        self.sources[src_key] = src
+                        log("STREAM: new LoRa voice source ({})".format(
+                            src_key))
                     src.push(frame)
 
     def stt_worker_thread(self):
@@ -1733,15 +1786,18 @@ class VoiceDaemon:
             return
         if channel != self.channel:
             return                          # different voice channel
-        node_key = sender & 0xFFFF
+        # Prefer the sender's assigned short name (via cot-bridge's node
+        # dump); fall back to the low 16 bits of the node num.
+        node_key = lora_node_name(sender) or (sender & 0xFFFF)
         truncated = bool(flags & LORA_FLAG_TRUNCATED)
-        log("LORA RX: text from node {}{}: \"{}\"".format(
-            sender, " (truncated)" if truncated else "", text))
+        log("LORA RX: text from node {} ({}){}: \"{}\"".format(
+            sender, node_key, " (truncated)" if truncated else "", text))
         self._push_text_event("rx", node_key, channel, text,
                               truncated=truncated)
         # Speak it via Piper TTS; the worker serializes overlapping messages.
+        # The "lora-" source key renders as "<name> (LoRa)" in Receiving.
         try:
-            self.tts_q.put_nowait((node_key, text))
+            self.tts_q.put_nowait(("lora-{}".format(node_key), text))
         except queue.Full:
             log("LORA: TTS queue full — message displayed but not spoken")
 

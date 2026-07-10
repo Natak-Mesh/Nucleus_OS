@@ -347,7 +347,9 @@ def _stream_raw_loop(sock):
 def _handle_stream_rx(packet, decoded):
     """One received LoRa voice-stream packet: strip the 3-byte header and
     forward the raw Codec2 bytes to the voice daemon (UDP 4244) as they
-    arrive, so playback starts while the sender is still talking. INIT and
+    arrive, so playback starts while the sender is still talking. The
+    sender's 4-byte meshtastic node num is prepended (like the voice-text
+    relay) so the daemon can attribute the stream to a node. INIT and
     TERM markers carry no audio and are only logged."""
     payload = decoded.get("payload")
     if not payload or len(payload) < STREAM_HDR.size:
@@ -368,7 +370,10 @@ def _handle_stream_rx(packet, decoded):
             logger.warning(f"Stream RX size mismatch "
                            f"(hdr={size}B got={len(audio)}B seq={seq})")
             return
-        stream_fwd_sock.sendto(audio, STREAM_FORWARD)
+        sender = packet.get("from")
+        num = sender if isinstance(sender, int) else 0
+        stream_fwd_sock.sendto(
+            struct.pack("<I", num & 0xFFFFFFFF) + audio, STREAM_FORWARD)
         stats["stream_rx"] += 1
         logger.debug(f"STREAM RX ← LoRa | {from_id} | seq={seq} | "
                      f"{len(audio)}B | SNR={rx_snr}")
