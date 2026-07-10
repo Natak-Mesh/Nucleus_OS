@@ -36,7 +36,8 @@ sudo apt install -y \
   mtr-tiny \
   ncdu \
   nginx \
-  alsa-utils
+  alsa-utils \
+  unzip
 
 
 # Install Python packages
@@ -61,20 +62,81 @@ pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/takproto
 # meshtastic-tak: TAKPacketV2 conversion + zstd dictionary compression
 pip3 install --break-system-packages --upgrade "git+https://github.com/meshtastic/TAKPacket-SDK.git#subdirectory=python"
 
+# LoRa Voice→Text (openvlm-voice.py) — offline STT + TTS
+# vosk: streaming speech-to-text (transcribes while PTT is held)
+# piper-tts: neural text-to-speech (speaks received texts). Must be >= 1.4:
+#   the voice daemon uses the resident PiperVoice Python API (not the CLI)
+#   so the model loads once at startup instead of per message — see
+#   docs/VoIP/lora_voice/lora_voice_text.md (TTS section).
+# webrtc-noise-gain: WebRTC noise suppression for the STT mic tap
+#   (VOICE_STT_CLEANUP in mesh.conf). Optional but recommended: without it
+#   the daemon falls back to high-pass filtering only.
+# NOTE: the sherpa-onnx STT engine was tested and REJECTED on Pi 4
+#   (2026-07-07, see docs/VoIP/lora_voice/lora_voice_text.md) — its pip
+#   package and model are intentionally NOT installed. To trial it on
+#   faster hardware: pip3 install sherpa-onnx + a streaming zipformer
+#   model in /opt/nucleus/models/sherpa/, then VOICE_STT_ENGINE=sherpa.
+# Installed with sudo (system-wide) because the voice daemon runs as root.
+sudo pip3 install --break-system-packages vosk "piper-tts>=1.4" \
+    webrtc-noise-gain
+
 # Pin protobuf to major version 6 — MUST run AFTER meshtastic/takproto/TAKPacket-SDK
 # installs, since their `pip install --upgrade` pulls whatever protobuf is newest.
 #
 # The cot-bridge depends on meshtastic_tak, whose generated code (atak_pb2.py) is
-# compiled with protobuf gencode 6.x. Protobuf enforces that the runtime and gencode
-# share the same MAJOR version, so a runtime of 5.x or 7.x makes cot-bridge crash at
-# import with: "Detected mismatched Protobuf Gencode/Runtime major versions ...
-# Same major version is required." (seen on node 0034, 2026-06-16).
+# compiled with protobuf gencode 6.x. Protobuf enforces TWO version rules and
+# cot-bridge crashes at import if either is violated:
+#   1. Runtime and gencode must share the same MAJOR version — a 5.x or 7.x
+#      runtime fails with "Detected mismatched Protobuf Gencode/Runtime major
+#      versions ... Same major version is required." (node 0034, 2026-06-16).
+#   2. Runtime must be >= the gencode version, even within the same major —
+#      "Runtime version cannot be older than the linked gencode version."
+#      (node 0010, 2026-07-09: gencode 6.33.2 vs runtime 6.32.1).
+#
+# --upgrade is REQUIRED here: without it, an already-installed 6.x runtime
+# satisfies ">=6,<7" and pip leaves it alone, so a fresh TAKPacket-SDK install
+# (newer gencode) with a stale runtime trips rule 2 above.
 #
 # Range (>=6,<7) instead of an exact pin: allows protobuf 6.x patch/minor updates
-# (bug/security fixes) while blocking the major-version jump that actually breaks us.
+# (bug/security fixes) while blocking the major-version jump that also breaks us.
 # Revisit only if meshtastic_tak regenerates against protobuf 7.
-pip3 install --break-system-packages "protobuf>=6,<7"
+pip3 install --break-system-packages --upgrade "protobuf>=6,<7"
 
+
+# Download speech models for LoRa Voice→Text (requires internet)
+echo "[3b/8] Downloading STT/TTS models for LoRa voice-text..."
+# Vosk STT model (~40 MB disk, ~100 MB RAM) -> /opt/nucleus/models/vosk/
+# The small model is the fielded default: it decodes faster than real-time
+# on a Pi 4 so the transcript is ready the moment PTT is released. Larger
+# models (e.g. vosk-model-en-us-0.22-lgraph) were tested and REJECTED on
+# Pi 4: slower-than-real-time decode = 10+ s latency after release, plus
+# ~500-700 MB RAM. For accuracy gains use the opt-in grammar constraint
+# (VOICE_STT_GRAMMAR in mesh.conf) instead.
+VOSK_DIR=/opt/nucleus/models/vosk
+if [ ! -d "$VOSK_DIR/vosk-model-small-en-us-0.15" ]; then
+    sudo mkdir -p "$VOSK_DIR"
+    wget -q --show-progress -O /tmp/vosk-model.zip \
+        https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+    sudo unzip -q /tmp/vosk-model.zip -d "$VOSK_DIR"
+    rm -f /tmp/vosk-model.zip
+    echo "Vosk model installed to $VOSK_DIR"
+else
+    echo "Vosk model already installed."
+fi
+
+# Piper TTS voice (~60 MB) -> /opt/nucleus/models/piper/en_US-lessac-low.onnx
+PIPER_DIR=/opt/nucleus/models/piper
+PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/low"
+if [ ! -f "$PIPER_DIR/en_US-lessac-low.onnx" ]; then
+    sudo mkdir -p "$PIPER_DIR"
+    sudo wget -q --show-progress -O "$PIPER_DIR/en_US-lessac-low.onnx" \
+        "$PIPER_BASE/en_US-lessac-low.onnx"
+    sudo wget -q --show-progress -O "$PIPER_DIR/en_US-lessac-low.onnx.json" \
+        "$PIPER_BASE/en_US-lessac-low.onnx.json"
+    echo "Piper voice installed to $PIPER_DIR"
+else
+    echo "Piper voice already installed."
+fi
 
 # Configure environment
 echo "[4/8] Configuring environment..."

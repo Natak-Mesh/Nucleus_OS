@@ -61,7 +61,7 @@ Fully implemented and tested bidirectionally between two nodes.
 | Config sharing — export/apply/push via CLI | Planned (see `meshtastic_config_sharing.md`) |
 | LoRa text messaging (standalone, non-ATAK) | Shelved (see archived meshtastic_manager.py) |
 | Canned messages / quick send | Shelved |
-| Codec2 voice notes | Shelved |
+| Codec2 voice notes | Retired — superseded by [LoRa voice→text](../VoIP/lora_voice/lora_voice_text.md) |
 
 ---
 

@@ -27,6 +27,21 @@
             border-left: 3px solid var(--accent-primary); border-radius: 2px;
         }
 
+        /* Transport toggle */
+        .transport-row { display: flex; gap: 8px; margin-bottom: 8px; }
+        .transport-btn {
+            flex: 1; padding: 10px 8px; background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-color); border-radius: 8px;
+            color: var(--text-secondary); font-size: 13px; font-family: monospace;
+            cursor: pointer; min-height: 44px; transition: all 0.15s;
+        }
+        .transport-btn.active {
+            background: rgba(26, 9, 241, 0.25); border-color: #1A09f1;
+            color: var(--text-primary); font-weight: bold;
+        }
+        .transport-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .lora-meta { font-size: 12px; color: var(--text-secondary); margin: 4px 0 0 2px; }
+
         /* Channel picker */
         .chan-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
         .chan-btn {
@@ -58,6 +73,20 @@
             color: #fff; transform: scale(0.97);
         }
         .ptt-hint { font-size: 12px; color: var(--text-secondary); margin-top: 10px; }
+
+        /* Voice-text message log (LoRa transport) */
+        .msg-log {
+            max-height: 220px; overflow-y: auto; font-size: 13px;
+            border: 1px solid var(--border-color); border-radius: 6px;
+            padding: 6px 8px; background: rgba(255,255,255,0.03);
+        }
+        .msg-row { padding: 4px 2px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .msg-row:last-child { border-bottom: none; }
+        .msg-meta { color: var(--text-secondary); font-size: 11px; }
+        .msg-tx .msg-meta { color: #7a9cff; }
+        .msg-rx .msg-meta { color: var(--color-connected); }
+        .msg-text { color: var(--text-primary); word-break: break-word; }
+        .msg-failed .msg-text { color: var(--text-secondary); font-style: italic; }
 
         .talkers { min-height: 24px; }
         .talker-tag {
@@ -105,6 +134,13 @@
         <span id="hw-status"></span>
     </div>
 
+    <div class="section-hdr">Transport</div>
+    <div class="transport-row">
+        <button class="transport-btn active" id="tp-ip">IP Mesh<br>(real-time)</button>
+        <button class="transport-btn" id="tp-lora" disabled>LoRa<br>(voice&rarr;text)</button>
+    </div>
+    <div class="lora-meta" id="lora-meta"></div>
+
     <div class="section-hdr">Channel</div>
     <div class="chan-grid" id="chan-grid">
         <div class="empty-msg">Loading channels…</div>
@@ -112,12 +148,17 @@
 
     <div class="ptt-wrap">
         <button class="ptt-btn" id="ptt-btn" disabled>TALK</button>
-        <div class="ptt-hint">Press &amp; hold to talk · (or hold Spacebar)</div>
+        <div class="ptt-hint" id="ptt-hint">Press &amp; hold to talk · (or hold Spacebar)</div>
     </div>
 
     <div class="section-hdr">Receiving</div>
     <div class="talkers" id="talkers">
         <div class="empty-msg">No one talking</div>
+    </div>
+
+    <div class="section-hdr">Messages (LoRa voice&rarr;text)</div>
+    <div class="msg-log" id="msg-log">
+        <div class="empty-msg">No messages yet</div>
     </div>
 
 </div>
@@ -161,6 +202,11 @@ let wsReady = false;
 let talking = false;
 let currentChannel = null;
 let channels = [];
+let transport = 'ip';              // 'ip' | 'lora' (mirrors daemon status)
+let loraInfo = { enabled: false, ready: false, max_secs: 0 };
+let clipTimer = null;              // countdown interval while keyed in LoRa mode
+let clipDeadline = 0;
+let messages = [];                 // voice-text history (newest last)
 
 // Audio capture
 let audioCtx = null;
@@ -212,7 +258,10 @@ function connect() {
 
     ws.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
-            handleStatus(JSON.parse(ev.data));
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'text') { addMessage(msg.item); }
+            else if (msg.type === 'texts') { messages = msg.items || []; renderMessages(); }
+            else { handleStatus(msg); }
         } else {
             handleAudio(ev.data);
         }
@@ -245,7 +294,119 @@ function handleStatus(s) {
         currentChannel = s.channel;
         markActiveChannel();
     }
+    if (s.transport !== undefined) transport = s.transport;
+    if (s.lora !== undefined) loraInfo = s.lora;
+    renderTransport();
     renderTalkers(s.sources || []);
+}
+
+// ── Transport toggle ────────────────────────────────────────────────────────
+function renderTransport() {
+    const ipBtn = document.getElementById('tp-ip');
+    const loraBtn = document.getElementById('tp-lora');
+    const meta = document.getElementById('lora-meta');
+    ipBtn.classList.toggle('active', transport === 'ip');
+    loraBtn.classList.toggle('active', transport === 'lora');
+    loraBtn.disabled = !(loraInfo.enabled && loraInfo.ready);
+    if (!loraInfo.enabled) {
+        meta.textContent = 'LoRa voice not enabled on this node';
+    } else if (!loraInfo.ready) {
+        meta.textContent = 'LoRa voice\u2192text starting (loading speech model)\u2026';
+    } else if (transport === 'lora') {
+        meta.textContent = loraInfo.max_secs + 's max per message';
+    } else {
+        meta.textContent = '';
+    }
+}
+
+function setTransport(mode) {
+    if (!wsReady || talking) return;
+    if (mode === 'lora' && !(loraInfo.enabled && loraInfo.ready)) return;
+    ws.send(JSON.stringify({ type: 'transport', mode: mode }));
+    transport = mode;   // optimistic; status push will confirm
+    renderTransport();
+}
+
+document.getElementById('tp-ip').onclick = () => setTransport('ip');
+document.getElementById('tp-lora').onclick = () => setTransport('lora');
+
+// ── Voice-text message log ──────────────────────────────────────────────────
+function fmtTime(ts) {
+    const d = new Date(ts * 1000);
+    return ('0' + d.getHours()).slice(-2) + ':' +
+           ('0' + d.getMinutes()).slice(-2) + ':' +
+           ('0' + d.getSeconds()).slice(-2);
+}
+
+function msgRowHtml(m) {
+    const dir = m.dir === 'tx' ? 'SENT' : 'Node ' + m.node;
+    const cls = 'msg-row msg-' + m.dir + (m.sent === false ? ' msg-failed' : '');
+    const trunc = m.truncated ? ' \u00B7 truncated' : '';
+    const air = m.airtime_ms ? ' \u00B7 ' + m.airtime_ms + ' ms air' : '';
+    const div = document.createElement('div');
+    div.className = cls;
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    meta.textContent = fmtTime(m.ts) + ' \u00B7 ' + dir + ' \u00B7 ch ' + m.channel + air + trunc;
+    const text = document.createElement('div');
+    text.className = 'msg-text';
+    text.textContent = m.text;
+    div.appendChild(meta);
+    div.appendChild(text);
+    return div;
+}
+
+function renderMessages() {
+    const el = document.getElementById('msg-log');
+    el.innerHTML = '';
+    if (!messages.length) {
+        el.innerHTML = '<div class="empty-msg">No messages yet</div>';
+        return;
+    }
+    messages.forEach(m => el.appendChild(msgRowHtml(m)));
+    el.scrollTop = el.scrollHeight;
+}
+
+function addMessage(item) {
+    if (!item) return;
+    messages.push(item);
+    if (messages.length > 50) messages.splice(0, messages.length - 50);
+    renderMessages();
+    // Own transcript confirms the send: clear the SENDING… state early.
+    if (item.dir === 'tx') {
+        const btn = document.getElementById('ptt-btn');
+        if (!talking && btn.textContent !== 'TALK') btn.textContent = 'TALK';
+    }
+}
+
+// ── LoRa clip countdown (while keyed in voice-text mode) ────────────────────
+function startClipCountdown() {
+    if (transport !== 'lora' || !loraInfo.max_secs) return;
+    clipDeadline = Date.now() + loraInfo.max_secs * 1000;
+    updateClipCountdown();
+    clipTimer = setInterval(updateClipCountdown, 100);
+}
+
+function updateClipCountdown() {
+    const remain = Math.max(0, (clipDeadline - Date.now()) / 1000);
+    const btn = document.getElementById('ptt-btn');
+    if (remain <= 0) {
+        btn.textContent = 'SENT';   // daemon auto-sent at the clip limit
+        clearInterval(clipTimer); clipTimer = null;
+    } else {
+        btn.textContent = remain.toFixed(1) + 's';
+    }
+}
+
+function stopClipCountdown(sent) {
+    if (clipTimer) { clearInterval(clipTimer); clipTimer = null; }
+    const btn = document.getElementById('ptt-btn');
+    if (sent && transport === 'lora') {
+        btn.textContent = 'SENDING\u2026';   // cleared by the tx text event
+        setTimeout(() => { if (!talking) btn.textContent = 'TALK'; }, 3000);
+    } else {
+        btn.textContent = 'TALK';
+    }
 }
 
 function renderChannels() {
@@ -415,6 +576,7 @@ async function pttDown() {
     captureAccum = [];
     document.getElementById('ptt-btn').classList.add('talking');
     ws.send(JSON.stringify({ type: 'ptt', down: true }));
+    startClipCountdown();
 }
 
 function pttUp() {
@@ -423,6 +585,7 @@ function pttUp() {
     talking = false;
     document.getElementById('ptt-btn').classList.remove('talking');
     if (ws && wsReady) ws.send(JSON.stringify({ type: 'ptt', down: false }));
+    stopClipCountdown(true);
 }
 
 const pttBtn = document.getElementById('ptt-btn');

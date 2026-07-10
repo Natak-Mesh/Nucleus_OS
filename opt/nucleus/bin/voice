@@ -7,6 +7,8 @@
 #   voice status       show service state + daemon status (channel, PTT, talkers)
 #   voice channels     list configured named voice channels
 #   voice channel N    switch to voice channel N (1-254)
+#   voice transport M  switch TX transport: ip (real-time) or lora (voice->text)
+#   voice texts        show recent LoRa voice-text messages (sent + received)
 #   voice log          follow the live daemon log (Ctrl-C to exit)
 
 
@@ -48,11 +50,21 @@ case "$1" in
         fi
         ctl "CHANNEL $2"
         ;;
+    transport)
+        if [ -z "$2" ]; then
+            echo "usage: voice transport {ip|lora}"
+            exit 1
+        fi
+        ctl "TRANSPORT $2"
+        ;;
+    texts)
+        ctl "TEXTS"
+        ;;
     log)
         sudo journalctl -u openvlm-voice -f
         ;;
     *)
-        echo "usage: voice {start|stop|restart|status|channels|channel N|log}"
+        echo "usage: voice {start|stop|restart|status|channels|channel N|transport M|texts|log}"
         exit 1
         ;;
 

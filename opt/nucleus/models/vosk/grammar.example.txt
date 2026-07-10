@@ -1,0 +1,121 @@
+# Example STT grammar phrase list for LoRa voice-text (Vosk).
+#
+# OPT-IN: point VOICE_STT_GRAMMAR in /etc/nucleus/mesh.conf at a file like
+# this one to constrain speech recognition to a fixed radio vocabulary.
+# Recognition of listed words/phrases becomes dramatically more accurate;
+# anything NOT listed is transcribed as nothing (mapped to [unk]) instead of
+# being force-matched to the wrong word — so only enable this if your voice
+# traffic really sticks to the vocabulary below.
+#
+# Format: one lowercase word or phrase per line. Blank lines and '#' comments
+# are ignored. [unk] is appended automatically. Edit freely: add your
+# callsigns, team names, locations, and unit-specific brevity codes.
+#
+# To enable:
+#   1. cp this file (e.g. to /opt/nucleus/models/vosk/grammar.txt) and edit
+#   2. mesh.conf: VOICE_STT_GRAMMAR=/opt/nucleus/models/vosk/grammar.txt
+#   3. sudo systemctl restart openvlm-voice
+
+# --- prowords -------------------------------------------------------------
+roger
+copy
+wilco
+over
+out
+standby
+say again
+send it
+send traffic
+break
+break break
+correction
+disregard
+radio check
+loud and clear
+how copy
+good copy
+negative
+affirmative
+contact
+troops in contact
+casevac
+medevac
+sitrep
+rally point
+on station
+moving
+set
+holding
+en route
+eta
+grid
+be advised
+
+# --- phonetic alphabet ----------------------------------------------------
+alpha
+bravo
+charlie
+delta
+echo
+foxtrot
+golf
+hotel
+india
+juliett
+kilo
+lima
+mike
+november
+oscar
+papa
+quebec
+romeo
+sierra
+tango
+uniform
+victor
+whiskey
+x-ray
+yankee
+zulu
+
+# --- numbers --------------------------------------------------------------
+zero
+one
+two
+three
+four
+five
+six
+seven
+eight
+nine
+niner
+ten
+hundred
+thousand
+
+# --- directions / common terms ---------------------------------------------
+north
+south
+east
+west
+northeast
+northwest
+southeast
+southwest
+left
+right
+front
+rear
+meters
+klicks
+degrees
+friendly
+enemy
+vehicle
+building
+road
+bridge
+river
+hill

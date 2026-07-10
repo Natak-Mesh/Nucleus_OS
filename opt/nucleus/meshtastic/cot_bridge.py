@@ -53,6 +53,15 @@ MCAST_IF = "br-lan"
 ATAK_FORWARDER_PORTNUM = 257
 LORA_MTU = 237
 
+# ── LoRa voice relay (openvlm-voice.py <-> radio) ───────────────
+# The bridge owns the Meshtastic serial port exclusively, so it relays
+# voice-text packets for the voice daemon over localhost UDP. The relay
+# is payload-agnostic; the daemon does STT/TTS on either end.
+# See docs/VoIP/lora_voice/lora_voice_text.md
+MESH_CONF = "/etc/nucleus/mesh.conf"
+VOICE_RELAY_LISTEN = ("127.0.0.1", 5558)   # voice daemon -> bridge -> LoRa TX
+VOICE_RELAY_FORWARD = ("127.0.0.1", 5559)  # LoRa RX -> bridge -> voice daemon
+
 # ── Rate limiting ───────────────────────────────────────────────
 
 TX_MIN_INTERVAL = 30  # seconds — min time between TX for same CoT UID
@@ -66,6 +75,12 @@ mcast_send_sock = None
 iface = None
 my_node_num = None
 local_subnet = None  # br-lan subnet — only bridge multicast from local ATAK devices
+
+# LoRa voice relay state (initialized in main; None = voice relay disabled)
+voice_portnum = None      # int app port for voice packets (VOICE_LORA_PORTNUM)
+voice_hop_limit = 0       # hop limit for voice TX (VOICE_LORA_HOP_LIMIT)
+voice_port_match = set()  # values decoded["portnum"] may take for that port
+voice_fwd_sock = None     # UDP socket for forwarding RX voice to the daemon
 
 # Track last TX time per CoT UID for rate limiting
 _tx_last_sent = defaultdict(float)  # uid → timestamp
@@ -94,7 +109,86 @@ stats = {
     "rx_decompress_ok": 0,
     "rx_inject_ok": 0,
     "rx_errors": 0,
+    "voice_tx": 0,
+    "voice_rx": 0,
+    "voice_errors": 0,
 }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  LoRa VOICE RELAY: openvlm-voice.py <-> Meshtastic radio
+# ═══════════════════════════════════════════════════════════════
+
+def _load_voice_config():
+    """Read VOICE_LORA_* from mesh.conf.
+
+    Returns (portnum, hop_limit), or (None, 0) if LoRa voice is disabled.
+    """
+    cfg = {}
+    try:
+        with open(MESH_CONF) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                cfg[key.strip()] = val.strip().strip('"').strip("'")
+    except OSError:
+        return None, 0
+    if cfg.get("VOICE_LORA_ENABLED", "false").lower() not in ("true", "1", "yes"):
+        return None, 0
+    try:
+        portnum = int(cfg.get("VOICE_LORA_PORTNUM", 256))
+    except ValueError:
+        portnum = 256
+    try:
+        hop = int(cfg.get("VOICE_LORA_HOP_LIMIT", 0))
+    except ValueError:
+        hop = 0
+    return portnum, hop
+
+
+def _voice_port_match_values(portnum):
+    """All values decoded['portnum'] may present for this port number.
+
+    The meshtastic lib renders known enum values as their name string
+    (e.g. 256 -> 'PRIVATE_APP') and unknown ones as the integer.
+    """
+    values = {portnum, str(portnum)}
+    try:
+        from meshtastic.protobuf import portnums_pb2
+        values.add(portnums_pb2.PortNum.Name(portnum))
+    except Exception:
+        pass
+    return values
+
+
+def _voice_relay_loop(sock):
+    """Thread loop: voice daemon hands us an encoded clip → send over LoRa."""
+    logger.info(
+        f"Voice relay: listening on {VOICE_RELAY_LISTEN[0]}:{VOICE_RELAY_LISTEN[1]} "
+        f"→ LoRa portnum {voice_portnum} (hop_limit={voice_hop_limit})"
+    )
+    while True:
+        try:
+            data, _addr = sock.recvfrom(2048)
+        except OSError:
+            break
+        if not data:
+            continue
+        if len(data) > LORA_MTU:
+            stats["voice_errors"] += 1
+            logger.warning(f"Voice TX dropped ({len(data)}B > {LORA_MTU}B MTU)")
+            continue
+        try:
+            iface.sendData(data, portNum=voice_portnum, wantAck=False,
+                           hopLimit=voice_hop_limit)
+            stats["voice_tx"] += 1
+            logger.info(f"VOICE TX → LoRa | {len(data)}B")
+        except Exception as e:
+            stats["voice_errors"] += 1
+            logger.error(f"Voice TX error: {e}")
+    logger.info("Voice relay exiting")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -325,6 +419,23 @@ def onReceive(packet, interface):
     decoded = packet.get("decoded", {})
     portnum = decoded.get("portnum", "")
 
+    # LoRa voice burst → forward to the openvlm-voice daemon (localhost UDP)
+    if voice_portnum is not None and portnum in voice_port_match:
+        payload = decoded.get("payload")
+        if payload:
+            try:
+                num = sender if isinstance(sender, int) else 0
+                voice_fwd_sock.sendto(
+                    struct.pack("<I", num & 0xFFFFFFFF) + payload,
+                    VOICE_RELAY_FORWARD,
+                )
+                stats["voice_rx"] += 1
+                logger.info(f"VOICE RX ← LoRa | {from_id} | {len(payload)}B")
+            except Exception as e:
+                stats["voice_errors"] += 1
+                logger.error(f"Voice RX forward error: {e}")
+        return
+
     if portnum != "ATAK_FORWARDER":
         return
 
@@ -488,6 +599,7 @@ def onDisconnect(interface, topic=pub.AUTO_TOPIC):
 
 def main():
     global compressor, builder, cot_parser, mcast_send_sock, iface, local_subnet
+    global voice_portnum, voice_hop_limit, voice_port_match, voice_fwd_sock
 
     parser = argparse.ArgumentParser(description="ATAK CoT Bridge (Stage 7)")
     parser.add_argument("--port", default=None, help="Serial port (default: auto-detect)")
@@ -562,6 +674,25 @@ def main():
         logger.error(f"Could not start Chat listener: {e}")
         chat_sock = None
 
+    # ── LoRa voice relay for openvlm-voice.py ────────────────
+    voice_portnum, voice_hop_limit = _load_voice_config()
+    voice_relay_sock = None
+    if voice_portnum is not None:
+        voice_port_match = _voice_port_match_values(voice_portnum)
+        voice_fwd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            voice_relay_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            voice_relay_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            voice_relay_sock.bind(VOICE_RELAY_LISTEN)
+            threading.Thread(
+                target=_voice_relay_loop, args=(voice_relay_sock,), daemon=True,
+            ).start()
+        except Exception as e:
+            logger.error(f"Could not start voice relay: {e}")
+            voice_relay_sock = None
+    else:
+        logger.info("LoRa voice relay disabled (VOICE_LORA_ENABLED != true)")
+
     print()
     print("=" * 60)
     print("  ATAK CoT Bridge — Bidirectional LoRa ↔ Multicast")
@@ -581,6 +712,14 @@ def main():
         logger.info(f"RX stats: total={stats['rx_total']} atak={stats['rx_atak']} "
                      f"decompress={stats['rx_decompress_ok']} inject={stats['rx_inject_ok']} "
                      f"errors={stats['rx_errors']}")
+        if voice_portnum is not None:
+            logger.info(f"Voice stats: tx={stats['voice_tx']} rx={stats['voice_rx']} "
+                         f"errors={stats['voice_errors']}")
+        if voice_relay_sock:
+            try:
+                voice_relay_sock.close()
+            except Exception:
+                pass
         try:
             iface.close()
         except Exception:
