@@ -436,7 +436,11 @@ def _wait_for_radio(max_wait=RADIO_REBOOT_WAIT_SECS):
         if _radio_detected():
             break
         time.sleep(1)
-    time.sleep(5)  # firmware settle time after the port appears
+    # Firmware settle time after the port appears. Must be long enough to
+    # cover the radio's DELAYED self-reboot after a config commit (owner
+    # changes reboot several seconds after the CLI returns) — otherwise
+    # the bridge restarts, connects, and then loses the radio mid-reboot.
+    time.sleep(15)
 
 
 @contextmanager

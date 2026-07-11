@@ -126,6 +126,9 @@ RX_UID_EXPIRY = 60  # seconds
 # Track last-seen time per node for web dashboard (updated on every RX)
 _node_last_seen = {}  # node_num → timestamp
 
+# Set when the radio serial connection drops; the main loop reconnects
+_radio_disconnected = threading.Event()
+
 # ── Stats ────────────────────────────────────────────────────────
 
 stats = {
@@ -787,6 +790,28 @@ def onConnection(interface, topic=pub.AUTO_TOPIC):
 def onDisconnect(interface, topic=pub.AUTO_TOPIC):
     """Called when serial connection is lost."""
     logger.warning("Radio connection lost!")
+    _radio_disconnected.set()
+
+
+def _reconnect_radio(dev_path):
+    """Re-open the serial interface after the connection drops (e.g. the
+    radio reboots itself a few seconds after a config change). Retries
+    every 5s until the radio comes back."""
+    global iface
+    try:
+        iface.close()
+    except Exception:
+        pass
+    import meshtastic.serial_interface
+    while True:
+        time.sleep(5)
+        try:
+            iface = meshtastic.serial_interface.SerialInterface(devPath=dev_path)
+            _radio_disconnected.clear()
+            logger.info(f"Radio reconnected on {iface.devPath}")
+            return
+        except Exception as e:
+            logger.warning(f"Radio reconnect failed, retrying in 5s: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -975,6 +1000,10 @@ def main():
             time.sleep(10)
             try:
                 now = time.time()
+
+                # Reconnect if the radio connection dropped
+                if _radio_disconnected.is_set():
+                    _reconnect_radio(args.port)
 
                 # Dump node database for web dashboard
                 if now - last_node_dump >= NODE_DUMP_INTERVAL:
