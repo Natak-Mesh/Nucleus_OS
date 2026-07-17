@@ -80,6 +80,14 @@ pip3 install --break-system-packages --upgrade "git+https://github.com/meshtasti
 sudo pip3 install --break-system-packages vosk "piper-tts>=1.4" \
     webrtc-noise-gain
 
+# LoRa Voice Streaming (openvlm-voice.py "stream" transport) — live Codec2
+# voice over the Meshtastic radio (VOICE_LORA_STREAM_ENABLED in mesh.conf).
+# pycodec2: python bindings for the Codec2 speech codec (3200 bps mode);
+#   needs the codec2 C library + headers (libcodec2-dev) to build.
+# numpy: sample-rate conversion in the voice daemon's stream path.
+sudo apt install -y libcodec2-dev
+sudo pip3 install --break-system-packages pycodec2 numpy
+
 # Pin protobuf to major version 6 — MUST run AFTER meshtastic/takproto/TAKPacket-SDK
 # installs, since their `pip install --upgrade` pulls whatever protobuf is newest.
 #

@@ -19,7 +19,32 @@
         .status-dot.inactive { background: #666; }
         .status-dot.error { background: #ff4444; }
         .mode-label { font-size: 18px; font-weight: bold; }
+        .cfg-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+        .cfg-row label { width: 140px; color: #a0a0a0; font-size: 14px; flex-shrink: 0; }
+        .cfg-row input[type="text"], .cfg-row input[type="number"], .cfg-row select {
+            flex: 1; background: #1a1a1a; color: #e0e0e0; border: 1px solid #444;
+            border-radius: 4px; padding: 8px 10px; font-size: 14px; min-width: 0;
+        }
+        .cfg-row input:disabled, .cfg-row select:disabled { opacity: 0.5; }
+        .cfg-static { color: #e0e0e0; font-size: 14px; }
+        .btn {
+            background: #1a1a1a; color: #00ff88; border: 1px solid #00ff88;
+            border-radius: 4px; padding: 10px 18px; font-size: 14px; cursor: pointer;
+        }
+        .btn:hover { background: #003322; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn.secondary { color: #a0a0a0; border-color: #666; }
+        .btn.secondary:hover { background: #333; }
+        .op-status { margin-top: 12px; font-size: 14px; color: #ffaa00; display: none; }
+        .qr-box { background: #fff; padding: 12px; border-radius: 8px; display: inline-block; }
+        .qr-box img { display: block; width: 260px; height: 260px; }
+        .url-box {
+            background: #1a1a1a; border: 1px solid #333; border-radius: 4px;
+            padding: 10px; font-family: monospace; font-size: 12px; color: #c0c0c0;
+            word-break: break-all; margin: 10px 0;
+        }
     </style>
+
 </head>
 <body>
     <header>
@@ -79,8 +104,114 @@
                 <pre id="log-panel" style="background: #1a1a1a; color: #c0c0c0; padding: 12px; border-radius: 4px; margin-top: 10px; max-height: 400px; overflow-y: auto; font-size: 12px; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word; border: 1px solid #333;">Loading logs...</pre>
             </div>
 
+            <!-- Radio Config Panel -->
+            <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h2>Radio Config</h2>
+
+                <div id="cfg-empty" style="color: #666; margin-bottom: 10px;">
+                    No config loaded yet — press Read Config.
+                </div>
+
+                <div id="cfg-form" style="display: none;">
+                    <div class="cfg-row">
+                        <label>Long Name</label>
+                        <input type="text" id="cfg-owner" maxlength="39">
+                    </div>
+                    <div class="cfg-row">
+                        <label>Short Name</label>
+                        <input type="text" id="cfg-owner-short" maxlength="4">
+                    </div>
+                    <div class="cfg-row">
+                        <label>Modem Preset</label>
+                        <select id="cfg-preset">
+                            <option>SHORT_TURBO</option>
+                            <option>SHORT_FAST</option>
+                            <option>SHORT_SLOW</option>
+                            <option>MEDIUM_FAST</option>
+                            <option>MEDIUM_SLOW</option>
+                            <option>LONG_FAST</option>
+                            <option>LONG_MODERATE</option>
+                            <option>LONG_SLOW</option>
+                        </select>
+                    </div>
+                    <div class="cfg-row">
+                        <label>Hop Limit</label>
+                        <input type="number" id="cfg-hop" min="1" max="7">
+                    </div>
+                    <div class="cfg-row">
+                        <label>TX Power (dBm)</label>
+                        <input type="number" id="cfg-txpower" min="0" max="30">
+                    </div>
+                    <div class="cfg-row">
+                        <label>Channel Name</label>
+                        <input type="text" id="cfg-channel-name" maxlength="11">
+                    </div>
+                    <div class="cfg-row">
+                        <label>Encryption Key</label>
+                        <span class="cfg-static" id="cfg-psk-status">—</span>
+                        <label style="width: auto; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="checkbox" id="cfg-psk-random"> Generate new random key
+                        </label>
+                    </div>
+                    <div class="cfg-row">
+                        <label>Region</label>
+                        <span class="cfg-static" id="cfg-region">—</span>
+                        <span style="color: #666; font-size: 12px;">(read-only)</span>
+                    </div>
+                    <div class="cfg-row">
+                        <label>Role</label>
+                        <span class="cfg-static" id="cfg-role">—</span>
+                        <span style="color: #666; font-size: 12px;">(read-only)</span>
+                    </div>
+                    <div style="color: #666; font-size: 12px; margin: 8px 0;" id="cfg-read-at"></div>
+                </div>
+
+                <div style="display: flex; gap: 10px; margin-top: 15px;">
+                    <button class="btn secondary" id="btn-read" onclick="readConfig()">Read Config</button>
+                    <button class="btn" id="btn-apply" onclick="applyConfig()" disabled>Apply Changes</button>
+                </div>
+                <div class="op-status" id="cfg-op-status"></div>
+            </div>
+
+            <!-- Share Config Panel -->
+            <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h2>Share Config</h2>
+                <p style="color: #a0a0a0; margin: 5px 0 15px 0;">
+                    The channel URL carries the channel name, encryption key, and LoRa
+                    settings. Scan the QR with the Meshtastic phone app, or copy the URL
+                    and paste it into another node's "Apply Channel URL" box below.
+                </p>
+
+                <div id="share-empty" style="color: #666;">
+                    No channel URL — read config first.
+                </div>
+
+                <div id="share-content" style="display: none;">
+                    <div style="text-align: center; margin: 15px 0;">
+                        <div class="qr-box">
+                            <img id="qr-img" src="" alt="Channel QR code">
+                        </div>
+                    </div>
+                    <div class="url-box" id="share-url"></div>
+                    <button class="btn secondary" onclick="copyUrl()">Copy URL</button>
+                </div>
+
+                <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #444;">
+                    <h3 style="color: #e0e0e0; font-size: 16px;">Apply Channel URL</h3>
+                    <p style="color: #a0a0a0; font-size: 13px; margin: 5px 0 10px 0;">
+                        Paste a channel URL from another node to join its channel.
+                    </p>
+                    <div class="cfg-row">
+                        <input type="text" id="apply-url-input" placeholder="https://meshtastic.org/e/#...">
+                        <button class="btn" id="btn-apply-url" onclick="applyChannelUrl()">Apply</button>
+                    </div>
+                    <div class="op-status" id="share-op-status"></div>
+                </div>
+            </div>
+
             <!-- Feedback Message -->
             <div id="message" style="margin-top: 20px; padding: 15px; border-radius: 4px; display: none; background: #2d2d2d;"></div>
+
         </div>
     </main>
 
@@ -90,11 +221,13 @@
         window.addEventListener('DOMContentLoaded', function() {
             loadStatus();
             loadLogs();
+            loadCachedConfig();
             refreshInterval = setInterval(function() {
                 loadStatus();
                 loadLogs();
             }, 5000);
         });
+
 
         function loadLogs() {
             fetch('/api/meshtastic/bridge/logs')
@@ -259,6 +392,275 @@
             }
             setTimeout(function() { msg.style.display = 'none'; }, 5000);
         }
+
+        // ═══════════════════════════════════════════════════════
+        //  Radio Configurator
+        // ═══════════════════════════════════════════════════════
+
+        // Snapshot of the radio's last-read config, used to compute which
+        // fields actually changed when Apply is pressed.
+        let radioConfig = null;
+
+        function loadCachedConfig() {
+            fetch('/api/meshtastic/config')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.config) {
+                        populateConfig(data.config);
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function populateConfig(cfg) {
+            radioConfig = cfg;
+            document.getElementById('cfg-empty').style.display = 'none';
+            document.getElementById('cfg-form').style.display = 'block';
+
+            document.getElementById('cfg-owner').value = cfg.owner || '';
+            document.getElementById('cfg-owner-short').value = cfg.owner_short || '';
+            document.getElementById('cfg-preset').value = cfg.modem_preset || 'LONG_FAST';
+            document.getElementById('cfg-hop').value = cfg.hop_limit != null ? cfg.hop_limit : 3;
+            document.getElementById('cfg-txpower').value = cfg.tx_power != null ? cfg.tx_power : 30;
+            document.getElementById('cfg-channel-name').value = cfg.channel_name || '';
+            document.getElementById('cfg-psk-random').checked = false;
+            document.getElementById('cfg-region').textContent = cfg.region || '—';
+            document.getElementById('cfg-role').textContent = cfg.role || '—';
+
+            const ch0 = (cfg.channels && cfg.channels[0]) || null;
+            document.getElementById('cfg-psk-status').textContent =
+                ch0 ? (ch0.has_psk ? 'Set (encrypted)' : 'None (unencrypted)') : '—';
+
+            if (cfg.read_at) {
+                const age = Math.floor(Date.now() / 1000) - cfg.read_at;
+                document.getElementById('cfg-read-at').textContent =
+                    'Last read from radio: ' + formatSecs(age) + ' ago';
+            }
+
+            document.getElementById('btn-apply').disabled = false;
+
+            // Share panel
+            if (cfg.channel_url) {
+                document.getElementById('share-empty').style.display = 'none';
+                document.getElementById('share-content').style.display = 'block';
+                document.getElementById('share-url').textContent = cfg.channel_url;
+                document.getElementById('qr-img').src =
+                    '/api/meshtastic/config/qr?t=' + Date.now();
+            }
+        }
+
+        function collectChanges() {
+            const changes = {};
+            if (!radioConfig) return changes;
+
+            const owner = document.getElementById('cfg-owner').value.trim();
+            if (owner && owner !== radioConfig.owner) changes.owner = owner;
+
+            const ownerShort = document.getElementById('cfg-owner-short').value.trim();
+            if (ownerShort && ownerShort !== radioConfig.owner_short) changes.owner_short = ownerShort;
+
+            const preset = document.getElementById('cfg-preset').value;
+            if (preset !== radioConfig.modem_preset) changes.modem_preset = preset;
+
+            const hop = parseInt(document.getElementById('cfg-hop').value, 10);
+            if (!isNaN(hop) && hop !== radioConfig.hop_limit) changes.hop_limit = hop;
+
+            const txp = parseInt(document.getElementById('cfg-txpower').value, 10);
+            if (!isNaN(txp) && txp !== radioConfig.tx_power) changes.tx_power = txp;
+
+            const chName = document.getElementById('cfg-channel-name').value.trim();
+            if (chName && chName !== radioConfig.channel_name) changes.channel_name = chName;
+
+            if (document.getElementById('cfg-psk-random').checked) changes.psk_random = true;
+
+            return changes;
+        }
+
+        function setConfigBusy(busy, statusText) {
+            document.getElementById('btn-read').disabled = busy;
+            document.getElementById('btn-apply').disabled = busy || !radioConfig;
+            document.getElementById('btn-apply-url').disabled = busy;
+            const st = document.getElementById('cfg-op-status');
+            if (statusText) {
+                st.textContent = statusText;
+                st.style.display = 'block';
+            } else {
+                st.style.display = 'none';
+            }
+        }
+
+        // Config operations run in the background on the server (they take
+        // 30-120s — too long for one HTTP request). After starting one, we
+        // poll /config/op-status every 3s until it finishes.
+        function pollOpStatus(onDone, onError) {
+            const timer = setInterval(function() {
+                fetch('/api/meshtastic/config/op-status')
+                    .then(r => r.json())
+                    .then(st => {
+                        if (st.status === 'done') {
+                            clearInterval(timer);
+                            onDone(st.config);
+                        } else if (st.status === 'error') {
+                            clearInterval(timer);
+                            onError(st.error || 'Operation failed');
+                        }
+                        // 'running' -> keep polling
+                    })
+                    .catch(() => { /* transient network error — keep polling */ });
+            }, 3000);
+        }
+
+        function readConfig() {
+            setConfigBusy(true, 'Pausing bridge and reading config from radio... (~15s)');
+            fetch('/api/meshtastic/config/read', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        setConfigBusy(false);
+                        showMessage('Error: ' + (data.error || 'Read failed'), 'error');
+                        return;
+                    }
+                    pollOpStatus(
+                        function(cfg) {
+                            setConfigBusy(false);
+                            populateConfig(cfg);
+                            showMessage('Config read from radio', 'success');
+                        },
+                        function(err) {
+                            setConfigBusy(false);
+                            showMessage('Error: ' + err, 'error');
+                        }
+                    );
+                })
+                .catch(err => {
+                    setConfigBusy(false);
+                    showMessage('Error: ' + err.message, 'error');
+                });
+        }
+
+        function applyConfig() {
+            const changes = collectChanges();
+            if (Object.keys(changes).length === 0) {
+                showMessage('No changes to apply', 'error');
+                return;
+            }
+            if (changes.psk_random &&
+                !confirm('Generate a NEW encryption key? Other radios will no longer ' +
+                         'be able to communicate until they receive the new channel ' +
+                         'URL (QR / paste).')) {
+                return;
+            }
+
+            setConfigBusy(true, 'Applying config — bridge paused, radio will reboot... (~60-120s)');
+            fetch('/api/meshtastic/config/apply', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ changes: changes })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        setConfigBusy(false);
+                        showMessage('Error: ' + (data.error || 'Apply failed'), 'error');
+                        return;
+                    }
+                    pollOpStatus(
+                        function(cfg) {
+                            setConfigBusy(false);
+                            populateConfig(cfg);
+                            showMessage('Config applied — radio rebooted', 'success');
+                        },
+                        function(err) {
+                            setConfigBusy(false);
+                            showMessage('Error: ' + err, 'error');
+                        }
+                    );
+                })
+                .catch(err => {
+                    setConfigBusy(false);
+                    showMessage('Error: ' + err.message, 'error');
+                });
+        }
+
+        function applyChannelUrl() {
+            const url = document.getElementById('apply-url-input').value.trim();
+            if (!url) {
+                showMessage('Paste a channel URL first', 'error');
+                return;
+            }
+            if (!confirm('Apply this channel URL? It replaces this radio\'s channel ' +
+                         'settings (name, encryption key, LoRa config).')) {
+                return;
+            }
+
+            const st = document.getElementById('share-op-status');
+            st.textContent = 'Applying channel URL — bridge paused, radio will reboot... (~60s)';
+            st.style.display = 'block';
+            setConfigBusy(true);
+
+            fetch('/api/meshtastic/config/channel-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        st.style.display = 'none';
+                        setConfigBusy(false);
+                        showMessage('Error: ' + (data.error || 'Apply failed'), 'error');
+                        return;
+                    }
+                    pollOpStatus(
+                        function(cfg) {
+                            st.style.display = 'none';
+                            setConfigBusy(false);
+                            populateConfig(cfg);
+                            document.getElementById('apply-url-input').value = '';
+                            showMessage('Channel URL applied — radio rebooted', 'success');
+                        },
+                        function(err) {
+                            st.style.display = 'none';
+                            setConfigBusy(false);
+                            showMessage('Error: ' + err, 'error');
+                        }
+                    );
+                })
+                .catch(err => {
+                    st.style.display = 'none';
+                    setConfigBusy(false);
+                    showMessage('Error: ' + err.message, 'error');
+                });
+        }
+
+        function copyUrl() {
+            const url = document.getElementById('share-url').textContent;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url)
+                    .then(() => showMessage('Channel URL copied to clipboard', 'success'))
+                    .catch(() => fallbackCopy(url));
+            } else {
+                fallbackCopy(url);
+            }
+        }
+
+        function fallbackCopy(text) {
+            // navigator.clipboard requires HTTPS; the web UI is plain HTTP
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+                showMessage('Channel URL copied to clipboard', 'success');
+            } catch (e) {
+                showMessage('Copy failed — select the URL text manually', 'error');
+            }
+            document.body.removeChild(ta);
+        }
     </script>
+
 </body>
 </html>

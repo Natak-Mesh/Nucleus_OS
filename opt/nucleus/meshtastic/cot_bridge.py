@@ -7,6 +7,11 @@ Bidirectional bridge between ATAK multicast CoT and Meshtastic LoRa.
 TX: ATAK multicast (SA + Chat) → compress TAKPacketV2 → LoRa (portnum 257)
 RX: LoRa (portnum 257) → decompress TAKPacketV2 → ATAK multicast
 
+Also relays two voice transports for openvlm-voice.py over localhost UDP
+(the bridge owns the Meshtastic serial port exclusively):
+  - voice-text (portnum 260): one text packet per utterance (STT/TTS)
+  - voice stream (portnum 256): live Codec2 3200 bps audio while PTT held
+
 Standalone daemon — owns the serial port exclusively.
 
 Usage:
@@ -62,6 +67,27 @@ MESH_CONF = "/etc/nucleus/mesh.conf"
 VOICE_RELAY_LISTEN = ("127.0.0.1", 5558)   # voice daemon -> bridge -> LoRa TX
 VOICE_RELAY_FORWARD = ("127.0.0.1", 5559)  # LoRa RX -> bridge -> voice daemon
 
+# ── LoRa voice STREAM relay (live Codec2, VLoRa-compatible) ─────
+# Live Codec2 3200 bps voice streamed over LoRa while PTT is held (the
+# voice-text relay above sends one text packet per utterance instead).
+# Wire format on LoRa portnum VOICE_LORA_STREAM_PORTNUM (default 256) is
+# compatible with the VoiceOverLoRa (VLoRa) project's ATAK Vx bridges:
+#   header: payload_size(B) seq(>H); seq 0 = stream INIT, 65535 = TERM
+#   data:   up to 72 B of raw Codec2 3200 frames (9 x 8 B = 180 ms audio)
+# TX in:  raw Codec2 bytes on UDP 127.0.0.1:4245 (openvlm-voice.py; the
+#         VLoRa vlora_tx_bridge.py for ATAK Vx uses the same socket)
+# RX out: header-stripped Codec2 bytes to UDP 127.0.0.1:4244
+#         (openvlm-voice.py; the VLoRa vlora_rx_bridge.py also binds here)
+# See docs/VoIP/lora_voice/lora_voice_stream.md
+STREAM_RAW_LISTEN = ("127.0.0.1", 4245)   # raw Codec2 in -> LoRa TX
+STREAM_FORWARD = ("127.0.0.1", 4244)      # LoRa RX -> Codec2 out
+STREAM_MAX_PAYLOAD = 72                   # 9 x 8-byte Codec2 3200 frames
+STREAM_HDR = struct.Struct(">BH")         # payload_size(B) seq(H)
+STREAM_SEQ_INIT = 0                       # reserved seq: stream start
+STREAM_SEQ_TERM = 65535                   # reserved seq: stream end
+STREAM_CODEC2_ID = 2                      # codec id carried in INIT
+STREAM_SILENCE_TIMEOUT = 0.5              # s of no input = PTT released
+
 # ── Rate limiting ───────────────────────────────────────────────
 
 TX_MIN_INTERVAL = 30  # seconds — min time between TX for same CoT UID
@@ -82,6 +108,12 @@ voice_hop_limit = 0       # hop limit for voice TX (VOICE_LORA_HOP_LIMIT)
 voice_port_match = set()  # values decoded["portnum"] may take for that port
 voice_fwd_sock = None     # UDP socket for forwarding RX voice to the daemon
 
+# LoRa voice STREAM relay state (None = streaming voice disabled)
+stream_portnum = None     # int app port (VOICE_LORA_STREAM_PORTNUM)
+stream_hop_limit = 0      # hop limit for stream TX (VOICE_LORA_HOP_LIMIT)
+stream_port_match = set() # values decoded["portnum"] may take for that port
+stream_fwd_sock = None    # UDP socket for forwarding RX stream audio
+
 # Track last TX time per CoT UID for rate limiting
 _tx_last_sent = defaultdict(float)  # uid → timestamp
 _tx_lock = threading.Lock()
@@ -93,6 +125,9 @@ RX_UID_EXPIRY = 60  # seconds
 
 # Track last-seen time per node for web dashboard (updated on every RX)
 _node_last_seen = {}  # node_num → timestamp
+
+# Set when the radio serial connection drops; the main loop reconnects
+_radio_disconnected = threading.Event()
 
 # ── Stats ────────────────────────────────────────────────────────
 
@@ -112,6 +147,9 @@ stats = {
     "voice_tx": 0,
     "voice_rx": 0,
     "voice_errors": 0,
+    "stream_tx": 0,
+    "stream_rx": 0,
+    "stream_errors": 0,
 }
 
 
@@ -119,11 +157,8 @@ stats = {
 #  LoRa VOICE RELAY: openvlm-voice.py <-> Meshtastic radio
 # ═══════════════════════════════════════════════════════════════
 
-def _load_voice_config():
-    """Read VOICE_LORA_* from mesh.conf.
-
-    Returns (portnum, hop_limit), or (None, 0) if LoRa voice is disabled.
-    """
+def _read_mesh_conf():
+    """Parse KEY=value pairs from mesh.conf (shell-style, quotes stripped)."""
     cfg = {}
     try:
         with open(MESH_CONF) as f:
@@ -134,11 +169,42 @@ def _load_voice_config():
                 key, _, val = line.partition("=")
                 cfg[key.strip()] = val.strip().strip('"').strip("'")
     except OSError:
-        return None, 0
+        pass
+    return cfg
+
+
+def _load_voice_config():
+    """Read VOICE_LORA_* from mesh.conf.
+
+    Returns (portnum, hop_limit), or (None, 0) if LoRa voice is disabled.
+    """
+    cfg = _read_mesh_conf()
     if cfg.get("VOICE_LORA_ENABLED", "false").lower() not in ("true", "1", "yes"):
         return None, 0
     try:
         portnum = int(cfg.get("VOICE_LORA_PORTNUM", 256))
+    except ValueError:
+        portnum = 256
+    try:
+        hop = int(cfg.get("VOICE_LORA_HOP_LIMIT", 0))
+    except ValueError:
+        hop = 0
+    return portnum, hop
+
+
+def _load_stream_config():
+    """Read VOICE_LORA_STREAM_* from mesh.conf.
+
+    Returns (portnum, hop_limit), or (None, 0) if the streaming voice
+    transport is disabled. The hop limit is shared with the voice-text
+    transport (VOICE_LORA_HOP_LIMIT) — both want minimal rebroadcast.
+    """
+    cfg = _read_mesh_conf()
+    if cfg.get("VOICE_LORA_STREAM_ENABLED",
+               "false").lower() not in ("true", "1", "yes"):
+        return None, 0
+    try:
+        portnum = int(cfg.get("VOICE_LORA_STREAM_PORTNUM", 256))
     except ValueError:
         portnum = 256
     try:
@@ -189,6 +255,134 @@ def _voice_relay_loop(sock):
             stats["voice_errors"] += 1
             logger.error(f"Voice TX error: {e}")
     logger.info("Voice relay exiting")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  LoRa VOICE STREAM RELAY: live Codec2 <-> Meshtastic radio
+#  (VLoRa-compatible framing — see the STREAM_* constants above)
+# ═══════════════════════════════════════════════════════════════
+
+def _stream_build_init():
+    """Stream INIT packet (seq 0): announces codec (Codec2) to receivers."""
+    payload = struct.pack(">HB", 0, STREAM_CODEC2_ID)
+    return STREAM_HDR.pack(len(payload), STREAM_SEQ_INIT) + payload
+
+
+def _stream_build_data(seq, audio):
+    """Stream data packet: 3-byte header + raw Codec2 frames."""
+    return STREAM_HDR.pack(len(audio), seq) + audio
+
+
+def _stream_build_term():
+    """Stream TERM packet (seq 65535): PTT released, stream over."""
+    return STREAM_HDR.pack(0, STREAM_SEQ_TERM)
+
+
+def _stream_send(pkt, label):
+    """Send one voice-stream packet over LoRa."""
+    try:
+        iface.sendData(pkt, portNum=stream_portnum, wantAck=False,
+                       hopLimit=stream_hop_limit)
+        stats["stream_tx"] += 1
+        logger.debug(f"STREAM TX → LoRa | {label} | {len(pkt)}B")
+    except Exception as e:
+        stats["stream_errors"] += 1
+        logger.error(f"Stream TX error ({label}): {e}")
+
+
+def _stream_raw_loop(sock):
+    """Thread loop: raw Codec2 bytes from the voice daemon (UDP 4245) are
+    packetized (INIT / seq'd data / TERM) and sent over LoRa LIVE as they
+    arrive — this is a streaming transport, not a burst-at-release one.
+    First packet after idle = PTT down; STREAM_SILENCE_TIMEOUT with no
+    input = PTT up (flush partial packet + TERM)."""
+    logger.info(
+        f"Voice stream: listening on {STREAM_RAW_LISTEN[0]}:{STREAM_RAW_LISTEN[1]} "
+        f"→ LoRa portnum {stream_portnum} (hop_limit={stream_hop_limit})"
+    )
+    sock.settimeout(0.2)
+    buf = bytearray()
+    seq = 1
+    active = False
+    last_rx = 0.0
+    pkts = 0
+    sent = 0
+    while True:
+        try:
+            data, _addr = sock.recvfrom(2048)
+        except socket.timeout:
+            if active and time.time() - last_rx > STREAM_SILENCE_TIMEOUT:
+                if buf:
+                    _stream_send(_stream_build_data(seq, bytes(buf)),
+                                 f"DATA seq={seq} [flush]")
+                    pkts += 1
+                    sent += len(buf)
+                    buf.clear()
+                _stream_send(_stream_build_term(), "TERM")
+                active = False
+                logger.info(
+                    f"STREAM TX | key-up | packets={pkts} bytes={sent}B")
+            continue
+        except OSError:
+            break
+        if not data:
+            continue
+        if not active:
+            active = True
+            seq = 1
+            pkts = 0
+            sent = 0
+            buf.clear()
+            _stream_send(_stream_build_init(), "INIT")
+            logger.info("STREAM TX | key-down")
+        last_rx = time.time()
+        buf.extend(data)
+        while len(buf) >= STREAM_MAX_PAYLOAD:
+            chunk = bytes(buf[:STREAM_MAX_PAYLOAD])
+            del buf[:STREAM_MAX_PAYLOAD]
+            _stream_send(_stream_build_data(seq, chunk), f"DATA seq={seq}")
+            seq = (seq % (STREAM_SEQ_TERM - 1)) + 1
+            pkts += 1
+            sent += len(chunk)
+    logger.info("Voice stream relay exiting")
+
+
+def _handle_stream_rx(packet, decoded):
+    """One received LoRa voice-stream packet: strip the 3-byte header and
+    forward the raw Codec2 bytes to the voice daemon (UDP 4244) as they
+    arrive, so playback starts while the sender is still talking. The
+    sender's 4-byte meshtastic node num is prepended (like the voice-text
+    relay) so the daemon can attribute the stream to a node. INIT and
+    TERM markers carry no audio and are only logged."""
+    payload = decoded.get("payload")
+    if not payload or len(payload) < STREAM_HDR.size:
+        return
+    from_id = packet.get("fromId", "?")
+    rx_snr = packet.get("rxSnr", "?")
+    try:
+        size, seq = STREAM_HDR.unpack(payload[:STREAM_HDR.size])
+        audio = payload[STREAM_HDR.size:]
+        if seq == STREAM_SEQ_INIT:
+            logger.info(f"STREAM RX ← LoRa | {from_id} | key-down | SNR={rx_snr}")
+            return
+        if seq == STREAM_SEQ_TERM:
+            logger.info(f"STREAM RX ← LoRa | {from_id} | key-up | SNR={rx_snr}")
+            return
+        if len(audio) < size:
+            stats["stream_errors"] += 1
+            logger.warning(f"Stream RX size mismatch "
+                           f"(hdr={size}B got={len(audio)}B seq={seq})")
+            return
+        sender = packet.get("from")
+        num = sender if isinstance(sender, int) else 0
+        stream_fwd_sock.sendto(
+            struct.pack("<I", num & 0xFFFFFFFF) + audio, STREAM_FORWARD)
+        stats["stream_rx"] += 1
+        logger.debug(f"STREAM RX ← LoRa | {from_id} | seq={seq} | "
+                     f"{len(audio)}B | SNR={rx_snr}")
+    except Exception as e:
+        stats["stream_errors"] += 1
+        logger.error(f"Stream RX error: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -419,7 +613,12 @@ def onReceive(packet, interface):
     decoded = packet.get("decoded", {})
     portnum = decoded.get("portnum", "")
 
-    # LoRa voice burst → forward to the openvlm-voice daemon (localhost UDP)
+    # LoRa voice stream chunk → forward to the voice daemon (localhost UDP)
+    if stream_portnum is not None and portnum in stream_port_match:
+        _handle_stream_rx(packet, decoded)
+        return
+
+    # LoRa voice text → forward to the openvlm-voice daemon (localhost UDP)
     if voice_portnum is not None and portnum in voice_port_match:
         payload = decoded.get("payload")
         if payload:
@@ -591,6 +790,28 @@ def onConnection(interface, topic=pub.AUTO_TOPIC):
 def onDisconnect(interface, topic=pub.AUTO_TOPIC):
     """Called when serial connection is lost."""
     logger.warning("Radio connection lost!")
+    _radio_disconnected.set()
+
+
+def _reconnect_radio(dev_path):
+    """Re-open the serial interface after the connection drops (e.g. the
+    radio reboots itself a few seconds after a config change). Retries
+    every 5s until the radio comes back."""
+    global iface
+    try:
+        iface.close()
+    except Exception:
+        pass
+    import meshtastic.serial_interface
+    while True:
+        time.sleep(5)
+        try:
+            iface = meshtastic.serial_interface.SerialInterface(devPath=dev_path)
+            _radio_disconnected.clear()
+            logger.info(f"Radio reconnected on {iface.devPath}")
+            return
+        except Exception as e:
+            logger.warning(f"Radio reconnect failed, retrying in 5s: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -600,6 +821,7 @@ def onDisconnect(interface, topic=pub.AUTO_TOPIC):
 def main():
     global compressor, builder, cot_parser, mcast_send_sock, iface, local_subnet
     global voice_portnum, voice_hop_limit, voice_port_match, voice_fwd_sock
+    global stream_portnum, stream_hop_limit, stream_port_match, stream_fwd_sock
 
     parser = argparse.ArgumentParser(description="ATAK CoT Bridge (Stage 7)")
     parser.add_argument("--port", default=None, help="Serial port (default: auto-detect)")
@@ -693,6 +915,26 @@ def main():
     else:
         logger.info("LoRa voice relay disabled (VOICE_LORA_ENABLED != true)")
 
+    # ── LoRa voice stream relay (live Codec2) ────────────────
+    stream_portnum, stream_hop_limit = _load_stream_config()
+    stream_raw_sock = None
+    if stream_portnum is not None:
+        stream_port_match = _voice_port_match_values(stream_portnum)
+        stream_fwd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            stream_raw_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            stream_raw_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            stream_raw_sock.bind(STREAM_RAW_LISTEN)
+            threading.Thread(
+                target=_stream_raw_loop, args=(stream_raw_sock,), daemon=True,
+            ).start()
+        except Exception as e:
+            logger.error(f"Could not start voice stream relay: {e}")
+            stream_raw_sock = None
+    else:
+        logger.info("LoRa voice stream relay disabled "
+                    "(VOICE_LORA_STREAM_ENABLED != true)")
+
     print()
     print("=" * 60)
     print("  ATAK CoT Bridge — Bidirectional LoRa ↔ Multicast")
@@ -715,9 +957,17 @@ def main():
         if voice_portnum is not None:
             logger.info(f"Voice stats: tx={stats['voice_tx']} rx={stats['voice_rx']} "
                          f"errors={stats['voice_errors']}")
+        if stream_portnum is not None:
+            logger.info(f"Stream stats: tx={stats['stream_tx']} "
+                         f"rx={stats['stream_rx']} errors={stats['stream_errors']}")
         if voice_relay_sock:
             try:
                 voice_relay_sock.close()
+            except Exception:
+                pass
+        if stream_raw_sock:
+            try:
+                stream_raw_sock.close()
             except Exception:
                 pass
         try:
@@ -750,6 +1000,10 @@ def main():
             time.sleep(10)
             try:
                 now = time.time()
+
+                # Reconnect if the radio connection dropped
+                if _radio_disconnected.is_set():
+                    _reconnect_radio(args.port)
 
                 # Dump node database for web dashboard
                 if now - last_node_dump >= NODE_DUMP_INTERVAL:
