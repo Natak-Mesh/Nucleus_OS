@@ -114,6 +114,7 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/config_generation.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/mesh-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/eth0-mode.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/opendht-start.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/meshtasticd-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
@@ -127,6 +128,7 @@ sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
 sudo chmod +x /opt/nucleus/bin/opendht-start.sh
+sudo chmod +x /opt/nucleus/bin/meshtasticd-start.sh
 sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
 sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 sudo chmod +x /opt/nucleus/bin/iw-wifi-scan.sh

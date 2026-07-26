@@ -8,11 +8,16 @@ TX: ATAK multicast (SA + Chat) → compress TAKPacketV2 → LoRa (portnum 257)
 RX: LoRa (portnum 257) → decompress TAKPacketV2 → ATAK multicast
 
 Also relays two voice transports for openvlm-voice.py over localhost UDP
-(the bridge owns the Meshtastic serial port exclusively):
+(the bridge owns the Meshtastic radio exclusively):
   - voice-text (portnum 260): one text packet per utterance (STT/TTS)
   - voice stream (portnum 256): live Codec2 3200 bps audio while PTT held
 
-Standalone daemon — owns the serial port exclusively.
+Supports two radio connection modes, selected by MESHTASTICD_ENABLED in
+/etc/nucleus/mesh.conf:
+  - false/unset: USB serial (SerialInterface, /dev/ttyACM0)
+  - true:        TCP via meshtasticd (TCPInterface, localhost:4403)
+
+Standalone daemon — owns the radio connection exclusively.
 
 Usage:
     python3 cot_bridge.py [--port /dev/ttyACM0] [--debug]
@@ -88,6 +93,12 @@ STREAM_SEQ_TERM = 65535                   # reserved seq: stream end
 STREAM_CODEC2_ID = 2                      # codec id carried in INIT
 STREAM_SILENCE_TIMEOUT = 0.5              # s of no input = PTT released
 
+# ── meshtasticd TCP connection (RAK Pi HAT via SPI/GPIO) ────────
+# When MESHTASTICD_ENABLED=true in mesh.conf the radio is controlled by
+# meshtasticd (Docker) and exposes its API over TCP instead of USB serial.
+MESHTASTICD_HOST = "localhost"
+MESHTASTICD_PORT = 4403
+
 # ── Rate limiting ───────────────────────────────────────────────
 
 TX_MIN_INTERVAL = 30  # seconds — min time between TX for same CoT UID
@@ -126,8 +137,11 @@ RX_UID_EXPIRY = 60  # seconds
 # Track last-seen time per node for web dashboard (updated on every RX)
 _node_last_seen = {}  # node_num → timestamp
 
-# Set when the radio serial connection drops; the main loop reconnects
+# Set when the radio connection drops; the main loop reconnects
 _radio_disconnected = threading.Event()
+
+# Radio connection mode: True = TCP (meshtasticd), False = USB serial
+_use_tcp = False
 
 # ── Stats ────────────────────────────────────────────────────────
 
@@ -781,20 +795,33 @@ def _dump_nodes():
 
 
 def onConnection(interface, topic=pub.AUTO_TOPIC):
-    """Called when serial connection is established."""
+    """Called when radio connection is established."""
     global my_node_num
     my_node_num = interface.myInfo.my_node_num
     logger.info(f"Radio connected: {interface.getLongName()} (node {my_node_num})")
 
 
 def onDisconnect(interface, topic=pub.AUTO_TOPIC):
-    """Called when serial connection is lost."""
+    """Called when radio connection is lost."""
     logger.warning("Radio connection lost!")
     _radio_disconnected.set()
 
 
+def _open_interface(dev_path):
+    """Open the Meshtastic interface (TCP or serial based on _use_tcp).
+
+    Returns the opened interface object. Raises on failure.
+    """
+    if _use_tcp:
+        from meshtastic.tcp_interface import TCPInterface
+        return TCPInterface(hostname=MESHTASTICD_HOST, portNumber=MESHTASTICD_PORT)
+    else:
+        from meshtastic.serial_interface import SerialInterface
+        return SerialInterface(devPath=dev_path)
+
+
 def _reconnect_radio(dev_path):
-    """Re-open the serial interface after the connection drops (e.g. the
+    """Re-open the radio interface after the connection drops (e.g. the
     radio reboots itself a few seconds after a config change). Retries
     every 5s until the radio comes back."""
     global iface
@@ -802,16 +829,20 @@ def _reconnect_radio(dev_path):
         iface.close()
     except Exception:
         pass
-    import meshtastic.serial_interface
+    mode = "TCP" if _use_tcp else "serial"
     while True:
         time.sleep(5)
         try:
-            iface = meshtastic.serial_interface.SerialInterface(devPath=dev_path)
+            iface = _open_interface(dev_path)
             _radio_disconnected.clear()
-            logger.info(f"Radio reconnected on {iface.devPath}")
+            if _use_tcp:
+                logger.info(f"Radio reconnected via TCP "
+                            f"({MESHTASTICD_HOST}:{MESHTASTICD_PORT})")
+            else:
+                logger.info(f"Radio reconnected on {iface.devPath}")
             return
         except Exception as e:
-            logger.warning(f"Radio reconnect failed, retrying in 5s: {e}")
+            logger.warning(f"Radio reconnect ({mode}) failed, retrying in 5s: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -855,21 +886,34 @@ def main():
     mcast_send_sock = _setup_mcast_send_socket()
     logger.info(f"Multicast send socket ready on {MCAST_IF}")
 
-    # ── Subscribe to pypubsub BEFORE opening serial ──────────
+    # ── Subscribe to pypubsub BEFORE opening the radio ───────
     pub.subscribe(onReceive, "meshtastic.receive")
     pub.subscribe(onConnection, "meshtastic.connection.established")
     pub.subscribe(onDisconnect, "meshtastic.connection.lost")
 
-    # ── Open serial interface ────────────────────────────────
-    import meshtastic.serial_interface
+    # ── Determine radio connection mode from mesh.conf ───────
+    global _use_tcp
+    cfg = _read_mesh_conf()
+    _use_tcp = cfg.get("MESHTASTICD_ENABLED",
+                       "false").lower() in ("true", "1", "yes")
 
-    logger.info(f"Opening SerialInterface(devPath={args.port})...")
+    # ── Open radio interface (TCP or serial) ─────────────────
+    if _use_tcp:
+        logger.info(f"Opening TCPInterface "
+                    f"({MESHTASTICD_HOST}:{MESHTASTICD_PORT})...")
+    else:
+        logger.info(f"Opening SerialInterface(devPath={args.port})...")
     try:
-        iface = meshtastic.serial_interface.SerialInterface(devPath=args.port)
+        iface = _open_interface(args.port)
     except Exception as e:
-        logger.error(f"Failed to open serial interface: {e}")
+        mode = "TCP" if _use_tcp else "serial"
+        logger.error(f"Failed to open {mode} interface: {e}")
         sys.exit(1)
-    logger.info(f"Radio open on {iface.devPath}")
+    if _use_tcp:
+        logger.info(f"Radio open via TCP "
+                    f"({MESHTASTICD_HOST}:{MESHTASTICD_PORT})")
+    else:
+        logger.info(f"Radio open on {iface.devPath}")
 
     # ── Start TX multicast listeners ─────────────────────────
     try:
@@ -935,9 +979,12 @@ def main():
         logger.info("LoRa voice stream relay disabled "
                     "(VOICE_LORA_STREAM_ENABLED != true)")
 
+    radio_desc = (f"TCP ({MESHTASTICD_HOST}:{MESHTASTICD_PORT})"
+                  if _use_tcp else "USB serial")
     print()
     print("=" * 60)
     print("  ATAK CoT Bridge — Bidirectional LoRa ↔ Multicast")
+    print(f"  Radio: {radio_desc}")
     print(f"  TX: {SA_MCAST_GROUP}:{SA_MCAST_PORT} + {CHAT_MCAST_GROUP}:{CHAT_MCAST_PORT} → LoRa")
     print(f"  RX: LoRa → multicast on {MCAST_IF}")
     print(f"  Rate limit: {TX_MIN_INTERVAL}s per UID")
@@ -988,7 +1035,7 @@ def main():
                 chat_sock.close()
             except Exception:
                 pass
-        logger.info("Serial interface closed — radio released")
+        logger.info("Radio interface closed — radio released")
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _shutdown)

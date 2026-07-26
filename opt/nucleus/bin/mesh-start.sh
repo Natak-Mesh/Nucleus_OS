@@ -216,6 +216,11 @@ if [ -f /opt/nucleus/bin/opendht-start.sh ]; then
     /opt/nucleus/bin/opendht-start.sh
 fi
 
+# Start meshtasticd if enabled (RAK Pi HAT LoRa radio via SPI/GPIO)
+if [ -f /opt/nucleus/bin/meshtasticd-start.sh ]; then
+    /opt/nucleus/bin/meshtasticd-start.sh
+fi
+
 # Restart cot-bridge so it detects br-lan subnet for TX source filtering.
 # cot-bridge may start before br-lan has an IP (race condition), which disables
 # the source filter and causes WiFi→LoRa rebroadcast of other nodes' traffic.

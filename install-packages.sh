@@ -173,6 +173,15 @@ else
     echo "OpenDHT image pulled successfully."
 fi
 
+# Pull meshtasticd image (for RAK Pi HAT LoRa radio via SPI/GPIO)
+echo "[6b/8] Pulling meshtasticd Docker image..."
+if docker images | grep -q "meshtastic/meshtasticd"; then
+    echo "meshtasticd image already exists."
+else
+    docker pull meshtastic/meshtasticd:daily-alpine
+    echo "meshtasticd image pulled successfully."
+fi
+
 # Install Yggdrasil
 echo "[7/8] Installing Yggdrasil overlay network..."
 sudo apt-get install -y dirmngr
