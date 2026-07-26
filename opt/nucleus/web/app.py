@@ -853,7 +853,13 @@ def api_dashboard():
 
     # Get meshtastic data
     meshtastic_nodes = get_meshtastic_nodes()
-    radio_detected = bool(glob.glob('/dev/ttyACM*'))
+    # Use the meshtastic_api helper if available (handles both USB serial
+    # and meshtasticd TCP), fall back to the old glob check.
+    try:
+        from meshtastic_api import _radio_detected
+        radio_detected = _radio_detected()
+    except ImportError:
+        radio_detected = bool(glob.glob('/dev/ttyACM*'))
 
     # Check bridge config flag and OTS enabled flag
     bridge_enabled = False

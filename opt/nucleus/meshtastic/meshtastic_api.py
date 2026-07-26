@@ -9,12 +9,19 @@ Bridge control: status, enable, disable, logs.
 The bridge runs as a systemd service (cot-bridge.service).
 
 Radio configurator: read/apply radio config and share the channel URL
-(QR code) without ever needing the phone app. Because the CoT bridge
-owns the serial port exclusively, every radio operation uses the
-"bridge pause" pattern:
+(QR code) without ever needing the phone app. Supports two radio
+connection modes, selected by MESHTASTICD_ENABLED in mesh.conf:
 
-    stop cot-bridge -> wait for serial release -> run meshtastic CLI
-    -> restart cot-bridge
+  USB serial (default):
+    The CoT bridge owns the serial port exclusively, so every radio
+    operation uses the "bridge pause" pattern:
+      stop cot-bridge -> wait for serial release -> run meshtastic CLI
+      -> restart cot-bridge
+
+  TCP (meshtasticd):
+    The radio runs via meshtasticd in Docker (TCP localhost:4403).
+    TCP supports multiple clients, so the CLI can run concurrently
+    with the cot-bridge — no bridge pause needed, much faster.
 
 See docs/meshtastic/meshtastic_configurator.md for full documentation.
 
@@ -28,6 +35,7 @@ import glob
 import io
 import json
 import os
+import socket
 import subprocess
 import threading
 import time
@@ -51,6 +59,10 @@ SERIAL_RELEASE_SECS = 2
 
 # After a config write the radio reboots; wait for it to come back
 RADIO_REBOOT_WAIT_SECS = 30
+
+# meshtasticd TCP connection (same constants as cot_bridge.py)
+MESHTASTICD_HOST = "localhost"
+MESHTASTICD_PORT = 4403
 
 meshtastic_bp = Blueprint('meshtastic', __name__)
 
@@ -82,6 +94,29 @@ def _set_op_state(**kw):
 def _get_op_state():
     with _op_state_lock:
         return dict(_op_state)
+
+
+def _read_mesh_conf():
+    """Parse KEY=value pairs from mesh.conf (shell-style, quotes stripped)."""
+    cfg = {}
+    try:
+        with open(MESH_CONF_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                cfg[key.strip()] = val.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return cfg
+
+
+def _is_meshtasticd():
+    """Check if the radio is via meshtasticd (TCP) vs USB serial."""
+    cfg = _read_mesh_conf()
+    return cfg.get("MESHTASTICD_ENABLED",
+                   "false").lower() in ("true", "1", "yes")
 
 
 def _start_op(op_name, work_fn):
@@ -137,7 +172,20 @@ def _service_is_enabled():
 
 
 def _radio_detected():
-    """Check if a Meshtastic radio is connected via USB serial."""
+    """Check if a Meshtastic radio is available.
+
+    For meshtasticd (TCP): check if the TCP port is accepting connections.
+    For USB serial: check if /dev/ttyACM* exists.
+    """
+    if _is_meshtasticd():
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2)
+            s.connect((MESHTASTICD_HOST, MESHTASTICD_PORT))
+            s.close()
+            return True
+        except (OSError, socket.timeout):
+            return False
     return bool(glob.glob('/dev/ttyACM*'))
 
 
@@ -411,10 +459,17 @@ def _build_command_groups(changes):
 
 
 def _run_meshtastic(args, timeout=120):
-    """Run a meshtastic CLI command. Returns (returncode, combined_output)."""
+    """Run a meshtastic CLI command. Returns (returncode, combined_output).
+
+    If meshtasticd is enabled, --host localhost is injected so the CLI
+    connects via TCP instead of USB serial auto-detect.
+    """
+    cmd = list(MESHTASTIC_CMD)
+    if _is_meshtasticd():
+        cmd += ['--host', MESHTASTICD_HOST]
     try:
         result = subprocess.run(
-            MESHTASTIC_CMD + args,
+            cmd + args,
             capture_output=True, text=True, timeout=timeout
         )
         out = (result.stdout or '') + (result.stderr or '')
@@ -426,27 +481,59 @@ def _run_meshtastic(args, timeout=120):
 
 
 def _wait_for_radio(max_wait=RADIO_REBOOT_WAIT_SECS):
-    """Wait for the radio's USB serial port to (re)appear after a reboot.
+    """Wait for the radio to come back after a config-write reboot.
 
-    The port often stays present through the reboot, so also add a fixed
-    settle delay to let the firmware finish booting.
+    For meshtasticd (TCP): wait for the TCP port to accept connections,
+    then a short settle delay. Much faster than USB serial.
+
+    For USB serial: wait for /dev/ttyACM* to (re)appear, then a longer
+    settle delay to cover the radio's delayed self-reboot after config
+    commits.
     """
-    deadline = time.time() + max_wait
-    while time.time() < deadline:
-        if _radio_detected():
-            break
-        time.sleep(1)
-    # Firmware settle time after the port appears. Must be long enough to
-    # cover the radio's DELAYED self-reboot after a config commit (owner
-    # changes reboot several seconds after the CLI returns) — otherwise
-    # the bridge restarts, connects, and then loses the radio mid-reboot.
-    time.sleep(15)
+    if _is_meshtasticd():
+        # TCP: wait for meshtasticd to accept connections again
+        deadline = time.time() + max_wait
+        while time.time() < deadline:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(2)
+                s.connect((MESHTASTICD_HOST, MESHTASTICD_PORT))
+                s.close()
+                break
+            except (OSError, socket.timeout):
+                time.sleep(1)
+        # Short settle — meshtasticd handles the radio reboot internally
+        time.sleep(5)
+    else:
+        # USB serial: wait for the port to (re)appear
+        deadline = time.time() + max_wait
+        while time.time() < deadline:
+            if bool(glob.glob('/dev/ttyACM*')):
+                break
+            time.sleep(1)
+        # Firmware settle time after the port appears. Must be long enough
+        # to cover the radio's DELAYED self-reboot after a config commit
+        # (owner changes reboot several seconds after the CLI returns) —
+        # otherwise the bridge restarts, connects, and then loses the
+        # radio mid-reboot.
+        time.sleep(15)
 
 
 @contextmanager
 def _bridge_paused():
     """Stop the CoT bridge (if running) for the duration of a radio
-    operation, then restart it. If the bridge isn't running, no-op."""
+    operation, then restart it.
+
+    For meshtasticd (TCP): no-op — TCP supports multiple clients, so the
+    CLI can talk to the radio concurrently with the cot-bridge.
+
+    For USB serial: the bridge must be stopped to release the serial port.
+    """
+    if _is_meshtasticd():
+        # TCP: no bridge pause needed
+        yield
+        return
+
     was_active = _service_is_active()
     if was_active:
         subprocess.run(
