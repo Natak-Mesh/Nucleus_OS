@@ -93,9 +93,10 @@ STREAM_SEQ_TERM = 65535                   # reserved seq: stream end
 STREAM_CODEC2_ID = 2                      # codec id carried in INIT
 STREAM_SILENCE_TIMEOUT = 0.5              # s of no input = PTT released
 
-# ── meshtasticd TCP connection (RAK Pi HAT via SPI/GPIO) ────────
+# ── meshtasticd TCP connection (USB radio or Pi HAT) ─────────────
 # When MESHTASTICD_ENABLED=true in mesh.conf the radio is controlled by
 # meshtasticd (Docker) and exposes its API over TCP instead of USB serial.
+# meshtasticd auto-detects USB serial (/dev/ttyACM0) vs SPI/GPIO (Pi HAT).
 MESHTASTICD_HOST = "localhost"
 MESHTASTICD_PORT = 4403
 
