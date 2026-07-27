@@ -749,17 +749,29 @@ def _dump_nodes():
 
     try:
         now = int(time.time())
+
+        # Get local node's long name to filter ghost entries (e.g. phantom
+        # client nodes created by meshtastic CLI connections that share the
+        # radio's owner name but have a different node number).
+        local_long_name = None
+        try:
+            local_long_name = iface.getLongName()
+        except Exception:
+            pass
+
         # Snapshot the dict to avoid RuntimeError from concurrent modification
         # (meshtastic library updates iface.nodes from its own thread)
         nodes_snapshot = dict(iface.nodes)
         nodes_list = []
         for node_id, node in nodes_snapshot.items():
-            # Skip our own node
+            # Skip our own node (by num or by matching long name)
             num = node.get("num")
             if num == my_node_num:
                 continue
-
             user = node.get("user", {})
+            if local_long_name and user.get("longName") == local_long_name:
+                continue
+
             last_heard = node.get("lastHeard") or 0
             # Use our own tracking if more recent than firmware's lastHeard
             our_seen = _node_last_seen.get(num, 0)

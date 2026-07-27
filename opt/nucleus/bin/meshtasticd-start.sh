@@ -80,6 +80,11 @@ if docker ps -a | grep -q "${MESHTASTICD_CONTAINER}"; then
     docker rm "${MESHTASTICD_CONTAINER}" 2>/dev/null
 fi
 
+# Named volume for persistent radio config (region, channel, PSK, node DB).
+# Without this, docker rm + docker run creates a new anonymous volume each
+# time, wiping all radio settings on every reboot.
+MESHTASTICD_VOLUME="meshtasticd-data"
+
 # Start meshtasticd container
 echo "Starting meshtasticd container..."
 docker run -d \
@@ -89,18 +94,43 @@ docker run -d \
     --restart=unless-stopped \
     -v "${MESHTASTICD_DIR}/config.yaml:/etc/meshtasticd/config.yaml" \
     -v "${MESHTASTICD_DIR}/config.d:/etc/meshtasticd/config.d" \
+    -v "${MESHTASTICD_VOLUME}:/var/lib/meshtasticd" \
     "${MESHTASTICD_IMAGE}"
 
-# Wait for the API to come up, then set node name from hostname
+# Wait for the API to come up, then configure the radio
 HOSTNAME_FULL=$(hostname)
 HOSTNAME_SHORT=$(hostname | cut -c1-4)
 
 echo "Waiting for meshtasticd API..."
-for i in $(seq 1 15); do
+for i in $(seq 1 30); do
     if meshtastic --host localhost --info >/dev/null 2>&1; then
         echo "meshtasticd API is up"
+
+        # Always set owner name (cheap, no reboot)
         meshtastic --host localhost --set-owner "${HOSTNAME_FULL}" --set-owner-short "${HOSTNAME_SHORT}"
         echo "meshtasticd: node name set to ${HOSTNAME_FULL} (${HOSTNAME_SHORT})"
+
+        # First-boot radio config: set region if still UNSET.
+        # Without a region the radio refuses to transmit:
+        #   "send - lora tx disabled: Region unset"
+        CURRENT_REGION=$(meshtastic --host localhost --get lora.region 2>&1 | grep -oP 'lora\.region:\s*\K\S+' || true)
+        if [ -z "$CURRENT_REGION" ] || [ "$CURRENT_REGION" = "UNSET" ] || [ "$CURRENT_REGION" = "0" ]; then
+            echo "meshtasticd: region is UNSET — setting to US..."
+            meshtastic --host localhost --set lora.region US
+            echo "meshtasticd: waiting for radio reboot after region set..."
+            sleep 10
+            # Wait for radio to come back
+            for j in $(seq 1 15); do
+                if meshtastic --host localhost --info >/dev/null 2>&1; then
+                    echo "meshtasticd: radio back after region set"
+                    break
+                fi
+                sleep 2
+            done
+        else
+            echo "meshtasticd: region already set to ${CURRENT_REGION}"
+        fi
+
         break
     fi
     sleep 2
