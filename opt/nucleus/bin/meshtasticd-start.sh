@@ -16,28 +16,37 @@
 #############################################
 
 # meshtasticd Startup Script
-# Starts meshtasticd Docker container for Meshtastic radio control.
-# Auto-detects the radio connection:
-#   - USB serial (/dev/ttyACM0): radio connected via USB port
-#   - SPI/GPIO (Pi HAT):        RAK6421 LoRa hat on GPIO pins
-# Both modes expose the same TCP API on localhost:4403, so the rest of
-# the system (cot-bridge, web configurator, CLI) always uses TCP.
+# Starts meshtasticd Docker container when MESHTASTICD_ENABLED=true.
+# meshtasticd exposes a TCP API on localhost:4403 for cot_bridge.py.
+# When MESHTASTICD_ENABLED=false (USB serial nodes), this script cleans
+# up any stale container and exits.
 
 # Source configuration
 source /etc/nucleus/mesh.conf
 
+# Helper: stop and remove any existing meshtasticd container so it doesn't
+# hold /dev/ttyACM0 via Docker's --restart=unless-stopped policy.
+_cleanup_container() {
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^meshtasticd$"; then
+        echo "meshtasticd: stopping stale container..."
+        docker stop meshtasticd 2>/dev/null
+        docker rm meshtasticd 2>/dev/null
+    fi
+}
+
 # Check if meshtasticd is enabled
 if [ "$MESHTASTICD_ENABLED" != "true" ]; then
     echo "meshtasticd is disabled in mesh.conf"
+    _cleanup_container
     exit 0
 fi
+
 
 MESHTASTICD_DIR="/home/natak/meshtasticd"
 MESHTASTICD_IMAGE="meshtastic/meshtasticd:daily-alpine"
 MESHTASTICD_CONTAINER="meshtasticd"
 MAC_FILE="${MESHTASTICD_DIR}/.mac_address"
 LORA_CONFIG="${MESHTASTICD_LORA_CONFIG:-lora-RAK6421-13302-slot1}"
-USB_SERIAL_DEV="/dev/ttyACM0"
 
 # Create config directories
 mkdir -p "${MESHTASTICD_DIR}/config.d"
@@ -56,39 +65,8 @@ else
     echo "meshtasticd: generated new MAC ${MAC_ADDR}"
 fi
 
-# ── Auto-detect radio connection mode ────────────────────────────
-# USB serial takes priority: if /dev/ttyACM0 exists, assume a USB
-# Meshtastic radio is plugged in. Otherwise fall back to SPI/GPIO
-# (RAK Pi HAT). Both produce the same TCP API on localhost:4403.
-
-if [ -e "$USB_SERIAL_DEV" ]; then
-    # ── USB serial mode ──────────────────────────────────────────
-    RADIO_MODE="usb"
-    echo "meshtasticd: USB radio detected at ${USB_SERIAL_DEV}"
-
-    cat > "${MESHTASTICD_DIR}/config.yaml" <<EOF
----
-Serial:
-  Module: ${USB_SERIAL_DEV}
-
-General:
-  MACAddress: ${MAC_ADDR}
-EOF
-
-    # No LoRa hardware config needed for USB serial (radio has its own firmware)
-    rm -f "${MESHTASTICD_DIR}/config.d/"*.yaml 2>/dev/null
-
-    # Docker args: map the USB device (no full --privileged needed)
-    DOCKER_EXTRA_ARGS="--device ${USB_SERIAL_DEV}"
-
-    # USB serial needs longer for meshtasticd to handshake with the radio
-    API_WAIT_SECS=60
-else
-    # ── SPI/GPIO mode (Pi HAT) ───────────────────────────────────
-    RADIO_MODE="spi"
-    echo "meshtasticd: no USB radio found — using SPI/GPIO (Pi HAT)"
-
-    cat > "${MESHTASTICD_DIR}/config.yaml" <<EOF
+# Write config.yaml with MAC address
+cat > "${MESHTASTICD_DIR}/config.yaml" <<EOF
 ---
 Lora:
   Module: auto
@@ -97,23 +75,16 @@ General:
   MACAddress: ${MAC_ADDR}
 EOF
 
-    # Copy LoRa hardware config from the image's available.d if not already present
-    CONFIG_FILE="${MESHTASTICD_DIR}/config.d/${LORA_CONFIG}.yaml"
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo "meshtasticd: extracting ${LORA_CONFIG}.yaml from image..."
-        docker run --rm "${MESHTASTICD_IMAGE}" \
-            cat "/etc/meshtasticd/available.d/${LORA_CONFIG}.yaml" > "$CONFIG_FILE" 2>/dev/null
-        if [ ! -s "$CONFIG_FILE" ]; then
-            echo "WARNING: failed to extract ${LORA_CONFIG}.yaml — file not found in image"
-            rm -f "$CONFIG_FILE"
-        fi
+# Copy LoRa hardware config from the image's available.d if not already present
+CONFIG_FILE="${MESHTASTICD_DIR}/config.d/${LORA_CONFIG}.yaml"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "meshtasticd: extracting ${LORA_CONFIG}.yaml from image..."
+    docker run --rm "${MESHTASTICD_IMAGE}" \
+        cat "/etc/meshtasticd/available.d/${LORA_CONFIG}.yaml" > "$CONFIG_FILE" 2>/dev/null
+    if [ ! -s "$CONFIG_FILE" ]; then
+        echo "WARNING: failed to extract ${LORA_CONFIG}.yaml — file not found in image"
+        rm -f "$CONFIG_FILE"
     fi
-
-    # Docker args: privileged for SPI/GPIO access
-    DOCKER_EXTRA_ARGS="--privileged"
-
-    # SPI/GPIO is faster to initialize
-    API_WAIT_SECS=30
 fi
 
 # Stop existing container if running
@@ -129,10 +100,10 @@ fi
 MESHTASTICD_VOLUME="meshtasticd-data"
 
 # Start meshtasticd container
-echo "Starting meshtasticd container (${RADIO_MODE} mode)..."
+echo "Starting meshtasticd container..."
 docker run -d \
     --name "${MESHTASTICD_CONTAINER}" \
-    ${DOCKER_EXTRA_ARGS} \
+    --privileged \
     --net=host \
     --restart=unless-stopped \
     -v "${MESHTASTICD_DIR}/config.yaml:/etc/meshtasticd/config.yaml" \
@@ -144,9 +115,8 @@ docker run -d \
 HOSTNAME_FULL=$(hostname)
 HOSTNAME_SHORT=$(hostname | cut -c1-4)
 
-echo "Waiting for meshtasticd API (${RADIO_MODE} mode, max ${API_WAIT_SECS}s)..."
-API_ATTEMPTS=$(( API_WAIT_SECS / 2 ))
-for i in $(seq 1 $API_ATTEMPTS); do
+echo "Waiting for meshtasticd API..."
+for i in $(seq 1 30); do
     if meshtastic --host localhost --info >/dev/null 2>&1; then
         echo "meshtasticd API is up"
 
@@ -180,5 +150,5 @@ for i in $(seq 1 $API_ATTEMPTS); do
     sleep 2
 done
 
-echo "meshtasticd container started (${RADIO_MODE} mode)"
+echo "meshtasticd container started"
 echo "Verify with: meshtastic --host localhost --info"

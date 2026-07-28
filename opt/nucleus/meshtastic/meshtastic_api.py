@@ -113,7 +113,12 @@ def _read_mesh_conf():
 
 
 def _is_meshtasticd():
-    """Check if the radio is via meshtasticd (TCP) vs USB serial."""
+    """Check if the radio is via meshtasticd (TCP) vs USB serial.
+
+    Controlled by MESHTASTICD_ENABLED in mesh.conf:
+      false/unset = USB serial (SerialInterface)
+      true        = TCP via meshtasticd (TCPInterface, localhost:4403)
+    """
     cfg = _read_mesh_conf()
     return cfg.get("MESHTASTICD_ENABLED",
                    "false").lower() in ("true", "1", "yes")

@@ -905,6 +905,8 @@ def main():
     pub.subscribe(onDisconnect, "meshtastic.connection.lost")
 
     # ── Determine radio connection mode from mesh.conf ───────
+    # MESHTASTICD_ENABLED=true  → TCP via meshtasticd (localhost:4403)
+    # MESHTASTICD_ENABLED=false → USB serial (SerialInterface)
     global _use_tcp
     cfg = _read_mesh_conf()
     _use_tcp = cfg.get("MESHTASTICD_ENABLED",
