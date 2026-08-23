@@ -1,0 +1,16 @@
+[Unit]
+Description=MAVLink Router (ArduPilot FC UART to mesh UDP)
+After=mesh-start.service network-online.target
+Wants=mesh-start.service
+ConditionPathExists=/etc/mavlink-router/main.conf
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/mavlink-routerd -c /etc/mavlink-router/main.conf
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

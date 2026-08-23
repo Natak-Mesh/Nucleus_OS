@@ -22,39 +22,6 @@ source /etc/nucleus/mesh.conf
 
 sysctl -w net.ipv4.ip_forward=1
 
-# USB hub power cycle (opt-in via USB_HUB_POWER_CYCLE in mesh.conf)
-if [ "${USB_HUB_POWER_CYCLE}" = "true" ]; then
-    if command -v uhubctl &> /dev/null; then
-        echo "Power-cycling USB hub 1-1 to recover Meshtastic radio..."
-        uhubctl -a off -l 1-1
-        sleep 3
-        uhubctl -a on -l 1-1
-        sleep 3
-
-        # Force kernel to re-enumerate devices (uhubctl power-on alone is unreliable on VIA Labs hubs)
-        echo "Forcing USB hub re-enumeration..."
-        echo "1-1" > /sys/bus/usb/drivers/usb/unbind
-        sleep 1
-        echo "1-1" > /sys/bus/usb/drivers/usb/bind
-
-        # Wait for wlan1 to appear (mt76x0u driver needs time after re-enumeration)
-        for i in $(seq 1 15); do
-            ip link show wlan1 &>/dev/null && break
-            echo "Waiting for wlan1... ($i/15)"
-            sleep 1
-        done
-
-        if ip link show wlan1 &>/dev/null; then
-            echo "USB hub power cycle complete. Devices re-enumerated."
-        else
-            echo "WARNING: wlan1 did not appear after USB power cycle!"
-        fi
-    else
-        echo "WARNING: uhubctl not installed — skipping USB hub power cycle."
-        echo "Install with: sudo apt install uhubctl"
-    fi
-fi
-
 # Set interfaces to not be managed by NetworkManager
 nmcli device set eth0 managed no
 nmcli device set wlan1 managed no
@@ -82,10 +49,12 @@ ip addr add $MESH_IP/24 dev wlan1
 ip -6 addr add $MESH_IPV6_LL/64 dev wlan1
 
 # Set 802.11s mesh TTL for multi-hop multicast/broadcast forwarding
-# 802.11s handles multi-hop natively at Layer 2 with dedup (RMC in mac80211/rx.c).
 # mesh_ttl controls how many hops multicast frames are forwarded by mesh points.
 # mesh_element_ttl controls TTL for path selection elements (PREQ/PREP/PERR).
 # The kernel default is 31 — far too high. Configurable via MESH_802_TTL in mesh.conf.
+# NOTE: wpa_supplicant sets mesh_fwding=0 (see config_generation.sh), so L2
+# frame forwarding is disabled — multicast propagation is handled by smcroute
+# at L3 and unicast routing by babeld.
 # See: docs/congestion_collision_tuning/mcast_storm_correction.md
 if [ "${MESH_802_TTL:-0}" -gt 0 ]; then
     iw dev wlan1 set mesh_param mesh_ttl=$MESH_802_TTL
@@ -96,12 +65,8 @@ fi
 # Enable RTS/CTS for collision avoidance (helps in congested/hidden node scenarios)
 # Configurable via MESH_RTS_THRESHOLD in mesh.conf (0=disabled, 500=recommended for 3+ nodes)
 if [ "${MESH_RTS_THRESHOLD:-0}" -gt 0 ]; then
-    # USB power cycle can change phy number; detect dynamically when enabled
-    if [ "${USB_HUB_POWER_CYCLE}" = "true" ]; then
-        MESH_PHY=$(iw dev wlan1 info | grep wiphy | awk '{print "phy"$2}')
-    else
-        MESH_PHY=phy0
-    fi
+    MESH_PHY=$(iw dev wlan1 info | grep wiphy | awk '{print "phy"$2}')
+    MESH_PHY=${MESH_PHY:-phy0}
     iw phy $MESH_PHY set rts $MESH_RTS_THRESHOLD
     echo "RTS/CTS enabled on $MESH_PHY with threshold: ${MESH_RTS_THRESHOLD} bytes"
 fi
@@ -111,27 +76,10 @@ sleep 2
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
 echo "nameserver 8.8.4.4" >> /etc/resolv.conf
 
-# rnsd is now managed by its own systemd service (rnsd.service)
-
-# Start mediamtx (required for TAKserver video)
-# nohup runuser -l natak -c 'cd /opt/nucleus/bin/mediamtx && ./mediamtx' > /var/log/mediamtx.log 2>&1 &
-# MEDIAMTX_PID=$!
-# echo "Started mediamtx with PID: $MEDIAMTX_PID"
-
-# sleep 2
-
 # Enable NAT for internet gateway sharing (WAN mode default)
 # Check if rule exists before adding to avoid duplicates
 iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
     iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-
-# Cellular NAT (Waveshare SIM7600G-H) — uncomment on nodes with cellular modem
-# Required for mesh nodes to route internet traffic through this node's cellular
-# connection (wwan0). Without this, outbound packets retain private 10.20.x.x
-# source IPs which the carrier will drop. Only enable on cellular-equipped nodes.
-# See: docs/cellular_waveshare/sim7600g_setup.md
-# iptables -t nat -C POSTROUTING -o wwan0 -j MASQUERADE 2>/dev/null || \
-#     iptables -t nat -A POSTROUTING -o wwan0 -j MASQUERADE
 
 # Bump multicast TTL on locally-originated traffic (br-lan ingress)
 # ATAK sends CoT/Discovery/Voice with low TTL (often TTL=1). The kernel won't
@@ -152,14 +100,11 @@ if [ "${MESH_MCAST_TTL:-0}" -gt 0 ]; then
     echo "Multicast TTL set to ${MESH_MCAST_TTL} for CoT, Discovery, and Voice on br-lan"
 fi
 
-# Restart smcroute after USB hub power cycle so it registers wlan1 as a multicast VIF
-# (power cycle delays USB re-enumeration, so smcroute misses wlan1 at boot)
-if [ "${USB_HUB_POWER_CYCLE}" = "true" ] && systemctl is-active --quiet smcroute; then
+# Restart smcroute so it registers wlan1 as a multicast VIF.
+# smcroute can start before mesh-start.sh finishes configuring wlan1, in which
+# case wlan1 is still DORMANT/NO-CARRIER and never enters the kernel's
+# multicast VIF table (/proc/net/ip_mr_vif). See: docs/mcast_routing_problem.md
+if systemctl is-active --quiet smcroute; then
     systemctl restart smcroute
     echo "Restarted smcroute — wlan1 registered as multicast VIF"
-fi
-
-# Start OpenDHT if enabled
-if [ -f /opt/nucleus/bin/opendht-start.sh ]; then
-    /opt/nucleus/bin/opendht-start.sh
 fi

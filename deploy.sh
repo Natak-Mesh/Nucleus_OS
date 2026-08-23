@@ -1,11 +1,10 @@
 #!/bin/bash
 
-# Deploy Nucleus OS files to system locations
+# Deploy Nucleus OS (Drone) files to system locations
 # NOTE: Run ./install-packages.sh first to install required software packages
-# NOTE: Run ./SSH_fix.sh on the node to optimize SSH settings
 # NOTE: Check IP addresses in babeld.conf, ensure they match your system
 # NOTE: Run 'sudo /opt/nucleus/bin/sd-wear-setup.sh' after deploy to minimize SD card wear
-# NOTE: Run 'sudo /opt/nucleus/bin/ram-optimize.sh' after deploy for TAKServer RAM corrections (Debian Trixie)
+# NOTE: UART must be enabled for the FC link (this script checks and warns)
 
 set -e
 
@@ -34,16 +33,8 @@ sudo cp "$SOURCE_DIR/etc/smcroute.conf" /etc/
 sudo cp "$SOURCE_DIR/etc/babeld.conf" /etc/
 sudo chown natak:natak /etc/babeld.conf
 
-# Meshtastic udev rule — prevent mtp-probe from crashing RAK4631 firmware on boot
-sudo mkdir -p /etc/udev/rules.d
-sudo cp "$SOURCE_DIR/etc/udev/rules.d/60-meshtastic.rules" /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-
-# Copy sudoers files for web GUI privilege escalation
+# Copy sudoers file for privilege escalation
 sudo mkdir -p /etc/sudoers.d
-sudo cp "$SOURCE_DIR/etc/sudoers.d/tailscale-web" /etc/sudoers.d/
-sudo chmod 0440 /etc/sudoers.d/tailscale-web
-sudo chown root:root /etc/sudoers.d/tailscale-web
 sudo cp "$SOURCE_DIR/etc/sudoers.d/nucleus-config" /etc/sudoers.d/
 sudo chmod 0440 /etc/sudoers.d/nucleus-config
 sudo chown root:root /etc/sudoers.d/nucleus-config
@@ -51,61 +42,35 @@ sudo chown root:root /etc/sudoers.d/nucleus-config
 # Copy systemd service files
 sudo cp "$SOURCE_DIR/etc/systemd/system/brlan-setup.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-start.service" /etc/systemd/system/
-sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-web.service" /etc/systemd/system/
-sudo cp "$SOURCE_DIR/etc/systemd/system/rnsd.service" /etc/systemd/system/
-sudo cp "$SOURCE_DIR/etc/systemd/system/cot-bridge.service" /etc/systemd/system/
-sudo cp "$SOURCE_DIR/etc/systemd/system/mediamtx.service" /etc/systemd/system/
+sudo cp "$SOURCE_DIR/etc/systemd/system/mavlink-router.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
 sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/systemd/system/babeld.service.d/
 sudo systemctl daemon-reload
 sudo systemctl enable brlan-setup.service
 sudo systemctl enable mesh-start.service
-sudo systemctl enable mesh-web.service
-sudo systemctl enable rnsd.service
-# Note: mediamtx.service is copied but not enabled - enable manually on nodes that need video streaming:
-#       sudo systemctl enable --now mediamtx.service
+sudo systemctl enable mavlink-router.service
 
 # Copy opt files
 sudo mkdir -p /opt/nucleus/bin
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/config_generation.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/mesh-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/eth0-mode.sh" /opt/nucleus/bin/
-sudo cp "$SOURCE_DIR/opt/nucleus/bin/opendht-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
-sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
 sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
-sudo chmod +x /opt/nucleus/bin/opendht-start.sh
 sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
-sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 sudo chmod +x /opt/nucleus/bin/iw-wifi-scan.sh
 
-# Copy meshtastic module if exists
-if [ -d "$SOURCE_DIR/opt/nucleus/meshtastic" ]; then
-    sudo cp -r "$SOURCE_DIR/opt/nucleus/meshtastic" /opt/nucleus/
+# Copy drone MAVLink tools
+if [ -d "$SOURCE_DIR/opt/nucleus/drone" ]; then
+    sudo mkdir -p /opt/nucleus/drone
+    sudo cp -r "$SOURCE_DIR/opt/nucleus/drone/"* /opt/nucleus/drone/
+    sudo chmod +x /opt/nucleus/drone/*.py
 fi
 
-# Copy web directory if exists
-if [ -d "$SOURCE_DIR/opt/nucleus/web" ]; then
-    sudo cp -r "$SOURCE_DIR/opt/nucleus/web" /opt/nucleus/
-fi
-
-# Copy CLI tools
-if [ -d "$SOURCE_DIR/opt/nucleus/cli" ]; then
-    sudo mkdir -p /opt/nucleus/cli
-    sudo cp -r "$SOURCE_DIR/opt/nucleus/cli/"* /opt/nucleus/cli/
-    sudo chmod +x /opt/nucleus/cli/*.sh
-fi
-
-# Fix ownership for web interface to write config files
 sudo chown -R natak:natak /opt/nucleus/
-
-# Deploy Reticulum config
-sudo mkdir -p /home/natak/.reticulum
-sudo cp "$SOURCE_DIR/home/natak/.reticulum/config" /home/natak/.reticulum/
-sudo chown -R natak:natak /home/natak/.reticulum
 
 # Disable wpa_supplicant (conflicts with hostapd)
 sudo systemctl disable wpa_supplicant.service
@@ -120,5 +85,37 @@ sudo systemctl enable babeld.service
 sudo systemctl restart babeld.service
 sudo systemctl enable smcroute.service
 sudo systemctl restart smcroute.service
+
+# Verify UART is enabled for the flight controller link.
+# The Pi's PL011 UART (/dev/ttyAMA0) is assigned to Bluetooth by default, so
+# it must be released with dtoverlay=disable-bt before the FC can use it.
+BOOT_CONFIG=/boot/firmware/config.txt
+[ -f "$BOOT_CONFIG" ] || BOOT_CONFIG=/boot/config.txt
+
+UART_WARN=0
+if [ -f "$BOOT_CONFIG" ]; then
+    grep -q '^enable_uart=1' "$BOOT_CONFIG" || UART_WARN=1
+    grep -q '^dtoverlay=disable-bt' "$BOOT_CONFIG" || UART_WARN=1
+else
+    UART_WARN=1
+fi
+
+if [ "$UART_WARN" -eq 1 ]; then
+    echo ""
+    echo "=================================================="
+    echo "  WARNING: UART not configured for the FC link"
+    echo "=================================================="
+    echo "  Add to $BOOT_CONFIG:"
+    echo "    enable_uart=1"
+    echo "    dtoverlay=disable-bt"
+    echo "  Then run:"
+    echo "    sudo systemctl disable hciuart"
+    echo "    sudo reboot"
+    echo ""
+    echo "  Until this is done, mavlink-router cannot open"
+    echo "  /dev/ttyAMA0 and the drone will not be controllable."
+    echo "=================================================="
+    echo ""
+fi
 
 echo "Deployment complete."

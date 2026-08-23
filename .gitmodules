@@ -1,3 +1,0 @@
-[submodule "external/meshtastic-python"]
-	path = external/meshtastic-python
-	url = https://github.com/meshtastic/python.git

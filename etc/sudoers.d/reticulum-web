@@ -1,3 +1,0 @@
-# Allow natak user to restart rnsd service from web interface
-natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart rnsd
-natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl status rnsd
