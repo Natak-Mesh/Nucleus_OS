@@ -54,12 +54,16 @@ is missing.
 
 ### Flight controller
 
-Set on the FC so `SERIAL1` matches `MAVLINK_BAUD` in `mesh.conf`:
+The Pi connects to the `TX2`/`RX2` through-holes (USART2), which ArduPilot
+exposes as `SERIAL3`. Set on the FC so it matches `MAVLINK_BAUD` in `mesh.conf`:
 
 ```
-SERIAL1_PROTOCOL = 2      # MAVLink2
-SERIAL1_BAUD     = 921    # 921600
+SERIAL3_PROTOCOL = 2      # MAVLink2
+SERIAL3_BAUD     = 921    # 921600
 ```
+
+Wiring: Pi pin 8 (GPIO14 TX) → FC `RX2`, Pi pin 10 (GPIO15 RX) → FC `TX2`,
+Pi pin 6 → FC `GND`. See `docs/drone/drone-hardware.md` for the full UART map.
 
 ## Configuration
 
@@ -68,7 +72,7 @@ Everything is driven by `/etc/nucleus/mesh.conf`. MAVLink keys:
 | Key | Default | Meaning |
 |---|---|---|
 | `MAVLINK_SERIAL` | `/dev/ttyAMA0` | FC UART device |
-| `MAVLINK_BAUD` | `921600` | Must match `SERIAL1_BAUD` |
+| `MAVLINK_BAUD` | `921600` | Must match `SERIAL3_BAUD` |
 | `MAVLINK_UDP_PORT` | `14550` | GCS listen port |
 
 `config_generation.sh` writes `/etc/mavlink-router/main.conf` from these.

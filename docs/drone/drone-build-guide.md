@@ -26,9 +26,9 @@ conn.close()
 
 Combined TOF rangefinder (0.02–8m) + PMW3901 optical flow. One sensor, one UART, gives both AltHold and Loiter. Backup: TF-Luna + Matek 3901-L0X on separate UARTs.
 
-### Wiring (FC UART2)
+### Wiring (FC UART7 — `TX7`/`RX7` through-holes)
 
-MTF-01 TX→RX2, RX→TX2, GND→GND, 5V→5V. Mount underside, pointing down.
+MTF-01 TX→`RX7`, RX→`TX7`, GND→GND, 5V→5V. Mount underside, pointing down.
 
 ### MTF-01 Mode
 
@@ -37,8 +37,8 @@ Must be set to **MAVLink output mode** (not default binary) at 115200 baud befor
 ### ArduPilot Params
 
 ```
-SERIAL2_PROTOCOL = 18       # OpticalFlow MAVLink
-SERIAL2_BAUD     = 115      # 115200
+SERIAL1_PROTOCOL = 18       # OpticalFlow MAVLink
+SERIAL1_BAUD     = 115      # 115200
 
 FLOW_TYPE        = 5        # MAVLink optical flow
 RNGFND1_TYPE     = 10       # MAVLink rangefinder
@@ -81,7 +81,7 @@ while True:
 
 ### Status
 - [ ] MTF-01 set to MAVLink mode
-- [ ] Wired to UART2
+- [ ] Wired to UART7 (`TX7`/`RX7`)
 - [ ] Params set
 - [ ] Rangefinder verified
 - [ ] Optical flow verified
@@ -92,13 +92,15 @@ Pi runs mavlink-router bridging FC serial ↔ mesh UDP.
 
 ### Physical
 
-Pi TX→FC RX1, Pi RX→FC TX1, common GND. Both 3.3V, no level shifter.
+Pi TX (pin 8, GPIO14) → FC `RX2`, Pi RX (pin 10, GPIO15) → FC `TX2`, common GND
+(Pi pin 6). Both 3.3V, no level shifter. `TX2`/`RX2` are the USART2
+through-holes, which ArduPilot exposes as SERIAL3.
 
 ### FC Params
 
 ```
-SERIAL1_PROTOCOL = 2        # MAVLink2
-SERIAL1_BAUD     = 921      # 921600
+SERIAL3_PROTOCOL = 2        # MAVLink2
+SERIAL3_BAUD     = 921      # 921600
 ```
 
 ### mavlink-router config
