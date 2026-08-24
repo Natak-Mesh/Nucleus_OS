@@ -42,15 +42,18 @@ sudo reboot
 
 ### UART prerequisite
 
-`/dev/ttyAMA0` is owned by Bluetooth by default. In `/boot/firmware/config.txt`:
+The PL011 UART is claimed by the Bluetooth controller on a stock image, so
+`/dev/ttyAMA0` does not exist and GPIO14/15 get the unreliable mini-UART
+instead. A serial console and login prompt also sit on the same pins. Run:
 
-```
-enable_uart=1
-dtoverlay=disable-bt
+```bash
+sudo /opt/nucleus/bin/drone-uart-setup.sh
+sudo reboot
+python3 /opt/nucleus/drone/fc-link-check.py   # read-only link diagnostic
 ```
 
-Then `sudo systemctl disable hciuart && sudo reboot`. `deploy.sh` warns if this
-is missing.
+`deploy.sh` warns if this has not been done. Full explanation and manual steps
+in [`docs/drone/uart-setup.md`](docs/drone/uart-setup.md).
 
 ### Flight controller
 
@@ -90,6 +93,13 @@ mavproxy.py --master=udpout:<DRONE_MESH_IP>:14550 --joystick
 ```bash
 python3 /opt/nucleus/drone/drone_sim.py              # fake FC on UDP 14550
 python3 /opt/nucleus/drone/zorro_mavlink_sender.py   # joystick → RC override
+```
+
+To check the real FC UART link (read-only, changes nothing):
+
+```bash
+sudo systemctl stop mavlink-router     # it holds the port exclusively
+python3 /opt/nucleus/drone/fc-link-check.py
 ```
 
 ## Docs

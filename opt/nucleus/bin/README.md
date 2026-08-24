@@ -11,6 +11,7 @@ Shell scripts for mesh initialization and configuration on the drone node.
 | `eth0-mode.sh` | Switch eth0 between WAN/LAN modes | Manual |
 | `iw-wifi-scan.sh` | Wi-Fi channel survey | Manual |
 | `sd-wear-setup.sh` | Minimize SD card writes | One-time setup |
+| `drone-uart-setup.sh` | Free the PL011 UART for the FC link | One-time setup, needs reboot |
 
 ---
 
@@ -91,6 +92,27 @@ One-time setup to minimize SD card writes.
 ```bash
 sudo /opt/nucleus/bin/sd-wear-setup.sh
 ```
+
+---
+
+## drone-uart-setup.sh
+
+One-time setup to hand the PL011 UART to the flight controller. Required on
+every fresh image — a stock Raspberry Pi OS install will not work.
+
+- Adds `enable_uart=1` and `dtoverlay=disable-bt` to `config.txt`
+- Strips the serial console from `cmdline.txt` (backs up the original)
+- Stops and masks `serial-getty@ttyS0` / `serial-getty@ttyAMA0`
+- Disables `bluetooth.service` (and `hciuart.service` on older images)
+- Adds `natak` to the `dialout` group
+
+```bash
+sudo /opt/nucleus/bin/drone-uart-setup.sh
+sudo reboot
+python3 /opt/nucleus/drone/fc-link-check.py   # verify
+```
+
+Background and manual steps: `docs/drone/uart-setup.md`.
 
 ---
 

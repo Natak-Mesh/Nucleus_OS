@@ -55,7 +55,15 @@ else
     BUILD_DIR=$(mktemp -d)
     git clone --recursive https://github.com/mavlink-router/mavlink-router.git "$BUILD_DIR/mavlink-router"
     cd "$BUILD_DIR/mavlink-router"
-    meson setup build . --buildtype=release
+    # -Dsystemdsystemunitdir is required on Debian 13 (trixie). The option
+    # defaults to 'auto', which makes meson run dependency('systemd') — a
+    # pkg-config lookup for systemd.pc. Debian 13 moved systemd.pc out of
+    # libsystemd-dev into the separate systemd-dev package, so the lookup
+    # fails and configure aborts. Setting the path explicitly skips it.
+    # Only affects where upstream's stock unit file lands; deploy.sh installs
+    # its own mavlink-router.service to /etc/systemd/system, which wins.
+    meson setup build . --buildtype=release \
+        -Dsystemdsystemunitdir=/lib/systemd/system
     ninja -C build
     sudo ninja -C build install
     cd - > /dev/null
@@ -92,12 +100,13 @@ echo ""
 echo "1. System wpa_supplicant may need to be disabled to avoid conflicts"
 echo "   with the one used for wlan1. Don't forget to unmask and enable hostapd."
 echo ""
-echo "2. UART must be enabled for the flight controller link."
-echo "   In /boot/firmware/config.txt:"
-echo "     enable_uart=1"
-echo "     dtoverlay=disable-bt"
-echo "   Then: sudo systemctl disable hciuart && sudo reboot"
-echo "   deploy.sh checks for this and warns if missing."
+echo "2. UART must be prepared for the flight controller link."
+echo "   The PL011 UART is claimed by Bluetooth by default and a serial"
+echo "   console sits on GPIO14/15. After running deploy.sh:"
+echo "     sudo /opt/nucleus/bin/drone-uart-setup.sh"
+echo "     sudo reboot"
+echo "   Verify with: python3 /opt/nucleus/drone/fc-link-check.py"
+echo "   Details: docs/drone/uart-setup.md"
 echo ""
 echo "3. Tailscale is installed but NOT connected."
 echo "   - Connect: sudo tailscale up"

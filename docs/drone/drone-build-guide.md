@@ -103,6 +103,20 @@ SERIAL3_PROTOCOL = 2        # MAVLink2
 SERIAL3_BAUD     = 921      # 921600
 ```
 
+### Pi UART prerequisite
+
+`/dev/ttyAMA0` does not exist on a stock image — the Bluetooth controller holds
+the PL011 UART, and a serial console sits on GPIO14/15. Before mavlink-router
+can open the port:
+
+```bash
+sudo /opt/nucleus/bin/drone-uart-setup.sh
+sudo reboot
+python3 /opt/nucleus/drone/fc-link-check.py
+```
+
+Full explanation in `uart-setup.md`.
+
 ### mavlink-router config
 
 ```ini

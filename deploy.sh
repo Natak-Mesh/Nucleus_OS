@@ -5,20 +5,66 @@
 # NOTE: Check IP addresses in babeld.conf, ensure they match your system
 # NOTE: Run 'sudo /opt/nucleus/bin/sd-wear-setup.sh' after deploy to minimize SD card wear
 # NOTE: UART must be enabled for the FC link (this script checks and warns)
+# NOTE: Pass --force-config to overwrite an existing /etc/nucleus/mesh.conf with
+#       the repo template. Without it, node identity (MESH_IP etc.) is preserved.
 
 set -e
+
+# Parse flags
+FORCE_CONFIG=false
+for arg in "$@"; do
+    case "$arg" in
+        --force-config) FORCE_CONFIG=true ;;
+    esac
+done
 
 SOURCE_DIR="$(pwd)"
 
 echo "Deploying from $SOURCE_DIR..."
 
-# Unblock Bluetooth
-sudo rfkill unblock bluetooth
+# NOTE: Bluetooth is deliberately NOT unblocked on the drone build. The
+# Bluetooth controller claims the PL011 UART, which is the port the flight
+# controller needs (/dev/ttyAMA0 on GPIO14/15). See docs/drone/uart-setup.md.
 
 # Copy etc files (only static configs - generated ones are created by config_generation.sh)
 sudo mkdir -p /etc/nucleus
-sudo cp "$SOURCE_DIR/etc/nucleus/mesh.conf" /etc/nucleus/
-sudo chown natak:natak /etc/nucleus/mesh.conf
+if [ ! -f /etc/nucleus/mesh.conf ] || [ "$FORCE_CONFIG" = "true" ]; then
+    # Fresh node (or forced): install the repo mesh.conf as-is.
+    sudo cp "$SOURCE_DIR/etc/nucleus/mesh.conf" /etc/nucleus/
+    sudo chown natak:natak /etc/nucleus/mesh.conf
+else
+    # Existing node: preserve all current values, only ADD keys that are
+    # missing (e.g. keys introduced by new features). The repo mesh.conf is
+    # the source of truth for the full set of keys, their defaults, and the
+    # comment block that precedes each key. Never edits or deletes existing
+    # lines. Idempotent — safe to re-run.
+    #
+    # This matters because the repo template carries placeholder node identity
+    # (MESH_IP, BR_LAN_IP, AP_NAME ...). Copying it over a live node would
+    # rewrite that node's address and drop it off the mesh.
+    echo "mesh.conf exists — syncing any missing keys (existing values preserved)"
+    REPO_CONF="$SOURCE_DIR/etc/nucleus/mesh.conf"
+    NODE_CONF="/etc/nucleus/mesh.conf"
+    ADDED=0
+    buffer=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            key="${line%%=*}"
+            if grep -q "^${key}=" "$NODE_CONF"; then
+                buffer=""                      # key present: drop its comments
+            else
+                { [ -n "$buffer" ] && printf '%s' "$buffer"; printf '%s\n' "$line"; } \
+                    | sudo tee -a "$NODE_CONF" > /dev/null
+                echo "  + added $key"
+                ADDED=$((ADDED+1))
+                buffer=""
+            fi
+        else
+            buffer+="$line"$'\n'                # accumulate comments/blank lines
+        fi
+    done < "$REPO_CONF"
+    [ "$ADDED" -eq 0 ] && echo "  mesh.conf already up to date"
+fi
 
 sudo mkdir -p /etc/systemd/network
 sudo cp "$SOURCE_DIR/etc/systemd/network/20-brlan.netdev" /etc/systemd/network/
@@ -57,6 +103,8 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/mesh-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/eth0-mode.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/drone-uart-setup.sh" /opt/nucleus/bin/
+sudo chmod +x /opt/nucleus/bin/drone-uart-setup.sh
 sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
@@ -86,11 +134,16 @@ sudo systemctl restart babeld.service
 sudo systemctl enable smcroute.service
 sudo systemctl restart smcroute.service
 
-# Verify UART is enabled for the flight controller link.
-# The Pi's PL011 UART (/dev/ttyAMA0) is assigned to Bluetooth by default, so
-# it must be released with dtoverlay=disable-bt before the FC can use it.
+# Verify the UART is ready for the flight controller link.
+# The Pi's PL011 UART (/dev/ttyAMA0) is claimed by the Bluetooth controller by
+# default, and a serial console + login prompt sit on GPIO14/15. All of that
+# has to be undone before the FC link works. drone-uart-setup.sh does it.
+# See docs/drone/uart-setup.md for the full explanation.
 BOOT_CONFIG=/boot/firmware/config.txt
 [ -f "$BOOT_CONFIG" ] || BOOT_CONFIG=/boot/config.txt
+
+BOOT_CMDLINE=/boot/firmware/cmdline.txt
+[ -f "$BOOT_CMDLINE" ] || BOOT_CMDLINE=/boot/cmdline.txt
 
 UART_WARN=0
 if [ -f "$BOOT_CONFIG" ]; then
@@ -100,20 +153,30 @@ else
     UART_WARN=1
 fi
 
+# A serial console on GPIO14/15 transmits kernel output into the FC's RX pin.
+if [ -f "$BOOT_CMDLINE" ] && \
+   grep -qE 'console=(serial0|ttyAMA0|ttyS0)' "$BOOT_CMDLINE"; then
+    UART_WARN=1
+fi
+
+# /dev/ttyAMA0 missing means the PL011 is still bound to Bluetooth.
+[ -e /dev/ttyAMA0 ] || UART_WARN=1
+
 if [ "$UART_WARN" -eq 1 ]; then
     echo ""
     echo "=================================================="
     echo "  WARNING: UART not configured for the FC link"
     echo "=================================================="
-    echo "  Add to $BOOT_CONFIG:"
-    echo "    enable_uart=1"
-    echo "    dtoverlay=disable-bt"
-    echo "  Then run:"
-    echo "    sudo systemctl disable hciuart"
+    echo "  Run:"
+    echo "    sudo /opt/nucleus/bin/drone-uart-setup.sh"
     echo "    sudo reboot"
+    echo ""
+    echo "  Then verify with:"
+    echo "    python3 /opt/nucleus/drone/fc-link-check.py"
     echo ""
     echo "  Until this is done, mavlink-router cannot open"
     echo "  /dev/ttyAMA0 and the drone will not be controllable."
+    echo "  Details: docs/drone/uart-setup.md"
     echo "=================================================="
     echo ""
 fi
