@@ -189,6 +189,12 @@ EOF
 # Mode=Server means mavlink-router listens for GCS clients rather than
 # pushing to a fixed address — any ground station on the mesh can connect
 # to MESH_IP:MAVLINK_UDP_PORT, and multiple GCS can attach at once.
+#
+# Only generated when DRONE_ENABLED=true. mavlink-router.service carries
+# ConditionPathExists=/etc/mavlink-router/main.conf, so removing this file
+# is what keeps the daemon from running on nodes that are not part of the
+# drone mesh — no process, no UART held, no CPU used.
+if [ "${DRONE_ENABLED}" = "true" ]; then
 mkdir -p /etc/mavlink-router
 cat > /etc/mavlink-router/main.conf <<EOF
 # ============================================================
@@ -212,5 +218,60 @@ Mode = Server
 Address = 0.0.0.0
 Port = ${MAVLINK_UDP_PORT}
 EOF
+
+    systemctl enable mavlink-router.service >/dev/null 2>&1 || true
+
+    # Verify the UART is ready for the flight controller link.
+    # The Pi's PL011 UART (/dev/ttyAMA0) is claimed by the Bluetooth controller
+    # by default, and a serial console + login prompt sit on GPIO14/15. All of
+    # that has to be undone before the FC link works. drone-uart-setup.sh does
+    # it. See docs/drone/uart-setup.md for the full explanation.
+    BOOT_CONFIG=/boot/firmware/config.txt
+    [ -f "$BOOT_CONFIG" ] || BOOT_CONFIG=/boot/config.txt
+
+    BOOT_CMDLINE=/boot/firmware/cmdline.txt
+    [ -f "$BOOT_CMDLINE" ] || BOOT_CMDLINE=/boot/cmdline.txt
+
+    UART_WARN=0
+    if [ -f "$BOOT_CONFIG" ]; then
+        grep -q '^enable_uart=1' "$BOOT_CONFIG" || UART_WARN=1
+        grep -q '^dtoverlay=disable-bt' "$BOOT_CONFIG" || UART_WARN=1
+    else
+        UART_WARN=1
+    fi
+
+    # A serial console on GPIO14/15 transmits kernel output into the FC's RX pin.
+    if [ -f "$BOOT_CMDLINE" ] && \
+       grep -qE 'console=(serial0|ttyAMA0|ttyS0)' "$BOOT_CMDLINE"; then
+        UART_WARN=1
+    fi
+
+    # /dev/ttyAMA0 missing means the PL011 is still bound to Bluetooth.
+    [ -e /dev/ttyAMA0 ] || UART_WARN=1
+
+    if [ "$UART_WARN" -eq 1 ]; then
+        echo ""
+        echo "=================================================="
+        echo "  WARNING: UART not configured for the FC link"
+        echo "=================================================="
+        echo "  Run:"
+        echo "    sudo /opt/nucleus/bin/drone-uart-setup.sh"
+        echo "    sudo reboot"
+        echo ""
+        echo "  Then verify with:"
+        echo "    python3 /opt/nucleus/drone/fc-link-check.py"
+        echo ""
+        echo "  Until this is done, mavlink-router cannot open"
+        echo "  /dev/ttyAMA0 and the drone will not be controllable."
+        echo "  Details: docs/drone/uart-setup.md"
+        echo "=================================================="
+        echo ""
+    fi
+else
+    # Drone role off: remove any config left from a previous run so the
+    # service's ConditionPathExists fails and mavlink-router stays inert.
+    rm -f /etc/mavlink-router/main.conf
+    systemctl disable --now mavlink-router.service >/dev/null 2>&1 || true
+fi
 
 echo "Configuration files generated successfully."

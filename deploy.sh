@@ -4,7 +4,9 @@
 # NOTE: Run ./install-packages.sh first to install required software packages
 # NOTE: Check IP addresses in babeld.conf, ensure they match your system
 # NOTE: Run 'sudo /opt/nucleus/bin/sd-wear-setup.sh' after deploy to minimize SD card wear
-# NOTE: UART must be enabled for the FC link (this script checks and warns)
+# NOTE: This script only copies files into place. Node behaviour is decided by
+#       /etc/nucleus/mesh.conf and applied by config_generation.sh, which is
+#       what enables or disables the drone/MAVLink services.
 # NOTE: Pass --force-config to overwrite an existing /etc/nucleus/mesh.conf with
 #       the repo template. Without it, node identity (MESH_IP etc.) is preserved.
 
@@ -94,7 +96,9 @@ sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/sys
 sudo systemctl daemon-reload
 sudo systemctl enable brlan-setup.service
 sudo systemctl enable mesh-start.service
-sudo systemctl enable mavlink-router.service
+# mavlink-router.service is installed above but deliberately not enabled here.
+# config_generation.sh enables or disables it based on DRONE_ENABLED in
+# /etc/nucleus/mesh.conf, after the user has had a chance to set that value.
 
 # Copy opt files
 sudo mkdir -p /opt/nucleus/bin
@@ -133,52 +137,5 @@ sudo systemctl enable babeld.service
 sudo systemctl restart babeld.service
 sudo systemctl enable smcroute.service
 sudo systemctl restart smcroute.service
-
-# Verify the UART is ready for the flight controller link.
-# The Pi's PL011 UART (/dev/ttyAMA0) is claimed by the Bluetooth controller by
-# default, and a serial console + login prompt sit on GPIO14/15. All of that
-# has to be undone before the FC link works. drone-uart-setup.sh does it.
-# See docs/drone/uart-setup.md for the full explanation.
-BOOT_CONFIG=/boot/firmware/config.txt
-[ -f "$BOOT_CONFIG" ] || BOOT_CONFIG=/boot/config.txt
-
-BOOT_CMDLINE=/boot/firmware/cmdline.txt
-[ -f "$BOOT_CMDLINE" ] || BOOT_CMDLINE=/boot/cmdline.txt
-
-UART_WARN=0
-if [ -f "$BOOT_CONFIG" ]; then
-    grep -q '^enable_uart=1' "$BOOT_CONFIG" || UART_WARN=1
-    grep -q '^dtoverlay=disable-bt' "$BOOT_CONFIG" || UART_WARN=1
-else
-    UART_WARN=1
-fi
-
-# A serial console on GPIO14/15 transmits kernel output into the FC's RX pin.
-if [ -f "$BOOT_CMDLINE" ] && \
-   grep -qE 'console=(serial0|ttyAMA0|ttyS0)' "$BOOT_CMDLINE"; then
-    UART_WARN=1
-fi
-
-# /dev/ttyAMA0 missing means the PL011 is still bound to Bluetooth.
-[ -e /dev/ttyAMA0 ] || UART_WARN=1
-
-if [ "$UART_WARN" -eq 1 ]; then
-    echo ""
-    echo "=================================================="
-    echo "  WARNING: UART not configured for the FC link"
-    echo "=================================================="
-    echo "  Run:"
-    echo "    sudo /opt/nucleus/bin/drone-uart-setup.sh"
-    echo "    sudo reboot"
-    echo ""
-    echo "  Then verify with:"
-    echo "    python3 /opt/nucleus/drone/fc-link-check.py"
-    echo ""
-    echo "  Until this is done, mavlink-router cannot open"
-    echo "  /dev/ttyAMA0 and the drone will not be controllable."
-    echo "  Details: docs/drone/uart-setup.md"
-    echo "=================================================="
-    echo ""
-fi
 
 echo "Deployment complete."
