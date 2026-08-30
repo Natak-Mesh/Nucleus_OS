@@ -11,7 +11,7 @@ The "Gateway to" section in the web interface filters routes to reduce clutter:
 - Keeps internet gateway routes (0.0.0.0/0) if present
 """
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, send_file
 import socket
 import subprocess
 import re
@@ -940,9 +940,10 @@ def api_dashboard():
         radio_detected = bool(glob.glob('/dev/ttyACM*'))
         radio_transport = 'USB serial'
 
-    # Check bridge config flag and OTS enabled flag
+    # Check bridge config flag, OTS enabled flag, and official TAK Server flag
     bridge_enabled = False
-    ots_enabled = True  # default to showing the button
+    ots_enabled = False  # default to hiding the button
+    official_takserver = False  # default to hiding the TAK Server Certs page
     try:
         with open('/etc/nucleus/mesh.conf', 'r') as f:
             for line in f:
@@ -953,6 +954,9 @@ def api_dashboard():
                 elif stripped.startswith('OTS_ENABLED='):
                     val = stripped.split('=', 1)[1].strip('"').lower()
                     ots_enabled = val in ('true', '1', 'yes')
+                elif stripped.startswith('official_takserver='):
+                    val = stripped.split('=', 1)[1].strip('"').lower()
+                    official_takserver = val in ('true', '1', 'yes')
     except Exception:
         pass
 
@@ -977,6 +981,7 @@ def api_dashboard():
         'neighbors': neighbors,
         'channel_utilization': channel_util,
         'ots_enabled': ots_enabled,
+        'official_takserver': official_takserver,
         'meshtastic': {
             'radio_detected': radio_detected,
             'radio_transport': radio_transport,
@@ -2213,6 +2218,36 @@ def ots_proxy(subpath=''):
     This bypasses the OTS_IP_WHITELIST since Flask connects from 127.0.0.1.
     """
     return _proxy_to_ots(subpath)
+
+
+# Directory holding the official TAK Server certificates (intermediate + webadmin).
+TAKSERVER_CERTS_DIR = '/home/natak/takserver_certs'
+
+
+@app.route('/takserver-certs')
+def takserver_certs_page():
+    """Official TAK Server certificate download page."""
+    return render_template('takserver_certs.html')
+
+
+@app.route('/api/takserver-certs/download/intermediate')
+def download_takserver_intermediate():
+    """Download the intermediate (truststore) cert from ~/takserver_certs.
+    The file is named truststore-INT-<serial>.p12, so glob for it."""
+    matches = sorted(glob.glob(os.path.join(TAKSERVER_CERTS_DIR, 'truststore-INT-*.p12')))
+    if not matches:
+        return jsonify({'error': 'Intermediate certificate not found'}), 404
+    return send_file(matches[-1], as_attachment=True,
+                     download_name=os.path.basename(matches[-1]))
+
+
+@app.route('/api/takserver-certs/download/webadmin')
+def download_takserver_webadmin():
+    """Download the webadmin cert from ~/takserver_certs."""
+    path = os.path.join(TAKSERVER_CERTS_DIR, 'webadmin.p12')
+    if not os.path.isfile(path):
+        return jsonify({'error': 'WebAdmin certificate not found'}), 404
+    return send_file(path, as_attachment=True, download_name='webadmin.p12')
 
 
 if __name__ == '__main__':
