@@ -16,3 +16,11 @@ natak ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active cot-bridge.service
 
 # Allow natak user to reboot (needed when disabling CoT bridge to release radio BT)
 natak ALL=(ALL) NOPASSWD: /usr/sbin/reboot
+
+# Allow natak user to run the node update flow without a password (needed by
+# nucleus-update.sh / the web update button). The update script runs the repo's
+# install-packages.sh and deploy.sh via sudo; sudo matches by resolved absolute
+# path, so these entries use the repo's absolute paths.
+natak ALL=(ALL) NOPASSWD: /opt/nucleus/bin/nucleus-update.sh
+natak ALL=(ALL) NOPASSWD: /home/natak/Nucleus_OS/install-packages.sh
+natak ALL=(ALL) NOPASSWD: /home/natak/Nucleus_OS/deploy.sh

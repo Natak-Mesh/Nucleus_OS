@@ -261,7 +261,9 @@
                     <a href="/meshtastic" class="pill">Meshtastic</a>
                     <a href="/reticulum" class="pill">Reticulum</a>
                     <a href="/opentakserver" class="pill" id="pill-ots">OpenTAKServer</a>
+                    <a href="/takserver-certs" class="pill" id="pill-takserver-certs" style="display:none">TAK Server Certs</a>
                     <a href="/pathtrace" class="pill">Path Trace</a>
+                    <a href="/update" class="pill">Update</a>
                 </div>
             </div>
 
@@ -442,6 +444,10 @@
                 // Show/hide OpenTAKServer pill based on OTS_ENABLED
                 const otsPill = document.getElementById('pill-ots');
                 if (otsPill) otsPill.style.display = d.ots_enabled ? '' : 'none';
+
+                // Show/hide TAK Server Certs pill based on official_takserver
+                const takCertsPill = document.getElementById('pill-takserver-certs');
+                if (takCertsPill) takCertsPill.style.display = d.official_takserver ? '' : 'none';
 
                 // Timestamp + version
                 const t = new Date(d.timestamp);

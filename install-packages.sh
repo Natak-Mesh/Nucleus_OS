@@ -60,7 +60,7 @@ pip3 install --break-system-packages nomadnet
 # takproto: TAK Protocol V1 (protobuf) encoding/decoding
 pip3 install --break-system-packages "git+https://github.com/Natak-Mesh/takproto.git"
 # meshtastic-tak: TAKPacketV2 conversion + zstd dictionary compression
-pip3 install --break-system-packages --upgrade "git+https://github.com/meshtastic/TAKPacket-SDK.git#subdirectory=python"
+pip3 install --break-system-packages "git+https://github.com/meshtastic/TAKPacket-SDK.git@v0.9.1#subdirectory=python"
 
 # LoRa Voice→Text (openvlm-voice.py) — offline STT + TTS
 # vosk: streaming speech-to-text (transcribes while PTT is held)
@@ -171,6 +171,15 @@ if docker images | grep -q opendht-alpine; then
 else
     docker pull ghcr.io/savoirfairelinux/opendht/opendht-alpine
     echo "OpenDHT image pulled successfully."
+fi
+
+# Pull meshtasticd image (for RAK Pi HAT LoRa radio via SPI/GPIO)
+echo "[6b/8] Pulling meshtasticd Docker image..."
+if docker images | grep -q "meshtastic/meshtasticd"; then
+    echo "meshtasticd image already exists."
+else
+    docker pull meshtastic/meshtasticd:daily-alpine
+    echo "meshtasticd image pulled successfully."
 fi
 
 # Install Yggdrasil

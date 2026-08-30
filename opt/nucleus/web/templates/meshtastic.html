@@ -307,7 +307,7 @@
                     const radioStatus = document.getElementById('radio-status');
                     if (data.radio_detected) {
                         radioDot.className = 'status-dot active';
-                        radioStatus.textContent = 'Detected (USB serial)';
+                        radioStatus.textContent = 'Detected (' + (data.radio_transport || 'radio') + ')';
                         radioStatus.style.color = '#00ff88';
                     } else {
                         radioDot.className = 'status-dot error';

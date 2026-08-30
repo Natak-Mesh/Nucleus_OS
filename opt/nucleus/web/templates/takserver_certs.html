@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Natak Mesh - TAK Server Certs</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
+        <nav>
+            <button class="nav-btn" onclick="window.location.href='/'">← Back to Menu</button>
+        </nav>
+    </header>
+
+    <main>
+        <div class="dashboard">
+            <h1>TAK Server Certificates</h1>
+
+            <p style="color: var(--text-secondary); max-width: 520px; margin: 0 auto 24px auto; text-align: center;">
+                Download the certificates needed to enroll a device with this
+                node's TAK Server, or open the WebAdmin panel.
+            </p>
+
+            <div style="text-align: center;">
+                <a href="/api/takserver-certs/download/intermediate"
+                   class="nav-btn"
+                   style="display: inline-block; text-decoration: none; font-size: 1.1rem; padding: 12px 32px; background-color: #1A09f1; margin: 8px;">
+                    Download Intermediate Cert
+                </a>
+                <br>
+                <a href="/api/takserver-certs/download/webadmin"
+                   class="nav-btn"
+                   style="display: inline-block; text-decoration: none; font-size: 1.1rem; padding: 12px 32px; background-color: #1A09f1; margin: 8px;">
+                    Download WebAdmin Cert
+                </a>
+                <br>
+                <a id="webadmin-link" href="#" target="_blank"
+                   class="nav-btn"
+                   style="display: inline-block; text-decoration: none; font-size: 1.1rem; padding: 12px 32px; background-color: var(--accent-primary); margin: 8px;">
+                    Open WebAdmin Panel ↗
+                </a>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // WebAdmin is HTTPS on port 8443 of the host the user is browsing.
+        document.getElementById('webadmin-link').href =
+            'https://' + window.location.hostname + ':8443';
+    </script>
+</body>
+</html>

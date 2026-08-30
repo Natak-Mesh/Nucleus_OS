@@ -98,6 +98,11 @@ sudo cp "$SOURCE_DIR/etc/systemd/system/mediamtx.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/openvlm-voice.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
 sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/systemd/system/babeld.service.d/
+# takserver ordering drop-in: gate the official TAK Server behind the mesh.
+# Inert on nodes without takserver installed (most nodes) — the drop-in only
+# applies if a takserver.service exists.
+sudo mkdir -p /etc/systemd/system/takserver.service.d
+sudo cp "$SOURCE_DIR/etc/systemd/system/takserver.service.d/override.conf" /etc/systemd/system/takserver.service.d/
 sudo systemctl daemon-reload
 sudo systemctl enable brlan-setup.service
 sudo systemctl enable mesh-start.service
@@ -114,9 +119,12 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/config_generation.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/mesh-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/eth0-mode.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/opendht-start.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/meshtasticd-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/nucleus-update.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/ufw-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/openvlm-voice.py" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/voice" /usr/local/bin/
 # Example STT grammar phrase list (opt-in constrained recognition, see
@@ -127,9 +135,12 @@ sudo chmod +x /opt/nucleus/bin/config_generation.sh
 sudo chmod +x /opt/nucleus/bin/mesh-start.sh
 sudo chmod +x /opt/nucleus/bin/eth0-mode.sh
 sudo chmod +x /opt/nucleus/bin/opendht-start.sh
+sudo chmod +x /opt/nucleus/bin/meshtasticd-start.sh
 sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
 sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 sudo chmod +x /opt/nucleus/bin/iw-wifi-scan.sh
+sudo chmod +x /opt/nucleus/bin/nucleus-update.sh
+sudo chmod +x /opt/nucleus/bin/ufw-setup.sh
 sudo chmod +x /opt/nucleus/bin/openvlm-voice.py
 sudo chmod +x /usr/local/bin/voice
 # Restart voice daemon so a deploy picks up new openvlm-voice.py immediately.
@@ -180,5 +191,9 @@ sudo systemctl enable babeld.service
 sudo systemctl restart babeld.service
 sudo systemctl enable smcroute.service
 sudo systemctl restart smcroute.service
+
+# Apply UFW mesh-fabric rules (trust wlan0/wlan1/br-lan, preserve SSH).
+# Idempotent and allow-only — safe to re-run, can never block access.
+sudo /opt/nucleus/bin/ufw-setup.sh
 
 echo "Deployment complete."

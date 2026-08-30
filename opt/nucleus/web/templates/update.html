@@ -1,0 +1,208 @@
+sudo <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Natak Mesh - System Update</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn-primary { background-color: #4a6fff; color: #ffffff; }
+        .btn-primary:hover { opacity: 0.8; }
+        .btn-primary:disabled { background-color: #555; cursor: not-allowed; opacity: 0.5; }
+        .btn-reboot { background-color: #ff4444; color: #ffffff; }
+        .btn-reboot:hover { opacity: 0.8; }
+        .btn-reboot:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .indicator {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: bold;
+        }
+        .indicator.online { background: #2d4d2d; color: #00ff88; }
+        .indicator.offline { background: #4d2d2d; color: #ff8080; }
+        .indicator.checking { background: #333; color: #a0a0a0; }
+
+        .update-log {
+            background: #1a1a1a;
+            border: 1px solid #333333;
+            border-radius: 4px;
+            padding: 12px;
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 13px;
+            color: #c0c0c0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .result-msg {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 4px;
+            display: none;
+        }
+        .result-msg.success { background: #2d4d2d; color: #00ff88; }
+        .result-msg.error { background: #4d2d2d; color: #ff8080; }
+    </style>
+</head>
+<body>
+    <header>
+        <img src="{{ url_for('static', filename='images/NatakMeshsecondary-overlay.png') }}" alt="Natak Mesh" class="logo">
+        <nav>
+            <button class="nav-btn" onclick="window.location.href='/'">← Back to Menu</button>
+        </nav>
+    </header>
+
+    <main>
+        <div style="max-width: 800px; margin: 0 auto;">
+            <h1>System Update</h1>
+
+            <!-- Status -->
+            <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h2 style="margin-top: 0;">Network</h2>
+                <div>Git remote: <span id="net-indicator" class="indicator checking">Checking...</span></div>
+                <p style="color: #a0a0a0; margin-bottom: 0;">
+                    Updates pull the latest code and re-run the install/deploy/config flow.
+                    Your mesh configuration is preserved. The node does <strong>not</strong> reboot automatically.
+                </p>
+            </div>
+
+            <!-- Actions -->
+            <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h2 style="margin-top: 0;">Update</h2>
+                <button id="btn-update" class="btn btn-primary" onclick="startUpdate()" disabled>Update Now</button>
+
+                <div id="result-msg" class="result-msg"></div>
+                <pre id="update-log" class="update-log"></pre>
+            </div>
+
+            <!-- Reboot -->
+            <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h2 style="margin-top: 0;">Reboot</h2>
+                <p style="color: #a0a0a0;">A reboot is recommended after a successful update to apply all changes.</p>
+                <button id="btn-reboot" class="btn btn-reboot" onclick="rebootNode()">Reboot Node</button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let pollTimer = null;
+        let wanOk = false;
+
+        // Check WAN reachability once on page load.
+        async function checkStatus() {
+            const ind = document.getElementById('net-indicator');
+            try {
+                const r = await fetch('/api/update/status');
+                const d = await r.json();
+                wanOk = !!d.wan;
+                if (wanOk) {
+                    ind.className = 'indicator online';
+                    ind.textContent = 'Reachable';
+                } else {
+                    ind.className = 'indicator offline';
+                    ind.textContent = 'Offline';
+                }
+                // Only enable Update when online and not already running.
+                document.getElementById('btn-update').disabled = !wanOk || d.running;
+                if (d.running) startPolling();
+            } catch (e) {
+                ind.className = 'indicator offline';
+                ind.textContent = 'Error';
+                document.getElementById('btn-update').disabled = true;
+            }
+        }
+
+        async function startUpdate() {
+            const btn = document.getElementById('btn-update');
+            btn.disabled = true;
+            btn.textContent = 'Updating...';
+
+            const result = document.getElementById('result-msg');
+            result.style.display = 'none';
+            const log = document.getElementById('update-log');
+            log.style.display = 'block';
+            log.textContent = 'Starting update...';
+
+            try {
+                const r = await fetch('/api/update/run', { method: 'POST' });
+                const d = await r.json();
+                if (!r.ok) {
+                    showResult(d.error || 'Failed to start update', false);
+                    btn.textContent = 'Update Now';
+                    btn.disabled = !wanOk;
+                    return;
+                }
+                startPolling();
+            } catch (e) {
+                showResult('Error: ' + e.message, false);
+                btn.textContent = 'Update Now';
+                btn.disabled = !wanOk;
+            }
+        }
+
+        function startPolling() {
+            const btn = document.getElementById('btn-update');
+            btn.disabled = true;
+            btn.textContent = 'Updating...';
+            document.getElementById('update-log').style.display = 'block';
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = setInterval(pollProgress, 1000);
+            pollProgress();
+        }
+
+        async function pollProgress() {
+            try {
+                const r = await fetch('/api/update/progress');
+                const d = await r.json();
+                const log = document.getElementById('update-log');
+                log.textContent = (d.log || []).join('\n');
+                log.scrollTop = log.scrollHeight;
+
+                if (!d.running && d.status !== 'idle') {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    const btn = document.getElementById('btn-update');
+                    btn.textContent = 'Update Now';
+                    btn.disabled = !wanOk;
+                    showResult(d.message, d.status === 'done');
+                }
+            } catch (e) {
+                /* transient - keep polling */
+            }
+        }
+
+        function showResult(msg, ok) {
+            const result = document.getElementById('result-msg');
+            result.textContent = msg;
+            result.className = 'result-msg ' + (ok ? 'success' : 'error');
+            result.style.display = 'block';
+        }
+
+        async function rebootNode() {
+            if (!confirm('Reboot this node now?')) return;
+            const btn = document.getElementById('btn-reboot');
+            btn.disabled = true;
+            btn.textContent = 'Rebooting...';
+            try {
+                await fetch('/api/reboot', { method: 'POST' });
+            } catch (e) { /* expected - node is rebooting */ }
+        }
+
+        checkStatus();
+    </script>
+</body>
+</html>

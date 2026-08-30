@@ -46,22 +46,36 @@ if [ "${USB_HUB_POWER_CYCLE}" = "true" ]; then
     if command -v uhubctl &> /dev/null; then
         ACM_DEV=/dev/ttyACM0
         USB_CYCLE_MAX_ATTEMPTS=${USB_CYCLE_MAX_ATTEMPTS:-3}
-        USB_CYCLE_SETTLE=${USB_CYCLE_SETTLE:-10}
+        # meshtasticd needs longer settle: after USB power-cycle the
+        # container must detect the re-appeared device and re-handshake
+        if [ "${MESHTASTICD_ENABLED}" = "true" ]; then
+            USB_CYCLE_SETTLE=${USB_CYCLE_SETTLE:-20}
+        else
+            USB_CYCLE_SETTLE=${USB_CYCLE_SETTLE:-10}
+        fi
 
         radio_responds() {
-            # Returns 0 only if the Meshtastic firmware actually answers on the
-            # serial port. Device-node existence is NOT sufficient — a hung
-            # radio still enumerates and creates /dev/ttyACM0 — so we perform a
-            # real handshake via the meshtastic CLI. The port is free here
-            # because cot-bridge.service starts After=mesh-start.service.
+            # Returns 0 only if the Meshtastic firmware actually answers.
+            # Device-node existence is NOT sufficient — a hung radio still
+            # enumerates and creates /dev/ttyACM0 — so we perform a real
+            # handshake via the meshtastic CLI.
             #
-            # IMPORTANT: the serial handshake is ONLY performed when the CoT
-            # bridge is enabled. Opening the serial API on the RAK4631 stops
-            # BLE advertising and it does not resume, so when the bridge is
-            # disabled (radio in BLE mode for the phone app) we must never
-            # touch the serial port — device enumeration is the only check.
+            # Three modes:
+            #   meshtasticd (TCP): wait for USB device, then probe via TCP.
+            #     meshtasticd handles the serial connection; we verify
+            #     end-to-end by checking the TCP API after the USB device
+            #     reappears. Longer timeout (30s) because meshtasticd must
+            #     detect the re-appeared device and re-handshake.
+            #   Serial + bridge: probe the serial port directly (20s timeout).
+            #     The port is free here because cot-bridge.service starts
+            #     After=mesh-start.service.
+            #   Serial + no bridge (BLE mode): device existence only.
+            #     Opening the serial API on the RAK4631 stops BLE
+            #     advertising — never touch the serial port in BLE mode.
             [ -e "$ACM_DEV" ] || return 1
-            if [ "${COT_BRIDGE_ENABLED}" = "true" ]; then
+            if [ "${MESHTASTICD_ENABLED}" = "true" ]; then
+                timeout 30 meshtastic --host localhost --info >/dev/null 2>&1
+            elif [ "${COT_BRIDGE_ENABLED}" = "true" ]; then
                 timeout 20 meshtastic --port "$ACM_DEV" --info >/dev/null 2>&1
             else
                 return 0
@@ -214,6 +228,11 @@ fi
 # Start OpenDHT if enabled
 if [ -f /opt/nucleus/bin/opendht-start.sh ]; then
     /opt/nucleus/bin/opendht-start.sh
+fi
+
+# Start meshtasticd if enabled (auto-detects USB radio vs Pi HAT SPI/GPIO)
+if [ -f /opt/nucleus/bin/meshtasticd-start.sh ]; then
+    /opt/nucleus/bin/meshtasticd-start.sh
 fi
 
 # Restart cot-bridge so it detects br-lan subnet for TX source filtering.
