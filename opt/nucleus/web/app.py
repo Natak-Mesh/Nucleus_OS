@@ -41,6 +41,7 @@ except ImportError as e:
 BABELD_HOST = 'localhost'
 BABELD_PORT = 33123
 REFRESH_INTERVAL = 5  # seconds
+REPO_DIR = '/home/natak/Nucleus_OS'  # Nucleus_OS git repo (source of updates)
 DISCONNECTED_DISPLAY_TIME = 60  # seconds
 
 # Store node history
@@ -57,6 +58,34 @@ scan_state = {
     'start_time': None
 }
 scan_lock = threading.Lock()
+
+# Node update state (nucleus-update.sh runs in the background; the web UI polls
+# /api/update/progress to stream the live log, mirroring the channel scan flow).
+update_state = {
+    'status': 'idle',      # idle, running, done, error
+    'running': False,
+    'returncode': None,
+    'message': '',
+    'log': [],
+    'start_time': None,
+}
+update_lock = threading.Lock()
+
+# Absolute path to the node update script (installed by deploy.sh).
+NUCLEUS_UPDATE_SCRIPT = '/opt/nucleus/bin/nucleus-update.sh'
+
+# Human-readable outcome for each nucleus-update.sh exit code.
+UPDATE_EXIT_MESSAGES = {
+    0: 'Update applied successfully. A reboot is recommended.',
+    1: 'Already up to date - no changes pulled.',
+    2: 'Offline - could not reach the git remote.',
+    3: 'Local changes present (dirty working tree) - update stopped.',
+    4: 'git pull failed.',
+    5: 'install-packages.sh failed.',
+    6: 'deploy.sh failed.',
+    7: 'config_generation.sh failed.',
+    8: 'Environment error (repo missing or not a git repo).',
+}
 
 
 def query_babeld():
@@ -675,6 +704,54 @@ def format_duration(delta):
         return f"{hours}h {minutes}m"
 
 
+def run_nucleus_update():
+    """Run nucleus-update.sh in the background, streaming its output into
+    update_state so the web UI can poll it live (like the channel scan)."""
+    global update_state
+
+    with update_lock:
+        update_state['status'] = 'running'
+        update_state['running'] = True
+        update_state['returncode'] = None
+        update_state['message'] = ''
+        update_state['log'] = []
+        update_state['start_time'] = time.time()
+
+    try:
+        proc = subprocess.Popen(
+            ['sudo', NUCLEUS_UPDATE_SCRIPT],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        # Stream output line by line into the shared log (capped to avoid
+        # unbounded memory growth on a long-running node).
+        for line in iter(proc.stdout.readline, ''):
+            line = line.rstrip('\n')
+            with update_lock:
+                update_state['log'].append(line)
+                if len(update_state['log']) > 1000:
+                    update_state['log'] = update_state['log'][-1000:]
+        proc.stdout.close()
+        rc = proc.wait()
+
+        message = UPDATE_EXIT_MESSAGES.get(rc, f'Update finished (exit {rc}).')
+        with update_lock:
+            update_state['status'] = 'done' if rc in (0, 1) else 'error'
+            update_state['returncode'] = rc
+            update_state['message'] = message
+            update_state['running'] = False
+
+    except Exception as e:
+        with update_lock:
+            update_state['status'] = 'error'
+            update_state['returncode'] = -1
+            update_state['message'] = f'Failed to run update: {e}'
+            update_state['running'] = False
+
+
 def run_channel_scan(duration):
     """Run channel scan using iw-wifi-scan.sh script"""
     global scan_state
@@ -1012,6 +1089,84 @@ def scan():
 def remote():
     """Remote access management page"""
     return render_template('remote.html')
+
+
+@app.route('/update')
+def update_page():
+    """Node software update page"""
+    return render_template('update.html')
+
+
+@app.route('/api/update/status', methods=['GET'])
+def get_update_status():
+    """Report WAN reachability to the git remote so the UI can enable/disable
+    the Update button. Checked on page load (not polled)."""
+    wan = False
+    try:
+        result = subprocess.run(
+            ['git', 'ls-remote', 'origin'],
+            cwd=REPO_DIR,
+            capture_output=True, text=True, timeout=20
+        )
+        wan = result.returncode == 0
+    except Exception:
+        wan = False
+
+    with update_lock:
+        running = update_state['running']
+
+    return jsonify({
+        'wan': wan,
+        'running': running,
+    })
+
+
+@app.route('/api/update/run', methods=['POST'])
+def run_update():
+    """Launch nucleus-update.sh in the background (non-blocking)."""
+    with update_lock:
+        if update_state['running']:
+            return jsonify({'error': 'Update already in progress'}), 400
+
+    thread = threading.Thread(target=run_nucleus_update)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({
+        'success': True,
+        'message': 'Update started',
+    })
+
+
+@app.route('/api/update/progress', methods=['GET'])
+def get_update_progress():
+    """Return the live update status and log (polled while running)."""
+    with update_lock:
+        return jsonify({
+            'status': update_state['status'],
+            'running': update_state['running'],
+            'returncode': update_state['returncode'],
+            'message': update_state['message'],
+            'log': list(update_state['log']),
+        })
+
+
+@app.route('/api/reboot', methods=['POST'])
+def reboot_node():
+    """Reboot the node (explicit operator action, separate from update)."""
+    try:
+        def do_reboot():
+            time.sleep(1)
+            subprocess.Popen(['sudo', 'reboot'])
+
+        threading.Thread(target=do_reboot, daemon=True).start()
+
+        return jsonify({
+            'success': True,
+            'message': 'Node rebooting...'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 def get_interface_ips(interfaces=('eth0', 'br-lan', 'tailscale0')):
