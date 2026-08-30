@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Python
 __pycache__/
 *.pyc
@@ -17,9 +16,3 @@ Thumbs.db
 # Logs & temp
 *.log
 *.tmp
-=======
-# Python bytecode
-__pycache__/
-*.pyc
-*.pyo
->>>>>>> a195e2b (Add .gitignore for Python bytecode; untrack committed .pyc)

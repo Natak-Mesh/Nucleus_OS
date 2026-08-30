@@ -118,6 +118,7 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/meshtasticd-start.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/nucleus-update.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/openvlm-voice.py" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/voice" /usr/local/bin/
 # Example STT grammar phrase list (opt-in constrained recognition, see
@@ -132,6 +133,7 @@ sudo chmod +x /opt/nucleus/bin/meshtasticd-start.sh
 sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
 sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 sudo chmod +x /opt/nucleus/bin/iw-wifi-scan.sh
+sudo chmod +x /opt/nucleus/bin/nucleus-update.sh
 sudo chmod +x /opt/nucleus/bin/openvlm-voice.py
 sudo chmod +x /usr/local/bin/voice
 # Restart voice daemon so a deploy picks up new openvlm-voice.py immediately.
