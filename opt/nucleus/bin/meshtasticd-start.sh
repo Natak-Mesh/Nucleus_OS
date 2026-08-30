@@ -65,8 +65,31 @@ else
     echo "meshtasticd: generated new MAC ${MAC_ADDR}"
 fi
 
-# Write config.yaml with MAC address
-cat > "${MESHTASTICD_DIR}/config.yaml" <<EOF
+# Extract the selected LoRa hardware config (contains the slot's Lora: block
+# with the correct spidev/IRQ/Reset/Busy pin mapping) from the image.
+# NOTE: config.d overlay merging does NOT reliably apply in this image, and
+# "Lora: Module: auto" forces HAT+ autoconf which mis-detects the slot. So we
+# inline the slot's Lora: block directly into config.yaml, which is honored.
+SLOT_YAML="${MESHTASTICD_DIR}/${LORA_CONFIG}.yaml"
+echo "meshtasticd: extracting ${LORA_CONFIG}.yaml from image..."
+docker run --rm "${MESHTASTICD_IMAGE}" \
+    cat "/etc/meshtasticd/available.d/${LORA_CONFIG}.yaml" > "$SLOT_YAML" 2>/dev/null
+
+# Build config.yaml: the slot file's Lora: block + our General: MAC address.
+if [ -s "$SLOT_YAML" ] && grep -q '^Lora:' "$SLOT_YAML"; then
+    {
+        echo "---"
+        # Emit the Lora: block from the slot file (from 'Lora:' up to the next
+        # top-level key or EOF), stripping the Meta: section.
+        awk '/^Lora:/{f=1} f&&/^[A-Za-z]/&&!/^Lora:/{if(NR>1&&$0!~/^Lora:/){exit}} f{print}' "$SLOT_YAML"
+        echo ""
+        echo "General:"
+        echo "  MACAddress: ${MAC_ADDR}"
+    } > "${MESHTASTICD_DIR}/config.yaml"
+    echo "meshtasticd: config.yaml built for ${LORA_CONFIG}"
+else
+    echo "WARNING: failed to extract ${LORA_CONFIG}.yaml — falling back to Module: auto"
+    cat > "${MESHTASTICD_DIR}/config.yaml" <<EOF
 ---
 Lora:
   Module: auto
@@ -74,17 +97,6 @@ Lora:
 General:
   MACAddress: ${MAC_ADDR}
 EOF
-
-# Copy LoRa hardware config from the image's available.d if not already present
-CONFIG_FILE="${MESHTASTICD_DIR}/config.d/${LORA_CONFIG}.yaml"
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "meshtasticd: extracting ${LORA_CONFIG}.yaml from image..."
-    docker run --rm "${MESHTASTICD_IMAGE}" \
-        cat "/etc/meshtasticd/available.d/${LORA_CONFIG}.yaml" > "$CONFIG_FILE" 2>/dev/null
-    if [ ! -s "$CONFIG_FILE" ]; then
-        echo "WARNING: failed to extract ${LORA_CONFIG}.yaml — file not found in image"
-        rm -f "$CONFIG_FILE"
-    fi
 fi
 
 # Stop existing container if running
