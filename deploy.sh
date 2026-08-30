@@ -124,6 +124,7 @@ sudo cp "$SOURCE_DIR/opt/nucleus/bin/sd-wear-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/ram-optimize.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/iw-wifi-scan.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/nucleus-update.sh" /opt/nucleus/bin/
+sudo cp "$SOURCE_DIR/opt/nucleus/bin/ufw-setup.sh" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/openvlm-voice.py" /opt/nucleus/bin/
 sudo cp "$SOURCE_DIR/opt/nucleus/bin/voice" /usr/local/bin/
 # Example STT grammar phrase list (opt-in constrained recognition, see
@@ -139,6 +140,7 @@ sudo chmod +x /opt/nucleus/bin/sd-wear-setup.sh
 sudo chmod +x /opt/nucleus/bin/ram-optimize.sh
 sudo chmod +x /opt/nucleus/bin/iw-wifi-scan.sh
 sudo chmod +x /opt/nucleus/bin/nucleus-update.sh
+sudo chmod +x /opt/nucleus/bin/ufw-setup.sh
 sudo chmod +x /opt/nucleus/bin/openvlm-voice.py
 sudo chmod +x /usr/local/bin/voice
 # Restart voice daemon so a deploy picks up new openvlm-voice.py immediately.
@@ -189,5 +191,9 @@ sudo systemctl enable babeld.service
 sudo systemctl restart babeld.service
 sudo systemctl enable smcroute.service
 sudo systemctl restart smcroute.service
+
+# Apply UFW mesh-fabric rules (trust wlan0/wlan1/br-lan, preserve SSH).
+# Idempotent and allow-only — safe to re-run, can never block access.
+sudo /opt/nucleus/bin/ufw-setup.sh
 
 echo "Deployment complete."
