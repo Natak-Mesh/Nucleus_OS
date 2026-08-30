@@ -29,7 +29,7 @@
 #   7  config_generation.sh failed
 #   8  environment/setup error (repo missing, not a git repo, etc.)
 
-REPO_DIR="${NUCLEUS_REPO_DIR:-$HOME/Nucleus_OS}"
+REPO_DIR="${NUCLEUS_REPO_DIR:-$(eval echo ~"${SUDO_USER:-$USER}")/Nucleus_OS}"
 MESH_CONF="/etc/nucleus/mesh.conf"
 LOG_FILE="/var/log/nucleus-update.log"
 
