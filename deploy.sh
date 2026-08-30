@@ -98,6 +98,11 @@ sudo cp "$SOURCE_DIR/etc/systemd/system/mediamtx.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/openvlm-voice.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
 sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/systemd/system/babeld.service.d/
+# takserver ordering drop-in: gate the official TAK Server behind the mesh.
+# Inert on nodes without takserver installed (most nodes) — the drop-in only
+# applies if a takserver.service exists.
+sudo mkdir -p /etc/systemd/system/takserver.service.d
+sudo cp "$SOURCE_DIR/etc/systemd/system/takserver.service.d/override.conf" /etc/systemd/system/takserver.service.d/
 sudo systemctl daemon-reload
 sudo systemctl enable brlan-setup.service
 sudo systemctl enable mesh-start.service
