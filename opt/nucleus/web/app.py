@@ -933,10 +933,12 @@ def api_dashboard():
     # Use the meshtastic_api helper if available (handles both USB serial
     # and meshtasticd TCP), fall back to the old glob check.
     try:
-        from meshtastic_api import _radio_detected
+        from meshtastic_api import _radio_detected, _is_meshtasticd
         radio_detected = _radio_detected()
+        radio_transport = 'meshtasticd (SPI/HAT)' if _is_meshtasticd() else 'USB serial'
     except ImportError:
         radio_detected = bool(glob.glob('/dev/ttyACM*'))
+        radio_transport = 'USB serial'
 
     # Check bridge config flag and OTS enabled flag
     bridge_enabled = False
@@ -977,6 +979,7 @@ def api_dashboard():
         'ots_enabled': ots_enabled,
         'meshtastic': {
             'radio_detected': radio_detected,
+            'radio_transport': radio_transport,
             'bridge_enabled': bridge_enabled,
             'nodes': meshtastic_nodes,
         },
