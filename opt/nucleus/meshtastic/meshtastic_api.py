@@ -607,24 +607,65 @@ def _parse_export(yaml_text):
 
 
 def _read_config_from_radio():
-    """Export config from the radio and parse it. Caller must hold the
-    lock and have the bridge paused. Raises RuntimeError on failure."""
+    """Read config directly from the radio via the meshtastic Python API
+    and parse it. Caller must hold the lock and have the bridge paused.
+    Raises RuntimeError on failure.
+
+    Does NOT use `meshtastic --export-config`: on meshtasticd/firmware 2.8
+    that CLI path hangs forever in Node.get_ringtone() (the firmware only
+    acks the request, never answers, and the CLI loop has no timeout).
+    Only the fields the UI needs are read here.
+    """
     try:
-        os.remove(EXPORT_TMP_PATH)
-    except OSError:
-        pass
-
-    rc, out = _run_meshtastic(['--export-config', EXPORT_TMP_PATH])
-    if rc != 0:
-        raise RuntimeError(f'Config export failed: {out[-300:]}')
+        from meshtastic.protobuf import config_pb2
+        if _is_meshtasticd():
+            from meshtastic.tcp_interface import TCPInterface
+            iface = TCPInterface(hostname=MESHTASTICD_HOST,
+                                 portNumber=MESHTASTICD_PORT)
+        else:
+            from meshtastic.serial_interface import SerialInterface
+            iface = SerialInterface()
+    except Exception as e:
+        raise RuntimeError(f'Radio connect failed: {e}')
 
     try:
-        with open(EXPORT_TMP_PATH) as f:
-            yaml_text = f.read()
-    except OSError as e:
-        raise RuntimeError(f'Export file not written: {e}')
+        node = iface.localNode
+        # Bounded wait for localConfig (interface already waits for the
+        # initial config handshake, but guard against a missing lora block).
+        deadline = time.time() + 15
+        while time.time() < deadline and not node.localConfig.HasField('lora'):
+            time.sleep(0.2)
+        if not node.localConfig.HasField('lora'):
+            raise RuntimeError('Timed out waiting for radio config')
 
-    parsed = _parse_export(yaml_text)
+        lora = node.localConfig.lora
+        device = node.localConfig.device
+        channel_url = node.getURL() or ''
+        channels = _decode_channel_url(channel_url)
+
+        parsed = {
+            'owner': iface.getLongName() or '',
+            'owner_short': iface.getShortName() or '',
+            'region': config_pb2.Config.LoRaConfig.RegionCode.Name(lora.region),
+            'modem_preset': config_pb2.Config.LoRaConfig.ModemPreset.Name(
+                lora.modem_preset),
+            'hop_limit': lora.hop_limit,
+            'tx_power': lora.tx_power,
+            'role': config_pb2.Config.DeviceConfig.Role.Name(device.role),
+            'channel_url': channel_url,
+            'channels': channels,
+            'channel_name': channels[0]['name'] if channels else '',
+        }
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f'Config read failed: {e}')
+    finally:
+        try:
+            iface.close()
+        except Exception:
+            pass
+
     parsed['read_at'] = int(time.time())
     _write_cache(parsed)
     return parsed
