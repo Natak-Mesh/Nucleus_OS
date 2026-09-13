@@ -321,4 +321,31 @@ else
     systemctl disable --now lidar-bridge.service >/dev/null 2>&1 || true
 fi
 
+# ============================================================
+# GPS / GNSS monitor
+# ============================================================
+# The GNSS receiver on the SIM7600 modem streams NMEA on /dev/ttyUSB1.
+# gps-monitor.py reads it and keeps the current fix in /run/nucleus/gps.json
+# (tmpfs, overwritten in place — no log growth, no SD wear). Look at it with
+# gps-status.py. Independent of the drone role: it holds a different port to
+# the FC link and injects nothing into MAVLink (that comes later).
+#
+# The unit carries ConditionPathExists on the flag file below, so removing it
+# keeps the monitor inert on nodes without GNSS enabled.
+if [ "${GPS_ENABLED}" = "true" ]; then
+    touch /etc/nucleus/gps-monitor.enabled
+    systemctl enable gps-monitor.service >/dev/null 2>&1 || true
+
+    if [ ! -e "${GPS_SERIAL:-/dev/ttyUSB1}" ]; then
+        echo ""
+        echo "  NOTE: ${GPS_SERIAL:-/dev/ttyUSB1} not present. The GNSS port is"
+        echo "  either not enumerated yet or the modem is absent. gps-monitor"
+        echo "  retries on error, so it will pick the port up when it appears."
+        echo ""
+    fi
+else
+    rm -f /etc/nucleus/gps-monitor.enabled
+    systemctl disable --now gps-monitor.service >/dev/null 2>&1 || true
+fi
+
 echo "Configuration files generated successfully."

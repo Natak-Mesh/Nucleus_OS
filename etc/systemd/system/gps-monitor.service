@@ -1,0 +1,23 @@
+[Unit]
+Description=GNSS Monitor (SIM7600 NMEA to /run/nucleus/gps.json)
+ConditionPathExists=/etc/nucleus/gps-monitor.enabled
+
+[Service]
+Type=simple
+# Runs as natak because it is in the dialout group, which is what grants
+# access to the GNSS serial port (/dev/ttyUSB1 on the SIM7600 modem).
+User=natak
+Group=dialout
+# systemd creates and owns /run/nucleus (tmpfs). The monitor writes the
+# current fix there, overwriting in place — no log growth, no SD wear.
+RuntimeDirectory=nucleus
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/bin/python3 /opt/nucleus/drone/gps-monitor.py
+Restart=always
+RestartSec=2
+# No routine logging by design. Only genuine crashes reach the journal.
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
