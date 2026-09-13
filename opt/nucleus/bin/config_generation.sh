@@ -285,6 +285,97 @@ fi
         echo "=================================================="
         echo ""
     fi
+
+    # ------------------------------------------------------------
+    # Camera preflight check (warn-only, never edits boot config)
+    # ------------------------------------------------------------
+    # Unlike a regular Pi 4/5 (camera_auto_detect=1 just works), a Compute
+    # Module has no camera EEPROM and needs the sensor declared explicitly,
+    # on the correct CSI port. The right config is board-specific, and a bad
+    # boot config on a flight platform is a brick risk, so we DETECT AND WARN
+    # rather than write config.txt. See docs/drone/drone-hardware.md.
+    if [ "${CAMERA_ENABLED}" = "true" ]; then
+        CAM_WARN=0
+        CAM_MSG=""
+        SENSOR="${CAMERA_SENSOR:-imx708}"
+        CSI_PORT="${CAMERA_CSI_PORT:-cam0}"
+
+        MODEL=""
+        [ -f /proc/device-tree/model ] && MODEL="$(tr -d '\0' < /proc/device-tree/model)"
+
+        case "$MODEL" in
+            *"Compute Module"*)
+                # CM4/CM5: explicit overlay + regulator, no auto-detect.
+                if [ -f "$BOOT_CONFIG" ]; then
+                    grep -q "^dtoverlay=${SENSOR},${CSI_PORT}" "$BOOT_CONFIG" || {
+                        CAM_WARN=1; CAM_MSG="${CAM_MSG}    dtoverlay=${SENSOR},${CSI_PORT}\n"; }
+                    grep -q "^dtparam=i2c_vc=on" "$BOOT_CONFIG" || {
+                        CAM_WARN=1; CAM_MSG="${CAM_MSG}    dtparam=i2c_vc=on\n"; }
+                    grep -q "^dtparam=${CSI_PORT}_reg=on" "$BOOT_CONFIG" || {
+                        CAM_WARN=1; CAM_MSG="${CAM_MSG}    dtparam=${CSI_PORT}_reg=on\n"; }
+                    # auto-detect finds nothing on a CM and must be off.
+                    if grep -q "^camera_auto_detect=1" "$BOOT_CONFIG"; then
+                        CAM_WARN=1
+                        CAM_MSG="${CAM_MSG}    # comment out: camera_auto_detect=1 (no effect on a CM)\n"
+                    fi
+                    # Trixie trap: Waveshare's dt-blob/fkms path is wrong here.
+                    if grep -q "^dtoverlay=vc4-fkms-v3d" "$BOOT_CONFIG"; then
+                        CAM_WARN=1
+                        CAM_MSG="${CAM_MSG}    # replace vc4-fkms-v3d with vc4-kms-v3d\n"
+                    fi
+                    if [ -f /boot/firmware/dt-blob.bin ] || [ -f /boot/dt-blob.bin ]; then
+                        CAM_WARN=1
+                        CAM_MSG="${CAM_MSG}    # remove /boot/firmware/dt-blob.bin (legacy, breaks kms camera)\n"
+                    fi
+                else
+                    CAM_WARN=1
+                fi
+                ;;
+            *)
+                # Regular Pi (or unknown): auto-detect is the correct path, and
+                # the CM-only lines must NOT be present (e.g. card moved boards).
+                if [ -f "$BOOT_CONFIG" ]; then
+                    grep -q "^camera_auto_detect=1" "$BOOT_CONFIG" || {
+                        CAM_WARN=1; CAM_MSG="${CAM_MSG}    camera_auto_detect=1\n"; }
+                    if grep -qE "^dtparam=(cam0|cam1)_reg=on|^dtparam=i2c_vc=on" "$BOOT_CONFIG"; then
+                        CAM_WARN=1
+                        CAM_MSG="${CAM_MSG}    # remove CM-only lines (i2c_vc / camN_reg) - not for a Pi 4/5\n"
+                    fi
+                fi
+                ;;
+        esac
+
+        # Cross-check the live state regardless of board.
+        if command -v rpicam-hello >/dev/null 2>&1; then
+            if ! rpicam-hello --list-cameras 2>/dev/null | grep -q ":"; then
+                CAM_WARN=1
+            fi
+        fi
+        if dmesg 2>/dev/null | grep -q "failed to read chip id"; then
+            CAM_WARN=1
+            CAM_MSG="${CAM_MSG}    # dmesg shows 'failed to read chip id' - wrong CSI port? try the other (cam0<->cam1)\n"
+        fi
+
+        if [ "$CAM_WARN" -eq 1 ]; then
+            echo ""
+            echo "=================================================="
+            echo "  WARNING: camera not configured on this board"
+            echo "=================================================="
+            echo "  Board:  ${MODEL:-unknown}"
+            echo "  Sensor: ${SENSOR}   Port: ${CSI_PORT}"
+            echo "  Boot config: ${BOOT_CONFIG}"
+            if [ -n "$CAM_MSG" ]; then
+                echo "  Needs (edit manually, then reboot):"
+                printf "$CAM_MSG"
+            fi
+            echo ""
+            echo "  Verify with:"
+            echo "    rpicam-hello --list-cameras"
+            echo "  Details: docs/drone/drone-hardware.md"
+            echo "=================================================="
+            echo ""
+        fi
+    fi
 else
     # Drone role off: remove any config left from a previous run so the
     # service's ConditionPathExists fails and mavlink-router stays inert.
