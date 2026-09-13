@@ -31,7 +31,10 @@ sudo apt install -y \
   meson \
   ninja-build \
   pkg-config \
-  g++
+  g++ \
+  gstreamer1.0-tools \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad
 
 # Install Python packages
 echo "[3/5] Installing Python packages..."

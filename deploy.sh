@@ -96,6 +96,7 @@ sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-start-retry.service" /etc/systemd/s
 sudo cp "$SOURCE_DIR/etc/systemd/system/mavlink-router.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/lidar-bridge.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/gps-monitor.service" /etc/systemd/system/
+sudo cp "$SOURCE_DIR/etc/systemd/system/nucleus-video.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
 sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/systemd/system/babeld.service.d/
 sudo systemctl daemon-reload
@@ -129,6 +130,9 @@ if [ -d "$SOURCE_DIR/opt/nucleus/drone" ]; then
     sudo mkdir -p /opt/nucleus/drone
     sudo cp "$SOURCE_DIR/opt/nucleus/drone/"*.py /opt/nucleus/drone/
     sudo chmod +x /opt/nucleus/drone/*.py
+    # video-stream.sh is a shell script, so the *.py copy above misses it.
+    sudo cp "$SOURCE_DIR/opt/nucleus/drone/video-stream.sh" /opt/nucleus/drone/
+    sudo chmod +x /opt/nucleus/drone/video-stream.sh
 fi
 
 sudo chown -R natak:natak /opt/nucleus/

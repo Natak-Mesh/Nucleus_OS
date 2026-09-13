@@ -1,0 +1,24 @@
+[Unit]
+Description=Nucleus Video Stream (CSI camera H.264 to GCS over RTP)
+After=mesh-start.service network-online.target
+Wants=mesh-start.service
+ConditionPathExists=/etc/nucleus/video.enabled
+
+[Service]
+Type=simple
+# Runs as natak in the video group, which is what grants access to the
+# camera devices (/dev/video*). rpicam-vid captures and encodes; gstreamer
+# payloads to RTP and sends.
+User=natak
+Group=video
+ExecStart=/opt/nucleus/drone/video-stream.sh
+Restart=always
+RestartSec=5
+# Cap RAM. The pipeline is light, but this build has a memory-pressure
+# history, so a hard limit keeps a runaway from taking the node down.
+MemoryMax=192M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

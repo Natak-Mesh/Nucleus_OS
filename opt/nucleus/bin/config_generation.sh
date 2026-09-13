@@ -19,6 +19,15 @@ set -e
 #############################################
 
 
+# Migrate the old per-protocol key name to the shared one, in place, before
+# sourcing. MAVLINK_GCS_IP became GCS_IP (one GCS address, shared by telemetry
+# push and video). deploy.sh's key-sync would otherwise leave the stale key and
+# add an empty GCS_IP, silently dropping the node's configured address.
+if grep -q '^MAVLINK_GCS_IP=' /etc/nucleus/mesh.conf && \
+   ! grep -q '^GCS_IP=' /etc/nucleus/mesh.conf; then
+    sed -i 's/^MAVLINK_GCS_IP=/GCS_IP=/' /etc/nucleus/mesh.conf
+fi
+
 # Source configuration
 source /etc/nucleus/mesh.conf
 
@@ -220,19 +229,19 @@ EOF
 
 # Optional push endpoint. The server above waits for a GCS to speak first,
 # which means nothing crosses the mesh until the ground station sends a
-# packet. Setting MAVLINK_GCS_IP adds a push endpoint that streams to that
+# packet. Setting GCS_IP adds a push endpoint that streams to that
 # address unprompted, so telemetry flows as soon as both nodes are up.
 #
 # This build of mavlink-router spells the push mode "Normal". "Client" is
 # rejected at parse time and the daemon exits with:
 #     Unknown 'mode' key: Client
 # Do not "correct" Normal to Client.
-if [ -n "${MAVLINK_GCS_IP}" ]; then
+if [ -n "${GCS_IP}" ]; then
 cat >> /etc/mavlink-router/main.conf <<EOF
 
 [UdpEndpoint gcs_push]
 Mode = Normal
-Address = ${MAVLINK_GCS_IP}
+Address = ${GCS_IP}
 Port = ${MAVLINK_UDP_PORT}
 EOF
 fi
@@ -437,6 +446,35 @@ if [ "${GPS_ENABLED}" = "true" ]; then
 else
     rm -f /etc/nucleus/gps-monitor.enabled
     systemctl disable --now gps-monitor.service >/dev/null 2>&1 || true
+fi
+
+# ============================================================
+# Video stream
+# ============================================================
+# rpicam-vid captures + hardware-encodes H.264 from the CSI camera and
+# gstreamer wraps it in RTP, pushed to GCS_IP:VIDEO_UDP_PORT. QGC's
+# "UDP h.264" source is an RTP receiver, which is why gstreamer is in the
+# path rather than rpicam-vid's raw -o udp:// output.
+#
+# The unit carries ConditionPathExists on the flag file below, so removing
+# it keeps the stream inert on nodes without a camera enabled. Requires the
+# drone role and the camera, and GCS_IP must be set - the stream is a blind
+# push, it does not learn the peer the way MAVLink's server endpoint does.
+if [ "${DRONE_ENABLED}" = "true" ] && [ "${CAMERA_ENABLED}" = "true" ] \
+   && [ "${VIDEO_ENABLED}" = "true" ]; then
+    touch /etc/nucleus/video.enabled
+    systemctl enable nucleus-video.service >/dev/null 2>&1 || true
+
+    if [ -z "${GCS_IP}" ]; then
+        echo ""
+        echo "  NOTE: VIDEO_ENABLED=true but GCS_IP is empty. The stream is a"
+        echo "  blind push to GCS_IP, so nucleus-video.service will start and"
+        echo "  exit until GCS_IP is set in /etc/nucleus/mesh.conf."
+        echo ""
+    fi
+else
+    rm -f /etc/nucleus/video.enabled
+    systemctl disable --now nucleus-video.service >/dev/null 2>&1 || true
 fi
 
 echo "Configuration files generated successfully."

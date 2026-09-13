@@ -119,28 +119,90 @@ and reboot. On this carrier the camera is on **CAM0**.
 The camera is independent of the flight controller — video and MAVLink are two
 separate streams that the GCS composites at display time.
 
+Run by `nucleus-video.service`, gated on `VIDEO_ENABLED` (plus `DRONE_ENABLED`
+and `CAMERA_ENABLED`) in `mesh.conf` and enabled by `config_generation.sh`,
+following the `mavlink-router.service` pattern. The pipeline it runs
+(`/opt/nucleus/drone/video-stream.sh`):
+
 ```bash
-rpicam-vid -t 0 --width 1280 --height 720 --framerate 30 \
-  --codec h264 --inline -n \
-  --bitrate 2000000 --intra 30 --profile baseline \
-  -o udp://<gcs-ip>:5600
+rpicam-vid -t 0 -n \
+  --width $VIDEO_WIDTH --height $VIDEO_HEIGHT --framerate $VIDEO_FPS \
+  --codec h264 --inline --intra $VIDEO_FPS --profile baseline \
+  --bitrate $VIDEO_BITRATE -o - \
+| gst-launch-1.0 -q fdsrc ! h264parse config-interval=1 \
+  ! rtph264pay pt=96 config-interval=1 mtu=1400 \
+  ! udpsink host=$GCS_IP port=$VIDEO_UDP_PORT sync=false
 ```
 
 QGC: Application Settings → Video → source `UDP h.264`, port `5600`.
 
+**gstreamer is in the path on purpose.** QGC's `UDP h.264` source is an RTP
+receiver, not a raw-stream reader, so `rpicam-vid -o udp://...` (raw Annex-B)
+will not render. `rpicam-vid` still does capture and hardware encode;
+`gst-launch` only wraps the H.264 in RTP (`rtph264pay`) and sends it. This also
+avoids needing `gstreamer1.0-libcamera` for capture.
+
 UDP not TCP — no ACKs or retransmits to consume airtime on the half-duplex
-mesh. `--inline` repeats SPS/PPS so a client can join mid-stream, `--intra 30`
-gives 1s keyframes for fast recovery, `--profile baseline` avoids B-frame
-reordering delay.
+mesh. `--inline` + `config-interval=1` repeat SPS/PPS so a client can join
+mid-stream, `--intra $VIDEO_FPS` gives 1s keyframes for fast recovery,
+`--profile baseline` avoids B-frame reordering delay, `mtu=1400` keeps RTP
+under the mesh MTU so the 802.11s path does not IP-fragment, and `sync=false`
+drops rather than buffers when the link congests.
 
-**Not persistent — must be started manually after every boot.** A
-`nucleus-video.service` gated on `DRONE_ENABLED`, following the
-`mavlink-router.service` pattern, is the obvious fix. Not yet built.
+The stream is a **blind push** to `GCS_IP` — unlike MAVLink's server endpoint,
+it does not learn the peer from an inbound packet, so `GCS_IP` must be set in
+`mesh.conf`. Defaults are 640x480@30 at 750 kbps, conservative for a loaded or
+multi-hop mesh; a single-hop bench link can go to 1280x720 via the `VIDEO_*`
+keys.
 
-Only one process can hold the camera at a time. If a second `rpicam-vid` is
-started it may take the port but fail to get the sensor (`Device or resource
-busy`, `Failed to queue buffer`), accepting connections while sending no
-frames. Fix with `pkill -f rpicam-vid`, then start one instance.
+Only one process can hold the camera at a time. `video-stream.sh` runs
+`pkill -f rpicam-vid` before starting for this reason: a second `rpicam-vid`
+takes the port but fails to get the sensor (`Device or resource busy`,
+`Failed to queue buffer`), accepting connections while sending no frames.
+
+#### Verified manual command
+
+Confirmed working from `lte-nucleus`, IMX708 on `cam0`, streaming to
+QGroundControl. Substitute `<gcs-ip>` for the GCS address:
+
+```bash
+rpicam-vid -t 0 -n --width 640 --height 480 --framerate 30 \
+  --codec h264 --inline --intra 30 --profile baseline --bitrate 750000 -o - \
+| gst-launch-1.0 -q fdsrc ! h264parse config-interval=1 \
+  ! rtph264pay pt=96 config-interval=1 mtu=1400 \
+  ! udpsink host=<gcs-ip> port=5600 sync=false
+```
+
+QGC: Application Settings → Video → Source `UDP h.264`, UDP URL
+`0.0.0.0:5600`. `0.0.0.0` means QGC listens on every interface; leave it as
+is — the drone pushes at the GCS, not the other way around.
+
+Tested over **Tailscale**, drone `100.91.66.103` → GCS `100.97.123.74`
+(`natak-pc-1`). The mesh path (`GCS_IP` = a `10.20.x.x` address) is the field
+path and is not yet verified.
+
+#### Known issue: stream stalls
+
+Seen once: video ran for a few seconds, then froze. Both `rpicam-vid` and
+`gst-launch` were still alive but in state `S (sleeping)` — a blocked pipeline,
+not a crash — and no packets were leaving the Pi. It did not recur on the next
+run with the same command; cause unknown.
+
+Confirm a stall (Pi stopped sending) versus a GCS-side drop:
+
+```bash
+timeout 5 tcpdump -ni any udp port 5600 | wc -l   # 0 = Pi is not sending
+```
+
+If it stalls, capture where each process is blocked **while it is still
+stalled** (the PIDs are gone once you kill it):
+
+```bash
+RP=$(pgrep -f 'rpicam-vid -t 0'); GS=$(pgrep -f 'gst-launch-1.0 -q fdsrc')
+cat /proc/$RP/wchan; echo; cat /proc/$GS/wchan; echo
+sudo cat /proc/$RP/stack; sudo cat /proc/$GS/stack
+ss -uanp | grep 5600
+```
 
 ## FC UART Allocation
 

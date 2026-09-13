@@ -33,7 +33,7 @@ LD06 LiDAR
 | `opt/nucleus/drone/lidar-bridge.py` | Reads the LiDAR, decodes its native frames, injects `DISTANCE_SENSOR` (msgid 132) into `mavlink-router` at 10 Hz. |
 | `etc/systemd/system/lidar-bridge.service` | Runs the bridge. `Restart=always`, gated on `/etc/nucleus/lidar-bridge.enabled`. |
 | `opt/nucleus/bin/config_generation.sh` | Generates `/etc/mavlink-router/main.conf` and the bridge's enable flag from `mesh.conf`. |
-| `/etc/nucleus/mesh.conf` | Node config. `LIDAR_*` and `MAVLINK_GCS_IP` keys. Not in git — per-node. |
+| `/etc/nucleus/mesh.conf` | Node config. `LIDAR_*` and `GCS_IP` keys. Not in git — per-node. |
 | `/etc/mavlink-router/main.conf` | Generated. Do not edit; changes are overwritten. |
 
 ### `lidar-bridge.py`
@@ -86,7 +86,7 @@ LIDAR_BAUD=230400          # LD06 is fixed at this rate
 LIDAR_ORIENTATION=25       # MAV_SENSOR_ROTATION_PITCH_270, straight down
                            # use 0 for forward-facing
 
-MAVLINK_GCS_IP=10.20.1.42  # push telemetry here unprompted
+GCS_IP=10.20.1.42          # push telemetry here unprompted
                            # empty = inbound GCS connections only
 ```
 
@@ -101,7 +101,7 @@ sudo systemctl restart mavlink-router lidar-bridge
 is nothing to inject into. Setting either to `false` removes the flag file and
 disables the unit.
 
-### `MAVLINK_GCS_IP`
+### `GCS_IP`
 
 Adds a second `UdpEndpoint` in `Mode = Normal` alongside the existing server,
 pushing to that address without waiting to be contacted. The server endpoint

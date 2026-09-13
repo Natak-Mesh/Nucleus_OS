@@ -146,7 +146,7 @@ All scripts source `/etc/nucleus/mesh.conf`:
 | `MAVLINK_SERIAL` | config_gen | `/dev/ttyAMA0` |
 | `MAVLINK_BAUD` | config_gen | `921600` |
 | `MAVLINK_UDP_PORT` | config_gen | `14550` |
-| `MAVLINK_GCS_IP` | config_gen | `10.20.1.42` (empty = inbound only) |
+| `GCS_IP` | config_gen | `10.20.1.42` (empty = inbound only) |
 | `LIDAR_ENABLED` | config_gen | `false` |
 | `LIDAR_SERIAL` | config_gen, lidar-bridge.py | `/dev/ttyUSB0` |
 | `LIDAR_BAUD` | lidar-bridge.py | `230400` |
