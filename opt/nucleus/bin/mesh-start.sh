@@ -104,3 +104,9 @@ fi
 
 
 
+
+# NOTE: This script is restarted once per boot by mesh-start-retry.service.
+# The mesh does not come up on the initial boot run of this script, but a
+# restart of mesh-start.service always brings it up. mesh-start-retry waits
+# 30s after mesh-start.service finishes, then restarts it once.
+# See: /etc/systemd/system/mesh-start-retry.service

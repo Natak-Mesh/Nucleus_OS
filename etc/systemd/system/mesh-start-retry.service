@@ -1,0 +1,12 @@
+[Unit]
+Description=Mesh Start Retry (one-shot restart of mesh-start)
+After=mesh-start.service
+Requires=mesh-start.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 30
+ExecStart=/bin/systemctl restart mesh-start.service
+
+[Install]
+WantedBy=multi-user.target

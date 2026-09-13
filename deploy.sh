@@ -90,6 +90,9 @@ sudo chown root:root /etc/sudoers.d/nucleus-config
 # Copy systemd service files
 sudo cp "$SOURCE_DIR/etc/systemd/system/brlan-setup.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-start.service" /etc/systemd/system/
+# mesh-start-retry restarts mesh-start.service once, 30s after boot. The mesh
+# does not come up on the initial boot run, but a restart reliably brings it up.
+sudo cp "$SOURCE_DIR/etc/systemd/system/mesh-start-retry.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/mavlink-router.service" /etc/systemd/system/
 sudo cp "$SOURCE_DIR/etc/systemd/system/lidar-bridge.service" /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/babeld.service.d
@@ -97,6 +100,7 @@ sudo cp "$SOURCE_DIR/etc/systemd/system/babeld.service.d/override.conf" /etc/sys
 sudo systemctl daemon-reload
 sudo systemctl enable brlan-setup.service
 sudo systemctl enable mesh-start.service
+sudo systemctl enable mesh-start-retry.service
 # mavlink-router.service and lidar-bridge.service are installed above but
 # deliberately not enabled here. config_generation.sh enables or disables them
 # based on DRONE_ENABLED and LIDAR_ENABLED in /etc/nucleus/mesh.conf, after the
