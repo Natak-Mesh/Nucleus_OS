@@ -1,0 +1,20 @@
+[Unit]
+Description=Enable SIM7600 GNSS engine + antenna bias (AT+CGPS / AT+CVAUXS)
+# Only run when the GPS monitor is enabled for this node.
+ConditionPathExists=/etc/nucleus/gps-monitor.enabled
+# The AT port only appears once the modem has enumerated.
+After=ModemManager.service
+Wants=ModemManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Runs as root (default). ModemManager holds the AT port with an exclusive
+# advisory lock (TIOCEXCL); only root can open the port anyway, so this must
+# not run as natak. The engine (AT+CGPS=1,1) and antenna bias (AT+CVAUXS=1)
+# do not survive a reboot or modem reset, so they are re-asserted here on
+# every start, before gps-monitor.service opens the NMEA port.
+ExecStart=/bin/sh -c 'printf "AT+CGPS=1,1\r\nAT+CVAUXS=1\r\n" > /dev/ttyUSB2'
+
+[Install]
+WantedBy=multi-user.target

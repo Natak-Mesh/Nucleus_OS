@@ -61,12 +61,21 @@ def render(state):
 
     age = time.time() - state.get("updated", 0)
     stale = age > 5
+    # sentence_age is the true liveness signal: the monitor rewrites the state
+    # file on a 1 Hz timer whether or not new NMEA arrived, so `updated` can
+    # look fresh while the port has gone silent. None means no valid sentence
+    # has ever been seen.
+    sentence_age = state.get("sentence_age")
     ft = state.get("fix_type", 0)
     status = FIX_NAMES.get(ft, "NO FIX")
     if not state.get("has_fix"):
         status += " (searching)"
     if stale:
         status += "  [STALE DATA]"
+    if sentence_age is None:
+        status += "  [NO DATA EVER]"
+    elif sentence_age > 5:
+        status += "  [STREAM STALLED]"
     lines.append(f"  Fix        : {status}")
     lines.append(f"  Satellites : {state.get('satellites_used', 0)} used / "
                  f"{state.get('satellites_visible', 0)} in view")
@@ -92,6 +101,10 @@ def render(state):
         dstr = f" {ud[0:2]}/{ud[2:4]}/{ud[4:6]}" if ud and len(ud) >= 6 else ""
         lines.append(f"  UTC        : {tstr}{dstr}")
     lines.append(f"  Data age   : {age:.1f} s")
+    if sentence_age is None:
+        lines.append("  Stream     : no NMEA received yet")
+    else:
+        lines.append(f"  Stream     : last sentence {sentence_age:.1f} s ago")
 
     sats = state.get("sats") or {}
     if sats:

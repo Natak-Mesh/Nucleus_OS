@@ -434,6 +434,9 @@ fi
 # keeps the monitor inert on nodes without GNSS enabled.
 if [ "${GPS_ENABLED}" = "true" ]; then
     touch /etc/nucleus/gps-monitor.enabled
+    # gps-modem-init (root oneshot) turns the GNSS engine + antenna bias on
+    # via AT before the monitor starts; gps-monitor Requires= pulls it in.
+    systemctl enable gps-modem-init.service >/dev/null 2>&1 || true
     systemctl enable gps-monitor.service >/dev/null 2>&1 || true
 
     if [ ! -e "${GPS_SERIAL:-/dev/ttyUSB1}" ]; then
@@ -446,6 +449,7 @@ if [ "${GPS_ENABLED}" = "true" ]; then
 else
     rm -f /etc/nucleus/gps-monitor.enabled
     systemctl disable --now gps-monitor.service >/dev/null 2>&1 || true
+    systemctl disable --now gps-modem-init.service >/dev/null 2>&1 || true
 fi
 
 # ============================================================

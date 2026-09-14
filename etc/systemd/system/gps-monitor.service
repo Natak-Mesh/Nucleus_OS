@@ -1,6 +1,11 @@
 [Unit]
 Description=GNSS Monitor (SIM7600 NMEA to /run/nucleus/gps.json)
 ConditionPathExists=/etc/nucleus/gps-monitor.enabled
+# gps-modem-init (root oneshot) switches the GNSS engine + antenna bias on
+# via AT before this monitor opens the NMEA port. Requires= pulls it in;
+# After= guarantees it completes first.
+Requires=gps-modem-init.service
+After=gps-modem-init.service
 
 [Service]
 Type=simple

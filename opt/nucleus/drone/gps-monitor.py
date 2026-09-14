@@ -38,6 +38,11 @@ from gps_nmea import (
 
 WRITE_HZ = 1.0
 
+# The GNSS engine and antenna bias (AT+CGPS / AT+CVAUXS) are enabled by the
+# gps-modem-init.service oneshot, which runs as root before this monitor.
+# ModemManager holds the AT port with an exclusive lock (TIOCEXCL) that only
+# root can bypass, so it cannot be done from here (this runs as natak).
+
 
 def write_state(path, fix):
     """Atomically overwrite the state file. Never appends.

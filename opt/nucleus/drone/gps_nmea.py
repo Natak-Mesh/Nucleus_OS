@@ -17,6 +17,8 @@ Sentences understood:
 "x" is the talker: GP (GPS), GL (GLONASS), GA (Galileo), GN (combined).
 """
 
+import time
+
 MESH_CONF = "/etc/nucleus/mesh.conf"
 
 DEFAULT_PORT = "/dev/ttyUSB1"
@@ -101,6 +103,12 @@ class Fix:
         # constellation -> {prn: snr_or_None}, rebuilt across GSV pages
         self.sats = {}
         self._gsv_acc = {}
+        # epoch time the last *valid* NMEA sentence arrived, or None if the
+        # stream has never produced one. This is the real freshness signal:
+        # gps-monitor writes the state file on a fixed 1 Hz timer regardless
+        # of whether new data came in, so the file's own timestamp cannot
+        # tell a live stream from a stalled port.
+        self.last_sentence = None
 
     @property
     def has_fix(self):
@@ -111,6 +119,9 @@ class Fix:
         sentence = sentence.strip()
         if not valid_checksum(sentence):
             return
+        # Only count sentences that pass the checksum — line noise on a
+        # dropping port must not look like a live stream.
+        self.last_sentence = time.time()
         body = sentence[1:].split("*", 1)[0]
         parts = body.split(",")
         talker, kind = parts[0][:2], parts[0][2:]
@@ -195,5 +206,8 @@ class Fix:
             "utc_time": self.utc_time,
             "utc_date": self.utc_date,
             "sats": self.sats,
+            "last_sentence": self.last_sentence,
+            "sentence_age": (time.time() - self.last_sentence
+                             if self.last_sentence is not None else None),
         }
 
