@@ -74,6 +74,14 @@ update_lock = threading.Lock()
 # Absolute path to the node update script (installed by deploy.sh).
 NUCLEUS_UPDATE_SCRIPT = '/opt/nucleus/bin/nucleus-update.sh'
 
+# The update script writes its REAL outcome to these files on disk. They are the
+# source of truth for /api/update/progress, because deploy.sh (run mid-update)
+# overwrites and restarts this web app — wiping the in-memory update_state. The
+# on-disk status survives that, so completion is reported from the script's
+# actual exit code, not from a process that may have been restarted under us.
+NUCLEUS_UPDATE_LOG = '/var/log/nucleus-update.log'
+NUCLEUS_UPDATE_STATUS = '/var/log/nucleus-update.status'
+
 # Human-readable outcome for each nucleus-update.sh exit code.
 UPDATE_EXIT_MESSAGES = {
     0: 'Update applied successfully. A reboot is recommended.',
@@ -704,6 +712,45 @@ def format_duration(delta):
         return f"{hours}h {minutes}m"
 
 
+def read_update_status():
+    """Read the on-disk status the update script writes (source of truth).
+
+    Returns a dict {status, rc} or None if the file is absent/unreadable.
+    status is 'running' or 'finished'; rc is the script's real exit code
+    (int) once finished, else None. This survives the web app being
+    restarted by deploy.sh mid-update.
+    """
+    try:
+        data = {}
+        with open(NUCLEUS_UPDATE_STATUS, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if '=' in line:
+                    k, v = line.split('=', 1)
+                    data[k] = v
+        if not data.get('status'):
+            return None
+        rc = data.get('rc')
+        return {
+            'status': data['status'],
+            'rc': int(rc) if rc is not None and rc != '' else None,
+        }
+    except (FileNotFoundError, ValueError):
+        return None
+    except Exception:
+        return None
+
+
+def read_update_log():
+    """Return the update log as a list of lines (capped), or [] if absent."""
+    try:
+        with open(NUCLEUS_UPDATE_LOG, 'r') as f:
+            lines = f.read().splitlines()
+        return lines[-1000:]
+    except Exception:
+        return []
+
+
 def run_nucleus_update():
     """Run nucleus-update.sh in the background, streaming its output into
     update_state so the web UI can poll it live (like the channel scan)."""
@@ -724,6 +771,10 @@ def run_nucleus_update():
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            # Run in its own session so the update is NOT killed when deploy.sh
+            # restarts this web app mid-run. The script's EXIT trap then still
+            # fires and records the real outcome in the status file.
+            start_new_session=True,
         )
 
         # Stream output line by line into the shared log (capped to avoid
@@ -1120,8 +1171,13 @@ def get_update_status():
     except Exception:
         wan = False
 
-    with update_lock:
-        running = update_state['running']
+    # On-disk status wins (survives a web app restart); fall back to memory.
+    disk = read_update_status()
+    if disk is not None:
+        running = disk['status'] == 'running'
+    else:
+        with update_lock:
+            running = update_state['running']
 
     return jsonify({
         'wan': wan,
@@ -1132,13 +1188,29 @@ def get_update_status():
 @app.route('/api/update/run', methods=['POST'])
 def run_update():
     """Launch nucleus-update.sh in the background (non-blocking)."""
+    disk = read_update_status()
+    if disk is not None and disk['status'] == 'running':
+        return jsonify({'error': 'Update already in progress'}), 400
     with update_lock:
         if update_state['running']:
             return jsonify({'error': 'Update already in progress'}), 400
 
+    # After a prior update the status file still reads 'finished'. We must not
+    # return until the script has overwritten it with a fresh 'running' state,
+    # otherwise the UI's first poll would read the PREVIOUS run's result and
+    # report "complete" for an update that just started.
     thread = threading.Thread(target=run_nucleus_update)
     thread.daemon = True
     thread.start()
+
+    # Wait (briefly) until the script has written status=running, so callers
+    # never see the stale finished state. Bounded so we never hang if the
+    # script fails to launch.
+    for _ in range(100):  # up to ~10s
+        cur = read_update_status()
+        if cur is not None and cur['status'] == 'running':
+            break
+        time.sleep(0.1)
 
     return jsonify({
         'success': True,
@@ -1148,7 +1220,36 @@ def run_update():
 
 @app.route('/api/update/progress', methods=['GET'])
 def get_update_progress():
-    """Return the live update status and log (polled while running)."""
+    """Return the update status and log (polled while running).
+
+    The on-disk status file written by nucleus-update.sh is the source of
+    truth: it holds the script's REAL exit code and survives deploy.sh
+    restarting this web app mid-update. We fall back to the in-memory
+    update_state only when no status file exists (e.g. the very first update
+    still run by an older script, or no update ever started).
+    """
+    disk = read_update_status()
+    if disk is not None:
+        if disk['status'] == 'finished':
+            rc = disk['rc']
+            status = 'done' if rc in (0, 1) else 'error'
+            message = UPDATE_EXIT_MESSAGES.get(rc, f'Update finished (exit {rc}).')
+            return jsonify({
+                'status': status,
+                'running': False,
+                'returncode': rc,
+                'message': message,
+                'log': read_update_log(),
+            })
+        # status == 'running'
+        return jsonify({
+            'status': 'running',
+            'running': True,
+            'returncode': None,
+            'message': '',
+            'log': read_update_log(),
+        })
+
     with update_lock:
         return jsonify({
             'status': update_state['status'],
@@ -2251,4 +2352,8 @@ def download_takserver_webadmin():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # debug=False: the Werkzeug auto-reloader must stay OFF. deploy.sh (run by
+    # the update flow) overwrites /opt/nucleus/web/app.py, and the reloader
+    # would restart this process mid-update, killing the flow. mesh-web.service
+    # has Restart=always, so we don't need the reloader for resilience.
+    app.run(host='0.0.0.0', port=5000, debug=False)

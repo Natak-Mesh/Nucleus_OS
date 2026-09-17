@@ -101,6 +101,7 @@ sudo <!DOCTYPE html>
     <script>
         let pollTimer = null;
         let wanOk = false;
+        let pollFails = 0;   // consecutive failed polls (web app restarting during update)
 
         // Check WAN reachability once on page load.
         async function checkStatus() {
@@ -159,6 +160,7 @@ sudo <!DOCTYPE html>
             btn.disabled = true;
             btn.textContent = 'Updating...';
             document.getElementById('update-log').style.display = 'block';
+            pollFails = 0;
             if (pollTimer) clearInterval(pollTimer);
             pollTimer = setInterval(pollProgress, 1000);
             pollProgress();
@@ -168,21 +170,39 @@ sudo <!DOCTYPE html>
             try {
                 const r = await fetch('/api/update/progress');
                 const d = await r.json();
-                const log = document.getElementById('update-log');
-                log.textContent = (d.log || []).join('\n');
-                log.scrollTop = log.scrollHeight;
+                pollFails = 0;   // a successful poll clears the restart counter
 
-                if (!d.running && d.status !== 'idle') {
-                    clearInterval(pollTimer);
-                    pollTimer = null;
-                    const btn = document.getElementById('btn-update');
-                    btn.textContent = 'Update Now';
-                    btn.disabled = !wanOk;
-                    showResult(d.message, d.status === 'done');
+                const log = document.getElementById('update-log');
+                if (d.log && d.log.length) {
+                    log.textContent = d.log.join('\n');
+                    log.scrollTop = log.scrollHeight;
+                }
+
+                // Only 'done' / 'error' are terminal, and they come from the
+                // script's REAL exit code (via the on-disk status file). We do
+                // NOT treat 'idle' as complete - that only means no update has
+                // run, so we keep polling until the script actually finishes.
+                if (d.status === 'done' || d.status === 'error') {
+                    finishUpdate(d.message, d.status === 'done');
                 }
             } catch (e) {
-                /* transient - keep polling */
+                // Transient failure - the web app is likely being restarted by
+                // deploy.sh mid-update. The script keeps running in its own
+                // session and records the real outcome on disk, so just keep
+                // polling; the next successful poll picks up the true result.
+                pollFails++;
+                if (pollFails > 120) {   // ~2 min of unbroken failures
+                    finishUpdate('Lost contact with the node. Check /var/log/nucleus-update.log, then reboot if the update completed.', false);
+                }
             }
+        }
+
+        function finishUpdate(msg, ok) {
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            const btn = document.getElementById('btn-update');
+            btn.textContent = 'Update Now';
+            btn.disabled = !wanOk;
+            showResult(msg, ok);
         }
 
         function showResult(msg, ok) {

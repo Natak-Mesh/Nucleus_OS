@@ -32,12 +32,35 @@
 REPO_DIR="${NUCLEUS_REPO_DIR:-$(eval echo ~"${SUDO_USER:-$USER}")/Nucleus_OS}"
 MESH_CONF="/etc/nucleus/mesh.conf"
 LOG_FILE="/var/log/nucleus-update.log"
+STATUS_FILE="/var/log/nucleus-update.status"
 
 # --- logging -----------------------------------------------------------------
 # Fall back to a user-writable log if /var/log is not writable.
 if ! touch "$LOG_FILE" 2>/dev/null; then
     LOG_FILE="$HOME/nucleus-update.log"
 fi
+: > "$LOG_FILE"    # truncate: each run's log stands alone
+
+# --- status file -------------------------------------------------------------
+# The web UI polls this to report the REAL outcome. It lives on disk so the
+# answer survives deploy.sh restarting the web app mid-update (the app runs
+# from the very tree deploy.sh overwrites). Keep it beside the log; fall back
+# to the same dir as LOG_FILE if /var/log is not writable.
+if ! touch "$STATUS_FILE" 2>/dev/null; then
+    STATUS_FILE="$(dirname "$LOG_FILE")/nucleus-update.status"
+fi
+chmod 644 "$LOG_FILE" "$STATUS_FILE" 2>/dev/null || true
+
+# Single EXIT trap captures EVERY exit path: success (0), no-changes (1),
+# offline (2), and all fail() codes (3-8) — even if deploy.sh kills the web
+# app that launched us. $? here is the script's real exit status.
+on_exit() {
+    local rc=$?
+    printf 'status=finished\nrc=%s\nfinished=%s\n' "$rc" "$(date '+%s')" > "$STATUS_FILE" 2>/dev/null || true
+}
+trap on_exit EXIT
+
+printf 'status=running\npid=%s\nstarted=%s\n' "$$" "$(date '+%s')" > "$STATUS_FILE" 2>/dev/null || true
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
