@@ -377,6 +377,12 @@ VALID_MODEM_PRESETS = {
     'SHORT_FAST', 'SHORT_SLOW', 'SHORT_TURBO',
 }
 
+VALID_ROLES = {
+    'CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER',
+    'TAK', 'TAK_TRACKER', 'SENSOR', 'ROUTER',
+    'ROUTER_CLIENT', 'ROUTER_LATE', 'REPEATER', 'LOST_AND_FOUND',
+}
+
 
 def _validate_changes(changes):
     """Validate an apply request. Returns error string or None."""
@@ -384,7 +390,7 @@ def _validate_changes(changes):
         return 'No changes provided'
 
     allowed = {'owner', 'owner_short', 'modem_preset', 'hop_limit',
-               'tx_power', 'channel_name', 'psk_random'}
+               'tx_power', 'role', 'channel_name', 'psk_random'}
     unknown = set(changes) - allowed
     if unknown:
         return f'Unknown fields: {", ".join(sorted(unknown))}'
@@ -414,6 +420,9 @@ def _validate_changes(changes):
             return 'TX power must be a number'
         if not 0 <= v <= 30:
             return 'TX power must be 0-30 dBm'
+    if 'role' in changes:
+        if str(changes['role']) not in VALID_ROLES:
+            return f'Invalid role: {changes["role"]}'
     if 'channel_name' in changes:
         v = str(changes['channel_name']).strip()
         if not v or len(v) > 11:
@@ -448,6 +457,8 @@ def _build_command_groups(changes):
         args += ['--set', 'lora.hop_limit', str(int(changes['hop_limit']))]
     if 'tx_power' in changes:
         args += ['--set', 'lora.tx_power', str(int(changes['tx_power']))]
+    if 'role' in changes:
+        args += ['--set', 'device.role', str(changes['role'])]
     if args:
         groups.append(args)
 
